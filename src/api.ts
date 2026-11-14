@@ -320,3 +320,78 @@ export function petaKolom(kepala: string[]): Record<string, number> {
   return p;
 }
 
+const LOCAL_AJAR_FILES_KEY = 'mk_ajar_files_v1';
+
+function readLocalAjarFiles(): Record<string, { namaFile: string; mimeType: string; base64Data: string }> {
+  try {
+    const raw = localStorage.getItem(LOCAL_AJAR_FILES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function uploadAjarFile(
+  token: string,
+  namaFile: string,
+  mimeType: string,
+  base64Data: string
+): Promise<{ fileId: string; namaFile: string }> {
+  try {
+    const res = await fetchJson<{ ok: boolean; data?: { fileId: string; namaFile: string }; error?: string }>(
+      '/api/ajar/upload',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, namaFile, mimeType, base64Data })
+      }
+    );
+    if (!res.ok || !res.data) {
+      throw new Error(res.error || 'Gagal mengunggah berkas perangkat ajar.');
+    }
+    return res.data;
+  } catch (e: any) {
+    if (e instanceof ApiUnavailableError && e.status === 404) {
+      const fileId = 'local_ajr_' + uid();
+      const map = readLocalAjarFiles();
+      map[fileId] = { namaFile, mimeType: mimeType || 'application/octet-stream', base64Data };
+      try {
+        localStorage.setItem(LOCAL_AJAR_FILES_KEY, JSON.stringify(map));
+      } catch {
+        throw new Error('Penyimpanan lokal browser penuh. Gunakan file berukuran lebih kecil.');
+      }
+      return { fileId, namaFile };
+    }
+    throw e;
+  }
+}
+
+export function downloadAjarFile(fileId: string, namaFile?: string): void {
+  if (!fileId) return;
+  if (fileId.startsWith('local_ajr_')) {
+    const rec = readLocalAjarFiles()[fileId];
+    if (!rec) return;
+    const bin = atob(rec.base64Data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const blob = new Blob([bytes], { type: rec.mimeType || 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = namaFile || rec.namaFile || 'lampiran';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = `/api/ajar/file/${encodeURIComponent(fileId)}`;
+  a.download = namaFile || '';
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+

@@ -20,6 +20,7 @@ import {
 const DB_PATH = path.resolve(process.cwd(), 'data', 'database.json');
 const CLOUD_DIR = path.resolve(process.cwd(), 'data', 'cloud_uploads');
 const TUGAS_DIR = path.resolve(process.cwd(), 'data', 'tugas_uploads');
+const AJAR_DIR = path.resolve(process.cwd(), 'data', 'ajar_uploads');
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
@@ -47,8 +48,8 @@ const SKEMA: Record<string, string[]> = {
   Jadwal: ['ID', 'Kelas', 'Hari', 'Mulai', 'Selesai', 'Mapel', 'Guru', 'Jenis', 'Pekan'],
   JadwalAtur: ['Kelas', 'Sistem', 'Mulai', 'Durasi', 'Jumlah', 'Istirahat'],
   Akademik: ['ID', 'Mulai', 'Selesai', 'Kegiatan', 'Jenis', 'Sumber'],
-  TP: ['ID', 'Kelas', 'Kode', 'Tujuan', 'Materi', 'Status'],
-  Modul: ['ID', 'Kelas', 'Judul', 'Mapel', 'Alokasi', 'TPIDs', 'Pembuka', 'Inti', 'Penutup', 'Asesmen', 'Media', 'Catatan'],
+  TP: ['ID', 'Kelas', 'Kode', 'Tujuan', 'Materi', 'Status', 'FileID', 'NamaFile'],
+  Modul: ['ID', 'Kelas', 'Judul', 'Mapel', 'Alokasi', 'TPIDs', 'Pembuka', 'Inti', 'Penutup', 'Asesmen', 'Media', 'Catatan', 'FileID', 'NamaFile'],
   Pemantik: ['ID', 'Kelas', 'Judul', 'Tautan', 'Pertanyaan', 'Slide'],
   Mapel: ['ID', 'Nama'],
   BerkasCloud: ['ID', 'Kelas', 'NamaFile', 'TipeMime', 'Ukuran', 'TanggalUnggah', 'Pengunggah', 'StatusCloud', 'PathSimpan', 'AnalisisJSON'],
@@ -1785,7 +1786,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       db.sheets.Pengaturan = Object.entries(PENGATURAN_AWAL).map(([Kunci, Nilai]) => ({ Kunci, Nilai }));
     }
     // Clear uploaded files on disk & remote Vercel DB
-    for (const dir of [CLOUD_DIR, TUGAS_DIR]) {
+    for (const dir of [CLOUD_DIR, TUGAS_DIR, AJAR_DIR]) {
       try {
         if (fs.existsSync(dir)) {
           for (const f of fs.readdirSync(dir)) {
@@ -2744,6 +2745,72 @@ ATURAN KETAT SUMBER MATERI:
       res.status(404).send('Berkas tugas tidak ditemukan');
     } catch {
       res.status(500).send('Gagal mengunduh berkas tugas');
+    }
+  });
+
+  // Upload Lampiran Perangkat Ajar (TP & Modul Ajar)
+  app.post('/api/ajar/upload', async (req, res) => {
+    try {
+      const { token, namaFile, mimeType, base64Data } = req.body || {};
+      staf_(token);
+      if (!namaFile || !base64Data) {
+        res.status(400).json({ ok: false, error: 'Pilih berkas TP atau Modul Ajar terlebih dahulu.' });
+        return;
+      }
+      const fileId = 'ajr_' + uidShort();
+      const cleanName = String(namaFile).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const diskName = `${fileId}__${cleanName}`;
+      const buf = Buffer.from(String(base64Data), 'base64');
+      const mime = String(mimeType || 'application/octet-stream');
+      try {
+        if (!fs.existsSync(AJAR_DIR)) fs.mkdirSync(AJAR_DIR, { recursive: true });
+        fs.writeFileSync(path.join(AJAR_DIR, diskName), buf);
+      } catch (_) {}
+      if (detectStorageEngine().isVercelCloud) {
+        await saveRemoteFile({
+          id: fileId,
+          kind: 'ajar',
+          filename: String(namaFile),
+          mime,
+          contentBase64: String(base64Data)
+        });
+      }
+      res.json({ ok: true, data: { fileId, namaFile: String(namaFile) } });
+    } catch (e: any) {
+      res.status(200).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // Download Lampiran Perangkat Ajar (TP & Modul Ajar)
+  app.get('/api/ajar/file/:fileId', async (req, res) => {
+    try {
+      const fileId = String(req.params.fileId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!fileId) {
+        res.status(404).send('Berkas perangkat ajar tidak ditemukan');
+        return;
+      }
+      if (fs.existsSync(AJAR_DIR)) {
+        const match = fs.readdirSync(AJAR_DIR).find(f => f.startsWith(fileId + '__'));
+        if (match) {
+          const origName = match.slice((fileId + '__').length).replace(/"/g, '');
+          res.setHeader('Content-Disposition', `attachment; filename="${origName}"`);
+          res.sendFile(path.join(AJAR_DIR, match));
+          return;
+        }
+      }
+      if (detectStorageEngine().isVercelCloud) {
+        const remote = await loadRemoteFile(fileId);
+        if (remote) {
+          const safeName = String(remote.filename || 'lampiran').replace(/"/g, '');
+          if (remote.mime) res.setHeader('Content-Type', remote.mime);
+          res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+          res.send(Buffer.from(remote.contentBase64, 'base64'));
+          return;
+        }
+      }
+      res.status(404).send('Berkas perangkat ajar tidak ditemukan');
+    } catch {
+      res.status(500).send('Gagal mengunduh berkas perangkat ajar');
     }
   });
 
