@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   FileCheck2,
   Sparkles,
@@ -18,7 +18,10 @@ import {
   Bot,
   Award,
   BookOpen,
-  AlertCircle
+  AlertCircle,
+  Zap,
+  StopCircle,
+  Loader2
 } from 'lucide-react';
 import { uid, ymd, fmt, fetchJson } from '../api';
 
@@ -96,6 +99,7 @@ export default function CbtManager({
   const [jumlahPG, setJumlahPG] = useState<number>(10);
   const [jumlahUraian, setJumlahUraian] = useState<number>(2);
   const [tingkat, setTingkat] = useState('Campuran (C1–C5)');
+  const [modeCepat, setModeCepat] = useState<boolean>(true);
   const [uraianMateri, setUraianMateri] = useState('');
   const [materialFile, setMaterialFile] = useState<{
     namaFile: string;
@@ -105,6 +109,14 @@ export default function CbtManager({
   } | null>(null);
   const [ringkasanAI, setRingkasanAI] = useState('');
   const [generating, setGenerating] = useState(false);
+  const [genProgress, setGenProgress] = useState<{
+    completedBatches: number;
+    totalBatches: number;
+    pgCount: number;
+    urCount: number;
+  } | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Questions state
   const [soalPG, setSoalPG] = useState<SoalPG[]>([]);
@@ -115,10 +127,26 @@ export default function CbtManager({
   const [filterCbtId, setFilterCbtId] = useState('');
   const [inspectHasil, setInspectHasil] = useState<any | null>(null);
   const [gradingAiId, setGradingAiId] = useState('');
+  const [batchGrading, setBatchGrading] = useState<{ current: number; total: number } | null>(null);
   const [manualSkorUraian, setManualSkorUraian] = useState('');
   const [manualSkorAkhir, setManualSkorAkhir] = useState('');
   const [manualCatatan, setManualCatatan] = useState('');
   const [savingGrade, setSavingGrade] = useState(false);
+
+  useEffect(() => {
+    if (!generating) return;
+    setElapsedSec(0);
+    const id = window.setInterval(() => {
+      setElapsedSec(prev => prev + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [generating]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const cbtKelas = useMemo(
     () => (cbtList || []).filter(c => c.Kelas === kelasId),
@@ -209,6 +237,11 @@ export default function CbtManager({
     reader.readAsDataURL(file);
   }
 
+  function handleCancelGenerate() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }
+
   async function handleGenerateAI() {
     const nPG = Math.max(0, Math.min(50, Math.floor(Number(jumlahPG) || 0)));
     const nUr = Math.max(0, Math.min(5, Math.floor(Number(jumlahUraian) || 0)));
@@ -224,42 +257,170 @@ export default function CbtManager({
       return;
     }
 
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    const startedAt = Date.now();
     setGenerating(true);
+    setGenProgress({ completedBatches: 0, totalBatches: 1, pgCount: 0, urCount: 0 });
+
+    const payload = {
+      token,
+      uraianMateri: uraianMateri.trim(),
+      namaFile: materialFile?.namaFile || '',
+      tipeMime: materialFile?.tipeMime || '',
+      base64Data: materialFile?.base64Data || '',
+      jumlahPG: nPG,
+      jumlahUraian: nUr,
+      tingkat,
+      modeCepat,
+      judul: judul.trim() || 'Evaluasi CBT',
+      mapel: mapel.trim() || 'Umum'
+    };
+
+    const showAiError = (msg: string) => {
+      if (msg.includes('GEMINI_API_KEY')) {
+        showToast(
+          'Kunci AI server (GEMINI_API_KEY) belum diatur pada Environment Variables / Secrets.',
+          5500
+        );
+      } else {
+        showToast('Gagal generate AI: ' + msg, 5000);
+      }
+    };
+
     try {
-      const json = await fetchJson('/api/cbt/generate', {
+      const res = await fetch('/api/cbt/generate-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          uraianMateri: uraianMateri.trim(),
-          namaFile: materialFile?.namaFile || '',
-          tipeMime: materialFile?.tipeMime || '',
-          base64Data: materialFile?.base64Data || '',
-          jumlahPG: nPG,
-          jumlahUraian: nUr,
-          tingkat,
-          judul: judul.trim() || 'Evaluasi CBT',
-          mapel: mapel.trim() || 'Umum'
-        })
+        body: JSON.stringify(payload),
+        signal: ctrl.signal
       });
-      if (!json.ok) {
-        showToast('Gagal generate AI: ' + (json.error || 'Terjadi kesalahan'), 4500);
+
+      if (res.status === 404) {
+        showToast('Layanan AI memerlukan server backend aktif.', 4500);
         return;
       }
-      const data = json.data || {};
-      setRingkasanAI(data.ringkasanMateri || '');
-      setSoalPG(data.soalPG || []);
-      setSoalUraian(data.soalUraian || []);
-      if (!judul.trim()) {
-        setJudul(`CBT ${mapel || 'Materi'} (${ymd(new Date())})`);
+
+      const contentType = String(res.headers.get('content-type') || '').toLowerCase();
+      if (contentType.includes('application/json') || !res.body) {
+        const text = await res.text();
+        let json: any = null;
+        try { json = JSON.parse(text); } catch {}
+        if (!json || !json.ok) {
+          showAiError(json?.error || `Server merespons HTTP ${res.status}`);
+          return;
+        }
+        const data = json.data || {};
+        setRingkasanAI(data.ringkasanMateri || '');
+        setSoalPG(data.soalPG || []);
+        setSoalUraian(data.soalUraian || []);
+        if (!judul.trim()) setJudul(`CBT ${mapel || 'Materi'} (${ymd(new Date())})`);
+        const dur = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        showToast(
+          `Berhasil membuat ${(data.soalPG || []).length} PG & ${(data.soalUraian || []).length} Uraian dalam ${dur} detik!`
+        );
+        return;
       }
-      showToast(
-        `Berhasil membuat ${(data.soalPG || []).length} PG & ${(data.soalUraian || []).length} Uraian dari materi!`
-      );
+
+      // Stream NDJSON chunks
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accPG: SoalPG[] = [];
+      let accUr: SoalUraian[] = [];
+      let accSummary = '';
+      let doneReceived = false;
+
+      const processLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        let evt: any;
+        try {
+          evt = JSON.parse(trimmed);
+        } catch {
+          return;
+        }
+        if (evt.type === 'start') {
+          setGenProgress({
+            completedBatches: 0,
+            totalBatches: Math.max(1, Number(evt.totalBatches) || 1),
+            pgCount: 0,
+            urCount: 0
+          });
+        } else if (evt.type === 'batch') {
+          if (evt.ringkasanMateri && !accSummary) {
+            accSummary = evt.ringkasanMateri;
+            setRingkasanAI(accSummary);
+          }
+          if (Array.isArray(evt.soalPG) && evt.soalPG.length > 0) {
+            accPG = [...accPG, ...evt.soalPG];
+            setSoalPG(accPG);
+          }
+          if (Array.isArray(evt.soalUraian) && evt.soalUraian.length > 0) {
+            accUr = [...accUr, ...evt.soalUraian];
+            setSoalUraian(accUr);
+          }
+          setGenProgress(prev => ({
+            completedBatches: Number(evt.completedBatches) || (prev?.completedBatches || 0) + 1,
+            totalBatches: Number(evt.totalBatches) || prev?.totalBatches || 1,
+            pgCount: accPG.length,
+            urCount: accUr.length
+          }));
+        } else if (evt.type === 'done') {
+          doneReceived = true;
+          const data = evt.data || {};
+          const finalPG = Array.isArray(data.soalPG) ? data.soalPG : accPG;
+          const finalUr = Array.isArray(data.soalUraian) ? data.soalUraian : accUr;
+          setRingkasanAI(data.ringkasanMateri || accSummary || '');
+          setSoalPG(finalPG);
+          setSoalUraian(finalUr);
+          if (!judul.trim()) {
+            setJudul(`CBT ${mapel || 'Materi'} (${ymd(new Date())})`);
+          }
+          const dur = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+          showToast(
+            `Berhasil membuat ${finalPG.length} PG & ${finalUr.length} Uraian dalam ${dur} detik!`
+          );
+        } else if (evt.type === 'error') {
+          throw new Error(evt.error || 'Terjadi kesalahan saat generate AI.');
+        } else if (evt.ok === false && evt.error) {
+          throw new Error(evt.error);
+        }
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nlIdx: number;
+        while ((nlIdx = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, nlIdx);
+          buffer = buffer.slice(nlIdx + 1);
+          processLine(line);
+        }
+      }
+      if (buffer.trim()) {
+        processLine(buffer);
+      }
+
+      if (!doneReceived && (accPG.length > 0 || accUr.length > 0)) {
+        const dur = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        showToast(`Generate selesai (${accPG.length} PG, ${accUr.length} Uraian) dalam ${dur} detik.`);
+      } else if (!doneReceived) {
+        showAiError('Koneksi AI terputus sebelum soal selesai dibuat. Silakan coba kurangi jumlah soal atau aktifkan Mode Kilat.');
+      }
     } catch (err: any) {
-      showToast('Gagal menghubungi AI: ' + (err?.message || err), 4500);
+      if (err?.name === 'AbortError') {
+        showToast('Proses generate AI dibatalkan.', 3000);
+      } else {
+        showAiError(err?.message || String(err));
+      }
     } finally {
+      abortRef.current = null;
       setGenerating(false);
+      setGenProgress(null);
     }
   }
 
@@ -372,13 +533,22 @@ export default function CbtManager({
   async function handleAutoGradeUraian(h: any) {
     setGradingAiId(h.ID);
     try {
-      const json = await fetchJson('/api/cbt/grade-essay', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, hasilId: h.ID })
-      });
+      const json = await fetchJson(
+        '/api/cbt/grade-essay',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, hasilId: h.ID })
+        },
+        0
+      );
       if (!json.ok) {
-        showToast('Gagal menilai dengan AI: ' + (json.error || 'Error'), 4500);
+        const msg = String(json.error || 'Error');
+        if (msg.includes('GEMINI_API_KEY')) {
+          showToast('Kunci AI server (GEMINI_API_KEY) belum diatur pada Environment Variables / Secrets.', 5500);
+        } else {
+          showToast('Gagal menilai dengan AI: ' + msg, 4500);
+        }
         return;
       }
       const updated = json.data;
@@ -392,6 +562,71 @@ export default function CbtManager({
       showToast('Gagal menghubungi AI: ' + (err?.message || err), 4500);
     } finally {
       setGradingAiId('');
+    }
+  }
+
+  async function handleBatchGradeUraian() {
+    const candidates = hasilKelas.filter(h => {
+      if (h.StatusNilai !== 'Menunggu Nilai Uraian') return false;
+      const cbtObj = (cbtList || []).find(c => c.ID === h.CBTID);
+      const parsedSoal = parseSoalJSON(cbtObj?.SoalJSON || '{}');
+      return parsedSoal.soalUraian.length > 0;
+    });
+    if (candidates.length === 0) {
+      showToast('Tidak ada jawaban uraian yang menunggu penilaian AI.');
+      return;
+    }
+
+    setBatchGrading({ current: 0, total: candidates.length });
+    const latestMap = new Map<string, any>((hasilList || []).map(x => [x.ID, x]));
+    let successCount = 0;
+    let firstError = '';
+    let completed = 0;
+    let cursor = 0;
+
+    const worker = async () => {
+      while (cursor < candidates.length) {
+        const target = candidates[cursor++];
+        try {
+          const json = await fetchJson(
+            '/api/cbt/grade-essay',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token, hasilId: target.ID })
+            },
+            0
+          );
+          if (json.ok && json.data) {
+            latestMap.set(json.data.ID, json.data);
+            successCount++;
+          } else if (!firstError) {
+            firstError = json.error || 'Gagal menilai salah satu jawaban.';
+          }
+        } catch (err: any) {
+          if (!firstError) firstError = err?.message || String(err);
+        } finally {
+          completed++;
+          setBatchGrading({ current: completed, total: candidates.length });
+        }
+      }
+    };
+
+    const concurrency = Math.min(2, candidates.length);
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+    if (successCount > 0) {
+      const nextHasilList = (hasilList || []).map(x => latestMap.get(x.ID) || x);
+      await onSaveHasil(nextHasilList);
+    }
+    setBatchGrading(null);
+
+    if (successCount === candidates.length) {
+      showToast(`Selesai menilai ${successCount} jawaban uraian siswa dengan AI!`);
+    } else if (successCount > 0) {
+      showToast(`Berhasil menilai ${successCount}/${candidates.length} siswa. (${firstError})`, 5000);
+    } else {
+      showToast('Gagal menilai massal: ' + (firstError || 'Terjadi kesalahan'), 5000);
     }
   }
 
@@ -786,9 +1021,9 @@ export default function CbtManager({
                 </p>
               </div>
 
-              <div className="p-4 bg-white border border-indigo-200 rounded-xl space-y-2">
+              <div className="p-4 bg-white border border-indigo-200 rounded-xl space-y-2.5">
                 <label className="block text-xs font-bold text-slate-800">
-                  Level Kognitif / Kesulitan
+                  Level Kognitif & Mode AI
                 </label>
                 <select
                   value={tingkat}
@@ -800,8 +1035,35 @@ export default function CbtManager({
                   <option value="Aplikasi (C3)">Aplikasi (C3)</option>
                   <option value="HOTS Analisis (C4–C6)">HOTS Analisis (C4–C6)</option>
                 </select>
-                <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
-                  <strong>Catatan:</strong> Setiap soal yang dibuat akan menyertakan kutipan langsung dari materi Anda sebagai bukti sumber.
+                <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setModeCepat(true)}
+                    className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors ${
+                      modeCepat
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-emerald-50'
+                    }`}
+                  >
+                    <Zap className="w-3 h-3" /> Kilat (Cepat)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModeCepat(false)}
+                    className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors ${
+                      !modeCepat
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50'
+                    }`}
+                  >
+                    <Sparkles className="w-3 h-3" /> HOTS Mendalam
+                  </button>
+                </div>
+                <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
+                  <strong>{modeCepat ? 'Mode Kilat:' : 'Mode Mendalam:'}</strong>{' '}
+                  {modeCepat
+                    ? 'Respon hitungan detik via pemrosesan paralel otomatis.'
+                    : 'Analisis materi lebih mendalam dengan penalar tambahan.'}
                 </div>
               </div>
             </div>
@@ -831,11 +1093,11 @@ export default function CbtManager({
                     Pilih File Materi
                   </span>
                   <span className="text-[11px] text-slate-500 mt-1">
-                    PDF, TXT, MD, CSV, HTML, JSON, atau Gambar Catatan (Maks. 15 MB)
+                    PDF, Word (DOCX), PPTX, Excel, TXT, MD, CSV, atau Gambar Catatan (Maks. 15 MB)
                   </span>
                   <input
                     type="file"
-                    accept=".pdf,.txt,.md,.csv,.html,.json,image/*"
+                    accept=".pdf,.txt,.md,.csv,.html,.json,.docx,.pptx,.xlsx,image/*"
                     onChange={handleUploadMaterial}
                     className="hidden"
                   />
@@ -867,16 +1129,61 @@ export default function CbtManager({
                 Target generate: <strong className="text-sky-700 tabular-nums">{jumlahPG} PG</strong> +{' '}
                 <strong className="text-violet-700 tabular-nums">{jumlahUraian} Uraian</strong>
               </div>
-              <button
-                type="button"
-                onClick={handleGenerateAI}
-                disabled={generating || (jumlahPG === 0 && jumlahUraian === 0)}
-                className="px-5 py-2.5 text-xs font-bold bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 hover:brightness-110 text-white rounded-xl flex items-center gap-2 shadow-md shadow-indigo-500/20 disabled:opacity-60 cursor-pointer"
-              >
-                <Sparkles className="w-4 h-4" />
-                {generating ? 'AI Sedang Menyusun Soal dari Materi…' : 'Buat Soal PG & Uraian dengan AI'}
-              </button>
+              <div className="flex items-center gap-2">
+                {generating && (
+                  <button
+                    type="button"
+                    onClick={handleCancelGenerate}
+                    className="px-3.5 py-2.5 text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <StopCircle className="w-4 h-4" /> Batalkan
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleGenerateAI}
+                  disabled={generating || (jumlahPG === 0 && jumlahUraian === 0)}
+                  className="px-5 py-2.5 text-xs font-bold bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 hover:brightness-110 text-white rounded-xl flex items-center gap-2 shadow-md shadow-indigo-500/20 disabled:opacity-60 cursor-pointer"
+                >
+                  {generating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Menyusun Soal ({elapsedSec}d)…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Buat Soal PG & Uraian dengan AI
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
+
+            {generating && genProgress && (
+              <div className="p-3.5 bg-white border border-indigo-200 rounded-xl space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-indigo-900 flex items-center gap-1.5">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                    Memproses Batch {Math.min(genProgress.completedBatches + 1, genProgress.totalBatches)} dari {genProgress.totalBatches}…
+                  </span>
+                  <span className="text-[11px] font-semibold text-slate-600 tabular-nums">
+                    Masuk: {genProgress.pgCount} PG · {genProgress.urCount} Uraian · {elapsedSec} detik
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-indigo-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-indigo-600 via-violet-600 to-emerald-500 transition-all duration-300"
+                    style={{
+                      width: `${Math.max(
+                        12,
+                        Math.round((genProgress.completedBatches / Math.max(1, genProgress.totalBatches)) * 100)
+                      )}%`
+                    }}
+                  />
+                </div>
+              </div>
+            )}
 
             {ringkasanAI && (
               <div className="p-3.5 bg-white border border-indigo-200 rounded-xl text-xs text-slate-700">
@@ -1160,18 +1467,41 @@ export default function CbtManager({
                 Skor PG dihitung otomatis saat siswa mengumpulkan ujian. Gunakan asisten AI untuk membantu mengoreksi jawaban Uraian.
               </p>
             </div>
-            <select
-              value={filterCbtId}
-              onChange={e => setFilterCbtId(e.target.value)}
-              className="px-3 py-2 border border-indigo-200 bg-indigo-50/40 rounded-xl text-xs font-semibold text-indigo-950"
-            >
-              <option value="">Semua Paket CBT ({cbtKelas.length})</option>
-              {cbtKelas.map(c => (
-                <option key={c.ID} value={c.ID}>
-                  {c.Judul}
-                </option>
-              ))}
-            </select>
+            <div className="flex flex-wrap items-center gap-2">
+              {hasilKelas.some(h => h.StatusNilai === 'Menunggu Nilai Uraian') && (
+                <button
+                  type="button"
+                  onClick={handleBatchGradeUraian}
+                  disabled={!!batchGrading}
+                  className="px-3.5 py-2 text-xs font-bold bg-gradient-to-r from-indigo-600 to-violet-600 hover:brightness-110 text-white rounded-xl inline-flex items-center gap-1.5 shadow-sm disabled:opacity-60 cursor-pointer"
+                >
+                  {batchGrading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Menilai {batchGrading.current}/{batchGrading.total}…
+                    </>
+                  ) : (
+                    <>
+                      <Bot className="w-3.5 h-3.5" />
+                      Nilai Semua Menunggu AI (
+                      {hasilKelas.filter(h => h.StatusNilai === 'Menunggu Nilai Uraian').length})
+                    </>
+                  )}
+                </button>
+              )}
+              <select
+                value={filterCbtId}
+                onChange={e => setFilterCbtId(e.target.value)}
+                className="px-3 py-2 border border-indigo-200 bg-indigo-50/40 rounded-xl text-xs font-semibold text-indigo-950"
+              >
+                <option value="">Semua Paket CBT ({cbtKelas.length})</option>
+                {cbtKelas.map(c => (
+                  <option key={c.ID} value={c.ID}>
+                    {c.Judul}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">

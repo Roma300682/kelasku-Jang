@@ -2,7 +2,8 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { GoogleGenAI, Type } from '@google/genai';
+import zlib from 'zlib';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { getKaldikJabarEvents, KALDIK_JABAR_REF } from './src/data/kaldikJabar.ts';
 import {
   clearAllRemoteFiles,
@@ -25,14 +26,94 @@ const CLOUD_DIR = path.resolve(process.cwd(), 'data', 'cloud_uploads');
 const TUGAS_DIR = path.resolve(process.cwd(), 'data', 'tugas_uploads');
 const AJAR_DIR = path.resolve(process.cwd(), 'data', 'ajar_uploads');
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build'
-    }
+function getAiClient(): GoogleGenAI {
+  const key = (process.env.GEMINI_API_KEY || '').trim();
+  if (!key || key === 'MY_GEMINI_API_KEY') {
+    throw new Error('Kunci API AI belum dikonfigurasi pada environment server (GEMINI_API_KEY).');
   }
-});
+  return new GoogleGenAI({
+    apiKey: key,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build'
+      }
+    }
+  });
+}
+
+function parseJsonSafe<T = any>(rawText: string | undefined, fallback: T = {} as T): T {
+  const trimmed = String(rawText || '').trim();
+  if (!trimmed) return fallback;
+  const unfenced = trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  try {
+    return JSON.parse(unfenced) as T;
+  } catch {
+    const start = unfenced.indexOf('{');
+    const end = unfenced.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(unfenced.slice(start, end + 1)) as T;
+      } catch {}
+    }
+    return fallback;
+  }
+}
+
+function extractOfficeXmlText(buf: Buffer): string {
+  const chunks: string[] = [];
+  let offset = 0;
+  try {
+    while (offset + 30 < buf.length) {
+      const sig = buf.readUInt32LE(offset);
+      if (sig !== 0x04034b50) {
+        const next = buf.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]), offset + 1);
+        if (next === -1) break;
+        offset = next;
+        continue;
+      }
+      const compression = buf.readUInt16LE(offset + 8);
+      const compSize = buf.readUInt32LE(offset + 18);
+      const nameLen = buf.readUInt16LE(offset + 26);
+      const extraLen = buf.readUInt16LE(offset + 28);
+      const nameStart = offset + 30;
+      const dataStart = nameStart + nameLen + extraLen;
+      const entryName = buf.toString('utf8', nameStart, nameStart + nameLen);
+
+      if (compSize > 0 && dataStart + compSize <= buf.length) {
+        const isInteresting =
+          entryName === 'word/document.xml' ||
+          /^ppt\/slides\/slide\d+\.xml$/i.test(entryName) ||
+          entryName === 'xl/sharedStrings.xml';
+        if (isInteresting) {
+          try {
+            const rawSlice = buf.subarray(dataStart, dataStart + compSize);
+            const xmlBuf = compression === 8 ? zlib.inflateRawSync(rawSlice) : rawSlice;
+            const xmlStr = xmlBuf.toString('utf8');
+            const text = xmlStr
+              .replace(/<\/(w:p|a:p|p|tr|si)>/gi, '\n')
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'")
+              .replace(/[ \t]+/g, ' ')
+              .replace(/\n{3,}/g, '\n\n')
+              .trim();
+            if (text) chunks.push(text);
+          } catch {}
+        }
+        offset = dataStart + compSize;
+      } else {
+        offset += 4;
+      }
+    }
+  } catch {}
+  return chunks.join('\n\n').trim();
+}
 
 const SKEMA: Record<string, string[]> = {
   Pengaturan: ['Kunci', 'Nilai'],
@@ -2168,10 +2249,12 @@ async function startServer() {
 
       if (useAi && process.env.GEMINI_API_KEY) {
         try {
-          const aiResp = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
+          const aiClient = getAiClient();
+          const aiResp = await aiClient.models.generateContent({
+            model: 'gemini-4-hydrogen',
             contents: `Susun daftar agenda utama Kalender Pendidikan Provinsi Jawa Barat Tahun Ajaran ${ta} berdasarkan pedoman resmi Dinas Pendidikan Provinsi Jawa Barat (Hari Pertama Masuk Sekolah, MPLS, PTS/STS Ganjil & Genap, SAS Ganjil, Pembagian Rapor Ganjil & Genap, Libur Semester, Libur Akhir Tahun, serta Hari Libur Nasional utama). Kembalikan JSON valid.`,
             config: {
+              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
               tools: [{ googleSearch: {} }],
               responseMimeType: 'application/json',
               responseSchema: {
@@ -2398,10 +2481,12 @@ Ekstrak informasi kunci, identifikasi tren atau pola penting, dan berikan ringka
 
       parts.push({ text: promptText });
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+      const aiClient = getAiClient();
+      const response = await aiClient.models.generateContent({
+        model: 'gemini-4-hydrogen',
         contents: { parts },
         config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
           systemInstruction:
             'Anda adalah analis data pendidikan dan asisten akademik ahli. Analisis dokumen teks, spreadsheet nilai/absensi, PDF, atau gambar kegiatan/catatan belajar dengan presisi tinggi dalam Bahasa Indonesia.',
           responseMimeType: 'application/json',
@@ -2443,8 +2528,7 @@ Ekstrak informasi kunci, identifikasi tren atau pola penting, dan berikan ringka
         }
       });
 
-      const jsonText = (response.text ?? '{}').trim();
-      const parsed = JSON.parse(jsonText);
+      const parsed = parseJsonSafe<any>(response.text, {});
 
       rec.AnalisisJSON = JSON.stringify(parsed);
       rec.StatusCloud = 'Tersimpan & Teranalisis AI';
@@ -2515,148 +2599,253 @@ Ekstrak informasi kunci, identifikasi tren atau pola penting, dan berikan ringka
     }
   });
 
-  // Generate CBT PG (0-50) & Uraian (0-5) strictly from pasted or uploaded material using gemini-4-hydrogen
-  app.post('/api/cbt/generate', async (req, res) => {
+  async function generateContentFastWithFallback(
+    aiClient: GoogleGenAI,
+    params: {
+      modeCepat: boolean;
+      contents: any;
+      systemInstruction: string;
+      responseSchema: any;
+    }
+  ) {
+    const primaryModel = params.modeCepat ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen';
+    const primaryLevel = params.modeCepat ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW;
     try {
-      const {
-        token,
-        uraianMateri,
-        namaFile,
-        tipeMime,
-        base64Data,
-        jumlahPG,
-        jumlahUraian,
-        tingkat,
-        judul,
-        mapel
-      } = req.body || {};
-
-      staf_(token);
-
-      const nPG = Math.max(0, Math.min(50, Math.floor(Number(jumlahPG) || 0)));
-      const nUr = Math.max(0, Math.min(5, Math.floor(Number(jumlahUraian) || 0)));
-      if (nPG === 0 && nUr === 0) {
-        res.status(400).json({ ok: false, error: 'Masukkan minimal 1 soal PG (maks. 50) atau 1 soal Uraian (maks. 5).' });
-        return;
-      }
-
-      const teksMateri = String(uraianMateri || '').trim();
-      const hasFile = Boolean(base64Data && namaFile);
-      if (!teksMateri && !hasFile) {
-        res.status(400).json({ ok: false, error: 'Masukkan uraian materi atau unggah berkas materi terlebih dahulu.' });
-        return;
-      }
-
-      const parts: any[] = [];
-      if (hasFile) {
-        const buf = Buffer.from(String(base64Data), 'base64');
-        const mime = String(tipeMime || '').toLowerCase();
-        const isTextLike =
-          mime.includes('text') ||
-          mime.includes('csv') ||
-          mime.includes('json') ||
-          mime.includes('xml') ||
-          /\.(txt|csv|tsv|json|md|html|gs|js|ts)$/i.test(String(namaFile));
-        const isInline =
-          mime.startsWith('image/') ||
-          mime === 'application/pdf';
-
-        if (isTextLike) {
-          parts.push({
-            text: `=== BERKAS MATERI SUMBER (${namaFile}) ===\n${buf.toString('utf8').slice(0, 80000)}`
-          });
-        } else if (isInline) {
-          parts.push({
-            inlineData: {
-              mimeType: mime || 'application/pdf',
-              data: String(base64Data)
-            }
-          });
-        } else {
-          const readable = buf.toString('utf8').replace(/[^\x20-\x7E\n\r\t]/g, ' ').replace(/\s{3,}/g, ' ').slice(0, 45000);
-          parts.push({
-            text: `=== BERKAS MATERI SUMBER (${namaFile}) ===\n${readable}`
-          });
+      return await aiClient.models.generateContent({
+        model: primaryModel,
+        contents: params.contents,
+        config: {
+          thinkingConfig: { thinkingLevel: primaryLevel },
+          systemInstruction: params.systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: params.responseSchema
         }
-      }
-
-      if (teksMateri) {
-        parts.push({
-          text: `=== URAIAN MATERI SUMBER ===\n${teksMateri.slice(0, 80000)}`
+      });
+    } catch (err: any) {
+      if (primaryModel !== 'gemini-4-hydrogen') {
+        return await aiClient.models.generateContent({
+          model: 'gemini-4-hydrogen',
+          contents: params.contents,
+          config: {
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            systemInstruction: params.systemInstruction,
+            responseMimeType: 'application/json',
+            responseSchema: params.responseSchema
+          }
         });
       }
+      throw err;
+    }
+  }
 
-      const instruksi = `Buatkan paket soal CBT berbasis materi sumber di atas dengan rincian:
-- Judul/Topik: ${judul || 'Evaluasi Materi'} (${mapel || 'Umum'})
-- Tingkat Kesulitan: ${tingkat || 'Campuran (C1–C5)'}
-- Jumlah Soal Pilihan Ganda (PG): TEPAT ${nPG} soal${nPG === 0 ? ' (WAJIB array kosong [])' : ''}
-- Jumlah Soal Uraian: TEPAT ${nUr} soal${nUr === 0 ? ' (WAJIB array kosong [])' : ''}
+  function buildCbtSourceParts(body: any): any[] {
+    const { uraianMateri, namaFile, tipeMime, base64Data } = body || {};
+    const teksMateri = String(uraianMateri || '').trim();
+    const hasFile = Boolean(base64Data && namaFile);
+    const parts: any[] = [];
 
-ATURAN KETAT SUMBER MATERI:
-1. Seluruh pertanyaan, opsi jawaban (A–E), kunci jawaban, pembahasan, dan rubrik uraian WAJIB bersumber HANYA dari uraian materi atau berkas materi yang diberikan di atas.
-2. DILARANG menambahkan fakta, definisi, rumus, atau informasi dari luar materi sumber yang diberikan.
-3. Pada setiap soal, cantumkan field "kutipanMateri" yang mengutip kalimat/poin singkat langsung dari materi sumber sebagai bukti dasar soal tersebut.
-4. Untuk soal PG (jika > 0), sediakan tepat 5 pilihan jawaban (opsiA, opsiB, opsiC, opsiD, opsiE) dengan tepat 1 kunci jawaban berupa huruf kapital 'A', 'B', 'C', 'D', atau 'E'.
-5. Untuk soal Uraian (jika > 0), berikan pertanyaan analitis/pemahaman sesuai materi, kunci/rubrik jawaban ideal, dan poinMaksimal yang proporsional sehingga total poinMaksimal seluruh soal uraian = 100.`;
+    if (hasFile) {
+      const buf = Buffer.from(String(base64Data), 'base64');
+      const mime = String(tipeMime || '').toLowerCase();
+      const fname = String(namaFile);
+      const isTextLike =
+        mime.includes('text') ||
+        mime.includes('csv') ||
+        mime.includes('json') ||
+        mime.includes('xml') ||
+        /\.(txt|csv|tsv|json|md|html|gs|js|ts)$/i.test(fname);
+      const isOfficeZip =
+        /\.(docx|pptx|xlsx)$/i.test(fname) ||
+        mime.includes('wordprocessingml') ||
+        mime.includes('presentationml') ||
+        mime.includes('spreadsheetml');
+      const isInline = mime.startsWith('image/') || mime === 'application/pdf' || /\.pdf$/i.test(fname);
 
-      parts.push({ text: instruksi });
+      if (isTextLike) {
+        parts.push({
+          text: `=== BERKAS MATERI SUMBER (${fname}) ===\n${buf.toString('utf8').slice(0, 45000)}`
+        });
+      } else if (isOfficeZip) {
+        const extracted = extractOfficeXmlText(buf);
+        if (extracted) {
+          parts.push({
+            text: `=== BERKAS MATERI SUMBER (${fname}) ===\n${extracted.slice(0, 45000)}`
+          });
+        } else if (!teksMateri) {
+          throw new Error(
+            `Berkas "${fname}" tidak berisi teks yang dapat dibaca (mungkin berisi gambar saja atau terproteksi). Simpan ke PDF atau tempelkan teks materi.`
+          );
+        }
+      } else if (isInline) {
+        parts.push({
+          inlineData: {
+            mimeType: /\.pdf$/i.test(fname) ? 'application/pdf' : (mime || 'image/png'),
+            data: String(base64Data)
+          }
+        });
+      } else {
+        const readable = buf
+          .toString('utf8')
+          .replace(/[^\x20-\x7E\n\r\t]/g, ' ')
+          .replace(/\s{3,}/g, ' ')
+          .trim()
+          .slice(0, 35000);
+        if (readable) {
+          parts.push({
+            text: `=== BERKAS MATERI SUMBER (${fname}) ===\n${readable}`
+          });
+        } else if (!teksMateri) {
+          throw new Error(`Format berkas "${fname}" belum didukung untuk dibaca langsung. Gunakan PDF, DOCX, PPTX, TXT, atau Gambar.`);
+        }
+      }
+    }
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: { parts },
-        config: {
-          systemInstruction:
-            'Anda adalah ahli penyusun soal CBT (Computer-Based Test) pendidikan Indonesia. Anda HANYA boleh menyusun soal dari materi sumber yang diberikan pengguna dan dilarang keras mengarang informasi di luar sumber materi.',
-          responseMimeType: 'application/json',
-          responseSchema: {
+    if (teksMateri) {
+      parts.push({
+        text: `=== URAIAN MATERI SUMBER ===\n${teksMateri.slice(0, 45000)}`
+      });
+    }
+    return parts;
+  }
+
+  async function runCbtGenerationBatches(
+    body: any,
+    callbacks?: {
+      onStart?: (info: { totalPG: number; totalUr: number; totalBatches: number }) => void;
+      onBatch?: (batch: {
+        ringkasanMateri: string;
+        soalPG: any[];
+        soalUraian: any[];
+        batchIndex: number;
+        totalBatches: number;
+      }) => void;
+      isAborted?: () => boolean;
+    }
+  ) {
+    const aiClient = getAiClient();
+    const nPG = Math.max(0, Math.min(50, Math.floor(Number(body?.jumlahPG) || 0)));
+    const nUr = Math.max(0, Math.min(5, Math.floor(Number(body?.jumlahUraian) || 0)));
+    const modeCepat = body?.modeCepat !== false && body?.modeCepat !== 'mendalam';
+    const baseParts = buildCbtSourceParts(body);
+    const judul = String(body?.judul || 'Evaluasi Materi');
+    const mapel = String(body?.mapel || 'Umum');
+    const tingkat = String(body?.tingkat || 'Campuran (C1–C5)');
+
+    // Split large requests into fast parallel chunks
+    const tasks: { nPG: number; nUr: number; wantSummary: boolean; focusHint: string }[] = [];
+    const CHUNK = modeCepat ? 10 : 8;
+    if (nPG <= CHUNK) {
+      tasks.push({
+        nPG,
+        nUr,
+        wantSummary: true,
+        focusHint: ''
+      });
+    } else {
+      let remPG = nPG;
+      let batchNum = 0;
+      while (remPG > 0) {
+        const takePG = Math.min(CHUNK, remPG);
+        const isLast = remPG - takePG === 0;
+        const takeUr = isLast && takePG <= 5 ? nUr : 0;
+        tasks.push({
+          nPG: takePG,
+          nUr: takeUr,
+          wantSummary: batchNum === 0,
+          focusHint: `Bagian ke-${batchNum + 1} (buat pertanyaan beragam dan tidak mengulang soal lain).`
+        });
+        remPG -= takePG;
+        batchNum++;
+      }
+      if (!tasks.some(t => t.nUr > 0) && nUr > 0) {
+        tasks.push({
+          nPG: 0,
+          nUr,
+          wantSummary: false,
+          focusHint: 'Fokus menyusun soal Uraian analitis beserta rubrik.'
+        });
+      }
+    }
+
+    const totalBatches = tasks.length;
+    callbacks?.onStart?.({ totalPG: nPG, totalUr: nUr, totalBatches });
+
+    const pgByTask: any[][] = Array.from({ length: tasks.length }, () => []);
+    const urByTask: any[][] = Array.from({ length: tasks.length }, () => []);
+    let summaryText = '';
+
+    const runSingleTask = async (task: typeof tasks[number], taskIdx: number) => {
+      if (callbacks?.isAborted?.()) return;
+      const props: Record<string, any> = {};
+      const required: string[] = [];
+      if (task.wantSummary) {
+        props.ringkasanMateri = {
+          type: Type.STRING,
+          description: 'Ringkasan padat materi sumber (1-2 kalimat singkat).'
+        };
+        required.push('ringkasanMateri');
+      }
+      if (task.nPG > 0) {
+        props.soalPG = {
+          type: Type.ARRAY,
+          items: {
             type: Type.OBJECT,
             properties: {
-              ringkasanMateri: {
-                type: Type.STRING,
-                description: 'Ringkasan padat materi sumber yang digunakan (2-4 kalimat).'
-              },
-              soalPG: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    pertanyaan: { type: Type.STRING },
-                    opsiA: { type: Type.STRING },
-                    opsiB: { type: Type.STRING },
-                    opsiC: { type: Type.STRING },
-                    opsiD: { type: Type.STRING },
-                    opsiE: { type: Type.STRING },
-                    kunci: { type: Type.STRING, description: 'A, B, C, D, atau E' },
-                    pembahasan: { type: Type.STRING },
-                    kutipanMateri: { type: Type.STRING }
-                  },
-                  required: ['pertanyaan', 'opsiA', 'opsiB', 'opsiC', 'opsiD', 'opsiE', 'kunci', 'pembahasan', 'kutipanMateri']
-                }
-              },
-              soalUraian: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    pertanyaan: { type: Type.STRING },
-                    kunciRubrik: { type: Type.STRING },
-                    poinMaksimal: { type: Type.NUMBER },
-                    kutipanMateri: { type: Type.STRING }
-                  },
-                  required: ['pertanyaan', 'kunciRubrik', 'poinMaksimal', 'kutipanMateri']
-                }
-              }
+              pertanyaan: { type: Type.STRING },
+              opsiA: { type: Type.STRING },
+              opsiB: { type: Type.STRING },
+              opsiC: { type: Type.STRING },
+              opsiD: { type: Type.STRING },
+              opsiE: { type: Type.STRING },
+              kunci: { type: Type.STRING, description: 'A, B, C, D, atau E' },
+              pembahasan: { type: Type.STRING, description: '1 kalimat singkat.' },
+              kutipanMateri: { type: Type.STRING, description: 'Kutipan singkat maks 15 kata dari materi.' }
             },
-            required: ['ringkasanMateri', 'soalPG', 'soalUraian']
+            required: ['pertanyaan', 'opsiA', 'opsiB', 'opsiC', 'opsiD', 'opsiE', 'kunci', 'pembahasan', 'kutipanMateri']
           }
+        };
+        required.push('soalPG');
+      }
+      if (task.nUr > 0) {
+        props.soalUraian = {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              pertanyaan: { type: Type.STRING },
+              kunciRubrik: { type: Type.STRING },
+              poinMaksimal: { type: Type.NUMBER },
+              kutipanMateri: { type: Type.STRING, description: 'Kutipan singkat maks 15 kata dari materi.' }
+            },
+            required: ['pertanyaan', 'kunciRubrik', 'poinMaksimal', 'kutipanMateri']
+          }
+        };
+        required.push('soalUraian');
+      }
+
+      const instruksi = `Susun soal CBT HANYA dari materi sumber di atas:
+- Topik: ${judul} (${mapel}) · Level: ${tingkat}
+${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT ${task.nPG} soal PG (5 opsi A-E, 1 kunci tepat, pembahasan 1 kalimat singkat).\n` : ''}${task.nUr > 0 ? `- Buat TEPAT ${task.nUr} soal Uraian dengan rubrik singkat dan total poinMaksimal = 100.\n` : ''}- Cantumkan "kutipanMateri" singkat (<=15 kata) langsung dari materi sumber. Dilarang mengambil fakta di luar materi.`;
+
+      const resp = await generateContentFastWithFallback(aiClient, {
+        modeCepat,
+        contents: { parts: [...baseParts, { text: instruksi }] },
+        systemInstruction:
+          'Anda penyusun soal CBT Indonesia yang cepat, ringkas, dan akurat. Gunakan HANYA fakta dari materi sumber pengguna. Buat pembahasan dan kutipan sesingkat dan sepadat mungkin.',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: props,
+          required
         }
       });
 
-      const parsed = JSON.parse((response.text ?? '{}').trim());
-      const pgOut = nPG === 0
-        ? []
-        : (parsed.soalPG || []).slice(0, nPG).map((q: any, i: number) => ({
-            id: `pg_${Date.now()}_${i + 1}`,
+      if (callbacks?.isAborted?.()) return;
+
+      const parsed = parseJsonSafe<any>(resp.text, {});
+      const stamp = `${Date.now()}_${taskIdx}`;
+      const pgBatch = task.nPG > 0
+        ? (Array.isArray(parsed.soalPG) ? parsed.soalPG : []).slice(0, task.nPG).map((q: any, i: number) => ({
+            id: `pg_${stamp}_${i + 1}`,
             pertanyaan: String(q.pertanyaan || ''),
             opsiA: String(q.opsiA || ''),
             opsiB: String(q.opsiB || ''),
@@ -2668,26 +2857,139 @@ ATURAN KETAT SUMBER MATERI:
               : 'A',
             pembahasan: String(q.pembahasan || ''),
             kutipanMateri: String(q.kutipanMateri || '')
-          }));
-
-      const urOut = nUr === 0
-        ? []
-        : (parsed.soalUraian || []).slice(0, nUr).map((q: any, i: number) => ({
-            id: `ur_${Date.now()}_${i + 1}`,
+          }))
+        : [];
+      const urBatch = task.nUr > 0
+        ? (Array.isArray(parsed.soalUraian) ? parsed.soalUraian : []).slice(0, task.nUr).map((q: any, i: number) => ({
+            id: `ur_${stamp}_${i + 1}`,
             pertanyaan: String(q.pertanyaan || ''),
             kunciRubrik: String(q.kunciRubrik || ''),
             poinMaksimal: Number(q.poinMaksimal) || Math.round(100 / nUr),
             kutipanMateri: String(q.kutipanMateri || '')
-          }));
+          }))
+        : [];
+      const ringkasan = String(parsed.ringkasanMateri || '');
+      if (ringkasan && !summaryText) summaryText = ringkasan;
+      pgByTask[taskIdx] = pgBatch;
+      urByTask[taskIdx] = urBatch;
 
-      res.json({
-        ok: true,
-        data: {
-          ringkasanMateri: String(parsed.ringkasanMateri || ''),
-          soalPG: pgOut,
-          soalUraian: urOut
+      callbacks?.onBatch?.({
+        ringkasanMateri: ringkasan,
+        soalPG: pgBatch,
+        soalUraian: urBatch,
+        batchIndex: taskIdx,
+        totalBatches
+      });
+    };
+
+    // Bounded concurrency = 3 for high speed without hitting rate limits
+    const concurrency = Math.min(3, tasks.length);
+    let cursor = 0;
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (cursor < tasks.length && !callbacks?.isAborted?.()) {
+        const myIdx = cursor++;
+        await runSingleTask(tasks[myIdx], myIdx);
+      }
+    });
+    await Promise.all(workers);
+
+    return {
+      ringkasanMateri: summaryText,
+      soalPG: pgByTask.flat().slice(0, nPG),
+      soalUraian: urByTask.flat().slice(0, nUr)
+    };
+  }
+
+  // Fast Streaming CBT Generator (NDJSON progress + real-time partial batches)
+  app.post('/api/cbt/generate-stream', async (req, res) => {
+    let clientAborted = false;
+    req.on('close', () => {
+      if (!res.writableEnded) clientAborted = true;
+    });
+
+    try {
+      const body = req.body || {};
+      staf_(body.token);
+
+      const nPG = Math.max(0, Math.min(50, Math.floor(Number(body.jumlahPG) || 0)));
+      const nUr = Math.max(0, Math.min(5, Math.floor(Number(body.jumlahUraian) || 0)));
+      if (nPG === 0 && nUr === 0) {
+        res.status(400).json({ ok: false, error: 'Masukkan minimal 1 soal PG (maks. 50) atau 1 soal Uraian (maks. 5).' });
+        return;
+      }
+      if (!String(body.uraianMateri || '').trim() && !(body.base64Data && body.namaFile)) {
+        res.status(400).json({ ok: false, error: 'Masukkan uraian materi atau unggah berkas materi terlebih dahulu.' });
+        return;
+      }
+
+      // Validate API key and source material BEFORE switching response to NDJSON stream
+      getAiClient();
+      buildCbtSourceParts(body);
+
+      res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      const sendEvent = (obj: any) => {
+        if (!res.writableEnded && !clientAborted) {
+          res.write(JSON.stringify(obj) + '\n');
+        }
+      };
+
+      let completedBatches = 0;
+      const finalResult = await runCbtGenerationBatches(body, {
+        isAborted: () => clientAborted,
+        onStart: info => {
+          sendEvent({ type: 'start', ...info });
+        },
+        onBatch: batch => {
+          completedBatches++;
+          sendEvent({
+            type: 'batch',
+            ringkasanMateri: batch.ringkasanMateri,
+            soalPG: batch.soalPG,
+            soalUraian: batch.soalUraian,
+            completedBatches,
+            totalBatches: batch.totalBatches
+          });
         }
       });
+
+      if (!clientAborted && !res.writableEnded) {
+        sendEvent({ type: 'done', data: finalResult });
+        res.end();
+      }
+    } catch (e: any) {
+      if (!res.headersSent) {
+        res.status(200).json({ ok: false, error: e?.message || 'Gagal menghasilkan soal CBT dengan AI.' });
+      } else if (!res.writableEnded && !clientAborted) {
+        res.write(JSON.stringify({ type: 'error', error: e?.message || 'Gagal menghasilkan soal CBT dengan AI.' }) + '\n');
+        res.end();
+      }
+    }
+  });
+
+  // Fast Non-Streaming CBT Generator (uses same parallel batch engine)
+  app.post('/api/cbt/generate', async (req, res) => {
+    try {
+      const body = req.body || {};
+      staf_(body.token);
+
+      const nPG = Math.max(0, Math.min(50, Math.floor(Number(body.jumlahPG) || 0)));
+      const nUr = Math.max(0, Math.min(5, Math.floor(Number(body.jumlahUraian) || 0)));
+      if (nPG === 0 && nUr === 0) {
+        res.status(400).json({ ok: false, error: 'Masukkan minimal 1 soal PG (maks. 50) atau 1 soal Uraian (maks. 5).' });
+        return;
+      }
+      if (!String(body.uraianMateri || '').trim() && !(body.base64Data && body.namaFile)) {
+        res.status(400).json({ ok: false, error: 'Masukkan uraian materi atau unggah berkas materi terlebih dahulu.' });
+        return;
+      }
+
+      const data = await runCbtGenerationBatches(body);
+      res.json({ ok: true, data });
     } catch (e: any) {
       res.status(200).json({
         ok: false,
@@ -2806,37 +3108,35 @@ ATURAN KETAT SUMBER MATERI:
         jawabanSiswa: String((jwbObj.uraian || {})[q.id] || '(Tidak dijawab)')
       }));
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Materi Sumber CBT:\n${cbt.SumberMateri || '-'}\n\nDaftar Soal Uraian, Rubrik, & Jawaban Siswa:\n${JSON.stringify(evaluasiPayload, null, 2)}\n\nNilai setiap jawaban uraian siswa secara objektif berdasarkan rubrik dan materi sumber.`,
-        config: {
-          systemInstruction:
-            'Anda adalah penilai asesmen uraian guru Indonesia yang objektif, adil, dan konstruktif. Berikan skor numerik sesuai poinMaksimal masing-masing soal dan catatan umpan balik singkat dalam Bahasa Indonesia.',
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              detail: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    id: { type: Type.STRING },
-                    skor: { type: Type.NUMBER },
-                    maksimal: { type: Type.NUMBER },
-                    komentar: { type: Type.STRING }
-                  },
-                  required: ['id', 'skor', 'maksimal', 'komentar']
-                }
-              },
-              ringkasanFeedback: { type: Type.STRING }
+      const aiClient = getAiClient();
+      const response = await generateContentFastWithFallback(aiClient, {
+        modeCepat: true,
+        contents: `Materi Sumber CBT:\n${String(cbt.SumberMateri || '-').slice(0, 12000)}\n\nDaftar Soal Uraian, Rubrik, & Jawaban Siswa:\n${JSON.stringify(evaluasiPayload)}\n\nNilai setiap jawaban uraian siswa secara objektif berdasarkan rubrik dan materi sumber.`,
+        systemInstruction:
+          'Anda penilai asesmen uraian guru Indonesia yang cepat, objektif, dan adil. Berikan skor numerik sesuai poinMaksimal serta komentar singkat 1 kalimat per soal dalam Bahasa Indonesia.',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            detail: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  skor: { type: Type.NUMBER },
+                  maksimal: { type: Type.NUMBER },
+                  komentar: { type: Type.STRING }
+                },
+                required: ['id', 'skor', 'maksimal', 'komentar']
+              }
             },
-            required: ['detail', 'ringkasanFeedback']
-          }
+            ringkasanFeedback: { type: Type.STRING }
+          },
+          required: ['detail', 'ringkasanFeedback']
         }
       });
 
-      const parsed = JSON.parse((response.text ?? '{}').trim());
+      const parsed = parseJsonSafe<any>(response.text, {});
       const detail = parsed.detail || [];
       const totSkor = detail.reduce((acc: number, d: any) => acc + (Number(d.skor) || 0), 0);
       const totMax = soalUraian.reduce((acc: number, q: any) => acc + (Number(q.poinMaksimal) || Math.round(100 / soalUraian.length)), 0);
