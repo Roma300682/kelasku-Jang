@@ -61,7 +61,7 @@ const SKEMA: Record<string, string[]> = {
 const SHEET_TERKUNCI = ['Pengaturan', 'Akun', 'Pengguna'];
 const IZIN_TULIS: Record<string, string[]> = {
   wali: ['Siswa', 'Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'BerkasCloud', 'CBT', 'HasilCBT'],
-  guru: ['Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'BerkasCloud', 'CBT', 'HasilCBT']
+  guru: ['Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'BerkasCloud', 'CBT', 'HasilCBT']
 };
 const TTL_SESI = 21600 * 1000; // 6 hours in ms
 

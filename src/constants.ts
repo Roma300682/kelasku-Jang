@@ -318,9 +318,9 @@ export const PERAN_NAMA: Record<string, string> = {
 };
 export const TAB_PERAN: Record<string, string[]> = {
   wali: ['dash', 'cld', 'abs', 'sis', 'den', 'pik', 'str', 'jad', 'ajar', 'cbt', 'tug', 'nil', 'per', 'kal', 'pan', 'usr'],
-  guru: ['dash', 'cld', 'abs', 'jad', 'ajar', 'cbt', 'tug', 'nil', 'per', 'kal', 'pan', 'usr']
+  guru: ['dash', 'cld', 'abs', 'str', 'jad', 'ajar', 'cbt', 'tug', 'nil', 'per', 'kal', 'pan', 'usr']
 };
-export const TAB_WALI = ['sis', 'den', 'pik', 'str'];
+export const TAB_WALI = ['sis', 'den', 'pik'];
 export const KOLOM_NILAI: [string, string][] = [
   ['Sikap', 'Kehadiran & Sikap'],
   ['Tugas', 'Tugas & Harian'],
