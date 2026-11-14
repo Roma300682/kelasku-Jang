@@ -128,7 +128,8 @@ const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   Compass,
   UserCheck,
   Settings,
-  RotateCcw
+  RotateCcw,
+  Database
 };
 
 function parseJurusanLogos(raw: any): Record<string, string> {
@@ -846,6 +847,70 @@ export default function App() {
     } catch (err: any) {
       showToast('Gagal mengembalikan data demo: ' + pesanErr(err), 4500);
     }
+  }
+
+  async function refreshAllAfterRestore() {
+    const fresh = await apiCall('api_load', true);
+    setDb(fresh);
+    setK(fresh.Kelas?.[0]?.ID || '');
+    const st = await callRaw('api_status');
+    setPublicInfo({
+      sekolah: st.sekolah || 'Sistem Manajemen Kelas',
+      logo: st.logo || '',
+      jurusan: st.jurusan || '',
+      jurusanLogos: st.jurusanLogos || '{}',
+      waInfo: st.waInfo || '',
+      emailHint: st.emailHint || ''
+    });
+  }
+
+  async function handleExportBackup(includeFiles: boolean) {
+    return apiCall('api_exportBackup', { includeFiles });
+  }
+
+  async function handleRestoreBackup(backupData: any, opts: { keepCurrentAdmin: boolean }) {
+    showToast('Memulihkan basis data dari berkas backup…', 8000);
+    try {
+      const res = await apiCall('api_restoreBackup', backupData, opts);
+      await refreshAllAfterRestore();
+      const filesCount = res?.filesRestored || 0;
+      showToast(
+        filesCount > 0
+          ? `Basis data dipulihkan (${res?.siswaCount ?? 0} siswa, ${filesCount} berkas lampiran)`
+          : `Basis data berhasil dipulihkan (${res?.siswaCount ?? 0} siswa)`
+      );
+    } catch (err: any) {
+      showToast('Gagal memulihkan backup: ' + pesanErr(err), 4500);
+    }
+  }
+
+  async function handleListSnapshots() {
+    return apiCall('api_listBackups');
+  }
+
+  async function handleCreateSnapshot(label: string) {
+    return apiCall('api_createBackupSnapshot', label);
+  }
+
+  async function handleDownloadSnapshot(snapshotId: string) {
+    return apiCall('api_getBackupSnapshot', snapshotId);
+  }
+
+  async function handleRestoreSnapshot(snapshotId: string) {
+    showToast('Memulihkan snapshot basis data…', 8000);
+    try {
+      await apiCall('api_restoreBackupSnapshot', snapshotId);
+      await refreshAllAfterRestore();
+      showToast('Basis data berhasil dipulihkan dari snapshot');
+    } catch (err: any) {
+      showToast('Gagal memulihkan snapshot: ' + pesanErr(err), 4500);
+    }
+  }
+
+  async function handleDeleteSnapshot(snapshotId: string) {
+    const res = await apiCall('api_deleteBackupSnapshot', snapshotId);
+    showToast('Snapshot backup dihapus');
+    return res;
   }
 
   // Derived Helpers
@@ -5501,7 +5566,7 @@ export default function App() {
               onClick={() => setTab('rst')}
               className="px-3.5 py-2 text-xs font-semibold bg-white/15 hover:bg-white/25 text-white rounded-xl shadow-sm whitespace-nowrap cursor-pointer flex items-center gap-1.5"
             >
-              <RotateCcw className="w-3.5 h-3.5" /> Menu Reset & Database
+              <Database className="w-3.5 h-3.5" /> Menu Backup & Database
             </button>
             <button
               type="button"
@@ -6123,6 +6188,13 @@ export default function App() {
             onResetAll={handleResetAllData}
             onResetPartial={handleResetPartial}
             onResetDemo={handleResetDemoData}
+            onExportBackup={handleExportBackup}
+            onRestoreBackup={handleRestoreBackup}
+            onListSnapshots={handleListSnapshots}
+            onCreateSnapshot={handleCreateSnapshot}
+            onDownloadSnapshot={handleDownloadSnapshot}
+            onRestoreSnapshot={handleRestoreSnapshot}
+            onDeleteSnapshot={handleDeleteSnapshot}
             askConfirm={askConfirm}
             showToast={showToast}
           />

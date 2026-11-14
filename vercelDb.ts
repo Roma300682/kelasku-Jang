@@ -217,6 +217,45 @@ export async function saveRemoteState(data: any): Promise<void> {
   }
 }
 
+export async function loadRemoteBackups<T = any[]>(): Promise<T | null> {
+  const { engine } = detectStorageEngine();
+  if (engine === 'vercel-postgres') {
+    await ensurePgSchema();
+    const res = await getPool().query('SELECT data FROM mk_app_state WHERE id = $1 LIMIT 1', ['backups']);
+    return (res.rows[0]?.data ?? null) as T | null;
+  }
+  if (engine === 'vercel-kv') {
+    const raw = await kvCommand<string>(['GET', 'mk:app_backups']);
+    if (!raw) return null;
+    return (typeof raw === 'string' ? JSON.parse(raw) : raw) as T;
+  }
+  if (engine === 'vercel-blob') {
+    return readPrivateBlobJson<T>('mk/backups.json');
+  }
+  return null;
+}
+
+export async function saveRemoteBackups(backups: any[]): Promise<void> {
+  const { engine } = detectStorageEngine();
+  if (engine === 'vercel-postgres') {
+    await ensurePgSchema();
+    await getPool().query(
+      `INSERT INTO mk_app_state (id, data, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      ['backups', JSON.stringify(backups)]
+    );
+    return;
+  }
+  if (engine === 'vercel-kv') {
+    await kvCommand(['SET', 'mk:app_backups', JSON.stringify(backups)]);
+    return;
+  }
+  if (engine === 'vercel-blob') {
+    await writePrivateBlobJson('mk/backups.json', backups);
+  }
+}
+
 export async function saveRemoteSession(token: string, session: StoredSessionRecord): Promise<void> {
   const { engine } = detectStorageEngine();
   if (engine === 'vercel-postgres') {

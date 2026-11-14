@@ -9,15 +9,18 @@ import {
   deleteRemoteFile,
   deleteRemoteSession,
   detectStorageEngine,
+  loadRemoteBackups,
   loadRemoteFile,
   loadRemoteSession,
   loadRemoteState,
+  saveRemoteBackups,
   saveRemoteFile,
   saveRemoteSession,
   saveRemoteState
 } from './vercelDb.ts';
 
 const DB_PATH = path.resolve(process.cwd(), 'data', 'database.json');
+const BACKUPS_PATH = path.resolve(process.cwd(), 'data', 'backups.json');
 const CLOUD_DIR = path.resolve(process.cwd(), 'data', 'cloud_uploads');
 const TUGAS_DIR = path.resolve(process.cwd(), 'data', 'tugas_uploads');
 const AJAR_DIR = path.resolve(process.cwd(), 'data', 'ajar_uploads');
@@ -1821,8 +1824,278 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
     }
     saveDb();
     return targets;
+  },
+
+  async api_exportBackup(token: string, opts?: { includeFiles?: boolean }) {
+    sesi_(token, 'admin');
+    const db = getDb();
+    const storage = detectStorageEngine();
+    const set = pengaturan_();
+    const includeFiles = opts?.includeFiles !== false;
+    const files: {
+      id: string;
+      kind: string;
+      filename: string;
+      mime: string;
+      contentBase64: string;
+      textSidecar?: string;
+    }[] = [];
+
+    if (includeFiles) {
+      const seen = new Set<string>();
+      const tryAddDiskOrRemote = async (
+        id: string,
+        kind: 'cloud' | 'tugas' | 'ajar',
+        fallbackName: string,
+        fallbackMime = 'application/octet-stream',
+        cloudPath?: string
+      ) => {
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        let contentBase64 = '';
+        let filename = fallbackName || id;
+        let mime = fallbackMime;
+        let textSidecar = '';
+
+        const dir = kind === 'cloud' ? CLOUD_DIR : kind === 'ajar' ? AJAR_DIR : TUGAS_DIR;
+        if (kind === 'cloud' && cloudPath) {
+          const full = path.join(CLOUD_DIR, cloudPath);
+          if (fs.existsSync(full)) {
+            contentBase64 = fs.readFileSync(full).toString('base64');
+            if (fs.existsSync(full + '.txt')) {
+              textSidecar = fs.readFileSync(full + '.txt', 'utf8');
+            }
+          }
+        } else if (fs.existsSync(dir)) {
+          const match = fs.readdirSync(dir).find(f => f.startsWith(id + '__'));
+          if (match) {
+            contentBase64 = fs.readFileSync(path.join(dir, match)).toString('base64');
+            filename = match.slice((id + '__').length) || filename;
+          }
+        }
+
+        if (!contentBase64 && storage.isVercelCloud) {
+          try {
+            const remote = await loadRemoteFile(id);
+            if (remote) {
+              contentBase64 = remote.contentBase64;
+              filename = remote.filename || filename;
+              mime = remote.mime || mime;
+              textSidecar = remote.textSidecar || '';
+            }
+          } catch (_) {}
+        }
+
+        if (contentBase64) {
+          files.push({ id, kind, filename, mime, contentBase64, textSidecar });
+        }
+      };
+
+      for (const r of db.sheets.BerkasCloud || []) {
+        await tryAddDiskOrRemote(r.ID, 'cloud', r.NamaFile, r.TipeMime || 'application/octet-stream', r.PathSimpan);
+      }
+      for (const r of db.sheets.Tugas || []) {
+        await tryAddDiskOrRemote(r.FileID, 'tugas', r.NamaFile);
+      }
+      for (const r of db.sheets.Pengumpulan || []) {
+        await tryAddDiskOrRemote(r.FileID, 'tugas', r.NamaFile);
+      }
+      for (const r of db.sheets.TP || []) {
+        await tryAddDiskOrRemote(r.FileID, 'ajar', r.NamaFile);
+      }
+      for (const r of db.sheets.Modul || []) {
+        await tryAddDiskOrRemote(r.FileID, 'ajar', r.NamaFile);
+      }
+    }
+
+    return {
+      format: 'kelasku-backup',
+      version: 1,
+      createdAt: new Date().toISOString(),
+      sekolah: set.sekolah || 'KelasKU',
+      storageEngine: storage.engine,
+      storageLabel: storage.label,
+      data: {
+        admin: db.admin,
+        sheets: db.sheets
+      },
+      files
+    };
+  },
+
+  async api_restoreBackup(
+    token: string,
+    backup: any,
+    opts?: { keepCurrentAdmin?: boolean }
+  ) {
+    sesi_(token, 'admin');
+    if (!backup || typeof backup !== 'object') {
+      throw new Error('Format berkas backup tidak valid.');
+    }
+    const rawData =
+      backup.format === 'kelasku-backup' && backup.data
+        ? backup.data
+        : backup.sheets
+          ? backup
+          : backup.data?.sheets
+            ? backup.data
+            : null;
+    if (!rawData || typeof rawData.sheets !== 'object') {
+      throw new Error('Berkas backup tidak memiliki struktur data tabel KelasKU.');
+    }
+
+    const currentDb = getDb();
+    const keepAdmin = opts?.keepCurrentAdmin !== false;
+    const restoredNormalized = normalizeLoadedDb({
+      admin:
+        keepAdmin || !rawData.admin?.hash
+          ? currentDb.admin
+          : rawData.admin,
+      sheets: rawData.sheets
+    });
+
+    dbCache = restoredNormalized;
+    saveDb();
+
+    let filesRestored = 0;
+    const files = Array.isArray(backup.files) ? backup.files : [];
+    const storage = detectStorageEngine();
+    for (const f of files) {
+      if (!f || !f.id || !f.contentBase64) continue;
+      const safeId = String(f.id).replace(/[^a-zA-Z0-9_-]/g, '');
+      const cleanName = String(f.filename || 'lampiran').replace(/[^a-zA-Z0-9._-]/g, '_');
+      const kind = f.kind === 'cloud' ? 'cloud' : f.kind === 'ajar' ? 'ajar' : 'tugas';
+      const dir = kind === 'cloud' ? CLOUD_DIR : kind === 'ajar' ? AJAR_DIR : TUGAS_DIR;
+      try {
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const diskName = kind === 'cloud' ? `${safeId}_${cleanName}` : `${safeId}__${cleanName}`;
+        fs.writeFileSync(path.join(dir, diskName), Buffer.from(String(f.contentBase64), 'base64'));
+        if (kind === 'cloud' && f.textSidecar) {
+          fs.writeFileSync(path.join(dir, diskName + '.txt'), String(f.textSidecar), 'utf8');
+        }
+      } catch (_) {}
+      if (storage.isVercelCloud) {
+        await saveRemoteFile({
+          id: safeId,
+          kind,
+          filename: String(f.filename || cleanName),
+          mime: String(f.mime || 'application/octet-stream'),
+          contentBase64: String(f.contentBase64),
+          textSidecar: f.textSidecar ? String(f.textSidecar) : undefined
+        });
+      }
+      filesRestored++;
+    }
+
+    return {
+      restoredAt: new Date().toISOString(),
+      filesRestored,
+      kelasCount: (restoredNormalized.sheets.Kelas || []).length,
+      siswaCount: (restoredNormalized.sheets.Siswa || []).length
+    };
+  },
+
+  async api_listBackups(token: string) {
+    sesi_(token, 'admin');
+    const list = await readBackupsStorage();
+    return list.map(({ data: _d, ...meta }) => meta);
+  },
+
+  async api_createBackupSnapshot(token: string, label?: string) {
+    sesi_(token, 'admin');
+    const db = getDb();
+    const list = await readBackupsStorage();
+    const storage = detectStorageEngine();
+    const snap = {
+      id: 'bak_' + uidShort(),
+      createdAt: new Date().toISOString(),
+      label: String(label || '').trim() || 'Snapshot Manual',
+      storageLabel: storage.label,
+      stats: {
+        kelas: (db.sheets.Kelas || []).length,
+        siswa: (db.sheets.Siswa || []).length,
+        absensi: (db.sheets.Absensi || []).length,
+        nilai: (db.sheets.Nilai || []).length,
+        tp: (db.sheets.TP || []).length,
+        modul: (db.sheets.Modul || []).length
+      },
+      data: {
+        sheets: JSON.parse(JSON.stringify(db.sheets))
+      }
+    };
+    const next = [snap, ...list].slice(0, 5);
+    await writeBackupsStorage(next);
+    return next.map(({ data: _d, ...meta }) => meta);
+  },
+
+  async api_getBackupSnapshot(token: string, snapshotId: string) {
+    sesi_(token, 'admin');
+    const list = await readBackupsStorage();
+    const snap = list.find(s => s.id === snapshotId);
+    if (!snap) throw new Error('Snapshot backup tidak ditemukan.');
+    return {
+      format: 'kelasku-backup',
+      version: 1,
+      createdAt: snap.createdAt,
+      label: snap.label,
+      storageLabel: snap.storageLabel,
+      data: {
+        admin: null,
+        sheets: snap.data?.sheets || {}
+      },
+      files: []
+    };
+  },
+
+  async api_restoreBackupSnapshot(token: string, snapshotId: string) {
+    sesi_(token, 'admin');
+    const list = await readBackupsStorage();
+    const snap = list.find(s => s.id === snapshotId);
+    if (!snap || !snap.data?.sheets) throw new Error('Snapshot backup tidak ditemukan.');
+    const currentDb = getDb();
+    dbCache = normalizeLoadedDb({
+      admin: currentDb.admin,
+      sheets: snap.data.sheets
+    });
+    saveDb();
+    return true;
+  },
+
+  async api_deleteBackupSnapshot(token: string, snapshotId: string) {
+    sesi_(token, 'admin');
+    const list = await readBackupsStorage();
+    const next = list.filter(s => s.id !== snapshotId);
+    await writeBackupsStorage(next);
+    return next.map(({ data: _d, ...meta }) => meta);
   }
 };
+
+async function readBackupsStorage(): Promise<any[]> {
+  if (detectStorageEngine().isVercelCloud) {
+    try {
+      const remote = await loadRemoteBackups<any[]>();
+      if (Array.isArray(remote)) return remote;
+    } catch (_) {}
+  }
+  try {
+    if (fs.existsSync(BACKUPS_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(BACKUPS_PATH, 'utf8'));
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (_) {}
+  return [];
+}
+
+async function writeBackupsStorage(list: any[]): Promise<void> {
+  try {
+    const dir = path.dirname(BACKUPS_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(BACKUPS_PATH, JSON.stringify(list, null, 2), 'utf8');
+  } catch (_) {}
+  if (detectStorageEngine().isVercelCloud) {
+    await saveRemoteBackups(list);
+  }
+}
 
 async function startServer() {
   const app = express();
@@ -1876,7 +2149,7 @@ async function startServer() {
         res.status(400).json({ ok: false, error: 'Metode API tidak ditemukan: ' + fn });
         return;
       }
-      const result = rpcMethods[fn](...(Array.isArray(args) ? args : []));
+      const result = await rpcMethods[fn](...(Array.isArray(args) ? args : []));
       await flushWrites();
       res.json({ ok: true, data: result });
     } catch (e: any) {

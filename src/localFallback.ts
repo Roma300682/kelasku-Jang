@@ -899,52 +899,135 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
     return baru.length;
   }
 
-  if (fn === 'api_resetDemo') {
+  if (fn === 'api_exportBackup') {
     const [token] = args;
     getSesi(token, 'admin');
-    const seeded = await createSeedLocalDb();
-    saveDb(seeded);
-    return true;
-  }
-
-  if (fn === 'api_resetAllData') {
-    const [token, opts] = args;
-    getSesi(token, 'admin');
-    const o = opts || {};
-    const operationalSheets = [
-      'Siswa', 'Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku',
-      'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal',
-      'JadwalAtur', 'Akademik', 'TP', 'Modul', 'Pemantik', 'BerkasCloud',
-      'CBT', 'HasilCBT', 'Akun'
-    ];
-    for (const s of operationalSheets) db.sheets[s] = [];
-    if (o.resetKelas) db.sheets.Kelas = [];
-    if (o.resetMapel) db.sheets.Mapel = [];
-    if (o.resetPengguna) db.sheets.Pengguna = [];
-    if (o.resetPengaturan) {
-      db.sheets.Pengaturan = Object.entries(PENGATURAN_AWAL).map(([Kunci, Nilai]) => ({ Kunci, Nilai }));
-    }
-    saveDb(db);
-    return true;
-  }
-
-  if (fn === 'api_resetPartial') {
-    const [token, category] = args;
-    getSesi(token, 'admin');
-    const map: Record<string, string[]> = {
-      absensi: ['Absensi'],
-      nilai_tugas: ['Tugas', 'Pengumpulan', 'Nilai'],
-      cbt: ['CBT', 'HasilCBT'],
-      operasional_kelas: ['DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur'],
-      perangkat_ajar: ['TP', 'Modul', 'Pemantik'],
-      kalender: ['Akademik', 'Checklist'],
-      siswa: ['Siswa', 'Akun']
+    const setObj = getPengaturanObj(db);
+    return {
+      format: 'kelasku-backup',
+      version: 1,
+      createdAt: new Date().toISOString(),
+      sekolah: setObj.sekolah || 'KelasKU',
+      storageEngine: 'local-browser',
+      storageLabel: 'Penyimpanan Lokal Browser',
+      data: {
+        admin: db.admin,
+        sheets: db.sheets
+      },
+      files: []
     };
-    const targets = map[category];
-    if (!targets) throw new Error('Kategori reset tidak dikenal.');
-    for (const s of targets) db.sheets[s] = [];
-    saveDb(db);
-    return targets;
+  }
+
+  if (fn === 'api_restoreBackup') {
+    const [token, backup, opts] = args;
+    getSesi(token, 'admin');
+    if (!backup || typeof backup !== 'object') throw new Error('Format berkas backup tidak valid.');
+    const rawData =
+      backup.format === 'kelasku-backup' && backup.data
+        ? backup.data
+        : backup.sheets
+          ? backup
+          : backup.data?.sheets
+            ? backup.data
+            : null;
+    if (!rawData || typeof rawData.sheets !== 'object') {
+      throw new Error('Berkas backup tidak memiliki struktur data KelasKU.');
+    }
+    const clean = createCleanLocalDb();
+    Object.keys(clean.sheets).forEach(k => {
+      if (Array.isArray(rawData.sheets[k])) clean.sheets[k] = rawData.sheets[k];
+    });
+    const keepAdmin = opts?.keepCurrentAdmin !== false;
+    clean.admin = keepAdmin || !rawData.admin?.passHash ? db.admin : rawData.admin;
+    saveDb(clean);
+    return {
+      restoredAt: new Date().toISOString(),
+      filesRestored: 0,
+      kelasCount: (clean.sheets.Kelas || []).length,
+      siswaCount: (clean.sheets.Siswa || []).length
+    };
+  }
+
+  const readLocalSnapshots = (): any[] => {
+    try {
+      const raw = localStorage.getItem('mk_local_backups_v1');
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  };
+  const writeLocalSnapshots = (arr: any[]) => {
+    localStorage.setItem('mk_local_backups_v1', JSON.stringify(arr));
+  };
+
+  if (fn === 'api_listBackups') {
+    const [token] = args;
+    getSesi(token, 'admin');
+    return readLocalSnapshots().map(({ data: _d, ...meta }) => meta);
+  }
+
+  if (fn === 'api_createBackupSnapshot') {
+    const [token, label] = args;
+    getSesi(token, 'admin');
+    const snap = {
+      id: 'bak_' + uidShort(),
+      createdAt: new Date().toISOString(),
+      label: String(label || '').trim() || 'Snapshot Manual',
+      storageLabel: 'Penyimpanan Lokal Browser',
+      stats: {
+        kelas: (db.sheets.Kelas || []).length,
+        siswa: (db.sheets.Siswa || []).length,
+        absensi: (db.sheets.Absensi || []).length,
+        nilai: (db.sheets.Nilai || []).length,
+        tp: (db.sheets.TP || []).length,
+        modul: (db.sheets.Modul || []).length
+      },
+      data: {
+        sheets: JSON.parse(JSON.stringify(db.sheets))
+      }
+    };
+    const next = [snap, ...readLocalSnapshots()].slice(0, 5);
+    writeLocalSnapshots(next);
+    return next.map(({ data: _d, ...meta }) => meta);
+  }
+
+  if (fn === 'api_getBackupSnapshot') {
+    const [token, snapshotId] = args;
+    getSesi(token, 'admin');
+    const snap = readLocalSnapshots().find(s => s.id === snapshotId);
+    if (!snap) throw new Error('Snapshot backup tidak ditemukan.');
+    return {
+      format: 'kelasku-backup',
+      version: 1,
+      createdAt: snap.createdAt,
+      label: snap.label,
+      storageLabel: snap.storageLabel,
+      data: { admin: null, sheets: snap.data?.sheets || {} },
+      files: []
+    };
+  }
+
+  if (fn === 'api_restoreBackupSnapshot') {
+    const [token, snapshotId] = args;
+    getSesi(token, 'admin');
+    const snap = readLocalSnapshots().find(s => s.id === snapshotId);
+    if (!snap || !snap.data?.sheets) throw new Error('Snapshot backup tidak ditemukan.');
+    const clean = createCleanLocalDb();
+    Object.keys(clean.sheets).forEach(k => {
+      if (Array.isArray(snap.data.sheets[k])) clean.sheets[k] = snap.data.sheets[k];
+    });
+    clean.admin = db.admin;
+    saveDb(clean);
+    return true;
+  }
+
+  if (fn === 'api_deleteBackupSnapshot') {
+    const [token, snapshotId] = args;
+    getSesi(token, 'admin');
+    const next = readLocalSnapshots().filter(s => s.id !== snapshotId);
+    writeLocalSnapshots(next);
+    return next.map(({ data: _d, ...meta }) => meta);
   }
 
   throw new Error('Operasi ini membutuhkan koneksi server backend aktif.');

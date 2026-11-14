@@ -34,7 +34,7 @@ export const TABS: [string, string, string][] = [
   ['pan', 'Panduan', 'Compass'],
   ['usr', 'Akun Saya', 'UserCheck'],
   ['set', 'Pengaturan', 'Settings'],
-  ['rst', 'Reset & Database', 'RotateCcw']
+  ['rst', 'Backup & Database', 'Database']
 ];
 
 export const TANGGA = [
