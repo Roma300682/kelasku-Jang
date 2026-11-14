@@ -279,8 +279,8 @@ async function createSeedLocalDb(): Promise<LocalDb> {
         Sumber: e.Sumber || ''
       })),
       TP: [
-        { ID: 'tp_1', Kelas: 'kls_10a', Kode: 'TP 1', Tujuan: 'Peserta didik mampu menggeneralisasi sifat-sifat eksponen dan logaritma.', Materi: 'Eksponen & Logaritma', Status: 'Tercapai' },
-        { ID: 'tp_2', Kelas: 'kls_10a', Kode: 'TP 2', Tujuan: 'Peserta didik mampu memodelkan dan menyelesaikan SPLTV.', Materi: 'SPLTV', Status: 'Berjalan' }
+        { ID: 'tp_1', Kelas: 'kls_10a', ModulID: '', Kode: 'TP 1', Tujuan: 'Peserta didik mampu menggeneralisasi sifat-sifat eksponen dan logaritma.', Materi: 'Eksponen & Logaritma', Status: 'Tercapai' },
+        { ID: 'tp_2', Kelas: 'kls_10a', ModulID: 'mod_1', Kode: 'TP 2', Tujuan: 'Peserta didik mampu memodelkan dan menyelesaikan SPLTV.', Materi: 'SPLTV', Status: 'Berjalan' }
       ],
       Modul: [
         {

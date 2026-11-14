@@ -132,7 +132,7 @@ const SKEMA: Record<string, string[]> = {
   Jadwal: ['ID', 'Kelas', 'Hari', 'Mulai', 'Selesai', 'Mapel', 'Guru', 'Jenis', 'Pekan'],
   JadwalAtur: ['Kelas', 'Sistem', 'Mulai', 'Durasi', 'Jumlah', 'Istirahat'],
   Akademik: ['ID', 'Mulai', 'Selesai', 'Kegiatan', 'Jenis', 'Sumber'],
-  TP: ['ID', 'Kelas', 'Kode', 'Tujuan', 'Materi', 'Status', 'FileID', 'NamaFile'],
+  TP: ['ID', 'Kelas', 'ModulID', 'Kode', 'Tujuan', 'Materi', 'Status', 'FileID', 'NamaFile'],
   Modul: ['ID', 'Kelas', 'Judul', 'Mapel', 'Alokasi', 'TPIDs', 'Pembuka', 'Inti', 'Penutup', 'Asesmen', 'Media', 'Catatan', 'FileID', 'NamaFile'],
   Pemantik: ['ID', 'Kelas', 'Judul', 'Tautan', 'Pertanyaan', 'Slide'],
   Mapel: ['ID', 'Nama'],
@@ -660,6 +660,20 @@ function normalizeLoadedDb(rawDb: DatabaseFile): DatabaseFile {
     ...s,
     NoSiswa: s.NoSiswa || s.KontakOrtu || '',
     NoOrtu: s.NoOrtu || ''
+  }));
+  const tpToModul = new Map<string, string>();
+  (rawDb.sheets.Modul || []).forEach((m: any) => {
+    String(m.TPIDs || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .forEach(tpId => {
+        if (!tpToModul.has(tpId)) tpToModul.set(tpId, String(m.ID || ''));
+      });
+  });
+  rawDb.sheets.TP = (rawDb.sheets.TP || []).map((t: any) => ({
+    ...t,
+    ModulID: t.ModulID || tpToModul.get(String(t.ID || '')) || ''
   }));
   return rawDb;
 }
@@ -3384,6 +3398,181 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
       res.status(404).send('Berkas perangkat ajar tidak ditemukan');
     } catch {
       res.status(500).send('Gagal mengunduh berkas perangkat ajar');
+    }
+  });
+
+  // Extract / Split Tujuan Pembelajaran (TP) from an uploaded Modul Ajar file
+  app.post('/api/ajar/extract-tp', async (req, res) => {
+    try {
+      const { token, namaFile, mimeType, base64Data, judulModul, mapel } = req.body || {};
+      staf_(token);
+      if (!namaFile || !base64Data) {
+        res.status(400).json({ ok: false, error: 'Unggah berkas Modul Ajar terlebih dahulu.' });
+        return;
+      }
+
+      const buf = Buffer.from(String(base64Data), 'base64');
+      const mime = String(mimeType || '').toLowerCase();
+      const fname = String(namaFile);
+      const isTextLike =
+        mime.includes('text') ||
+        mime.includes('csv') ||
+        mime.includes('json') ||
+        mime.includes('xml') ||
+        /\.(txt|csv|tsv|json|md|html)$/i.test(fname);
+      const isOfficeZip =
+        /\.(docx|pptx|xlsx)$/i.test(fname) ||
+        mime.includes('wordprocessingml') ||
+        mime.includes('presentationml') ||
+        mime.includes('spreadsheetml');
+      const isInline = mime.startsWith('image/') || mime === 'application/pdf' || /\.pdf$/i.test(fname);
+
+      let extractedText = '';
+      if (isTextLike) {
+        extractedText = buf.toString('utf8').slice(0, 40000);
+      } else if (isOfficeZip) {
+        extractedText = extractOfficeXmlText(buf).slice(0, 40000);
+      }
+
+      const fallbackParseTpsFromText = (raw: string) => {
+        const lines = String(raw || '')
+          .split(/\r?\n/)
+          .map(l => l.trim())
+          .filter(Boolean);
+        const found: { kode: string; tujuan: string; materi: string }[] = [];
+        let inTpSection = false;
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (/^(?:[A-Z]\.\s*)?(?:tujuan\s+pembelajaran|capaian\s+dan\s+tujuan|indikator\s+tujuan)/i.test(line)) {
+            inTpSection = true;
+            const inlineAfterColon = line.split(':').slice(1).join(':').trim();
+            if (inlineAfterColon.length > 15) {
+              found.push({
+                kode: `TP ${found.length + 1}`,
+                tujuan: inlineAfterColon,
+                materi: String(judulModul || mapel || '').trim()
+              });
+            }
+            continue;
+          }
+          if (inTpSection && /^(?:[A-Z]\.\s*)?(?:pemahaman\s+bermakna|pertanyaan\s+pemantik|kegiatan\s+pembelajaran|asesmen|sarana|profil\s+pelajar|langkah)/i.test(line)) {
+            inTpSection = false;
+            continue;
+          }
+
+          const tpPrefixMatch = /^(?:TP\s*[\d.]+)\s*[:\-–.]\s*(.+)$/i.exec(line);
+          if (tpPrefixMatch && tpPrefixMatch[1].trim().length > 10) {
+            const rawCode = line.slice(0, line.indexOf(tpPrefixMatch[1])).replace(/[:\-–.\s]+$/, '').trim();
+            found.push({
+              kode: rawCode || `TP ${found.length + 1}`,
+              tujuan: tpPrefixMatch[1].trim(),
+              materi: String(judulModul || mapel || '').trim()
+            });
+            continue;
+          }
+
+          if (inTpSection) {
+            const cleaned = line.replace(/^(?:\d+[.)]|[a-z][.)]|[-•*▪➢])\s*/i, '').trim();
+            if (cleaned.length >= 15 && !/^(?:peserta didik diharapkan|berikut|setelah mengikuti)/i.test(cleaned)) {
+              found.push({
+                kode: `TP ${found.length + 1}`,
+                tujuan: cleaned,
+                materi: String(judulModul || mapel || '').trim()
+              });
+            }
+          } else if (/^(?:\d+[.)]|[-•*])\s*(?:peserta\s+didik|siswa|murid)\s+(?:mampu|dapat|memahami|menjelaskan|menganalisis|mengidentifikasi|menerapkan|menyelesaikan|merancang)/i.test(line)) {
+            const cleaned = line.replace(/^(?:\d+[.)]|[-•*])\s*/i, '').trim();
+            found.push({
+              kode: `TP ${found.length + 1}`,
+              tujuan: cleaned,
+              materi: String(judulModul || mapel || '').trim()
+            });
+          }
+          if (found.length >= 15) break;
+        }
+        return found;
+      };
+
+      const hasAiKey = Boolean((process.env.GEMINI_API_KEY || '').trim() && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
+      if (hasAiKey && (extractedText || isInline)) {
+        try {
+          const aiClient = getAiClient();
+          const parts: any[] = [];
+          if (extractedText) {
+            parts.push({ text: `Dokumen Modul Ajar (${fname}):\n${extractedText}` });
+          } else if (isInline) {
+            parts.push({
+              inlineData: {
+                mimeType: /\.pdf$/i.test(fname) ? 'application/pdf' : (mime || 'image/png'),
+                data: String(base64Data)
+              }
+            });
+          }
+          parts.push({
+            text: `Ekstrak dan pisahkan seluruh Tujuan Pembelajaran (TP) yang ada pada dokumen Modul Ajar "${judulModul || fname}" (${mapel || 'Umum'}) menjadi daftar item TP terpisah. Jika dokumen memiliki beberapa TP/indikator tujuan, pisahkan masing-masing sebagai 1 item.`
+          });
+
+          const resp = await generateContentFastWithFallback(aiClient, {
+            modeCepat: true,
+            contents: { parts },
+            systemInstruction:
+              'Anda asisten kurikulum sekolah Indonesia. Ekstrak dan pisahkan daftar Tujuan Pembelajaran (TP) secara akurat dari dokumen modul ajar menjadi item-item terpisah.',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                tps: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      kode: { type: Type.STRING, description: 'Misal TP 1, TP 2, dst.' },
+                      tujuan: { type: Type.STRING, description: 'Rumusan lengkap Tujuan Pembelajaran.' },
+                      materi: { type: Type.STRING, description: 'Materi pokok singkat terkait TP.' }
+                    },
+                    required: ['kode', 'tujuan', 'materi']
+                  }
+                }
+              },
+              required: ['tps']
+            }
+          });
+          const parsed = parseJsonSafe<{ tps?: any[] }>(resp.text, {});
+          const items = (Array.isArray(parsed.tps) ? parsed.tps : [])
+            .map((x: any, idx: number) => ({
+              kode: String(x.kode || `TP ${idx + 1}`).trim(),
+              tujuan: String(x.tujuan || '').trim(),
+              materi: String(x.materi || judulModul || '').trim()
+            }))
+            .filter(x => x.tujuan.length > 0);
+          if (items.length > 0) {
+            res.json({ ok: true, data: { tps: items, source: 'ai' } });
+            return;
+          }
+        } catch (aiErr) {
+          if (!extractedText) throw aiErr;
+        }
+      }
+
+      if (extractedText) {
+        const parsedLocal = fallbackParseTpsFromText(extractedText);
+        res.json({
+          ok: true,
+          data: {
+            tps: parsedLocal,
+            source: 'parser',
+            note: parsedLocal.length === 0 ? 'Tidak ditemukan poin TP otomatis pada teks dokumen; silakan tambah TP manual di bawah.' : ''
+          }
+        });
+        return;
+      }
+
+      res.status(200).json({
+        ok: false,
+        error: 'Ekstraksi otomatis berkas PDF/Gambar membutuhkan GEMINI_API_KEY di server, atau gunakan tombol Tambah TP Khusus Modul Ini secara manual.'
+      });
+    } catch (e: any) {
+      res.status(200).json({ ok: false, error: e?.message || 'Gagal mengekstrak TP dari modul ajar.' });
     }
   });
 

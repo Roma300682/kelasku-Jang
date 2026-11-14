@@ -319,6 +319,7 @@ export default function App() {
   const [denDirty, setDenDirty] = useState(false);
   const [akBulan, setAkBulan] = useState(ymd(new Date()).slice(0, 7));
   const [ajarSub, setAjarSub] = useState<'tp' | 'mod' | 'pem'>('tp');
+  const [tpFilterModul, setTpFilterModul] = useState<string>('all');
   const [modView, setModView] = useState('');
   const [presState, setPresState] = useState<{ slides: string[]; i: number } | null>(null);
   const kaldikAutoCheckedRef = React.useRef(false);
@@ -3870,14 +3871,44 @@ export default function App() {
 
   // 8. PERANGKAT AJAR (TP, Modul Ajar, Slide Pemantik)
   function renderAjar() {
+    const modList = (db.Modul || []).filter((m: any) => m.Kelas === K);
+    const tpToLegacyMod = new Map<string, string>();
+    modList.forEach((m: any) => {
+      String(m.TPIDs || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+        .forEach(id => {
+          if (!tpToLegacyMod.has(id)) tpToLegacyMod.set(id, m.ID);
+        });
+    });
     const tpList = (db.TP || [])
       .filter((t: any) => t.Kelas === K)
+      .map((t: any) => ({
+        ...t,
+        ModulID: t.ModulID || tpToLegacyMod.get(t.ID) || ''
+      }))
       .sort((a: any, b: any) => a.Kode.localeCompare(b.Kode, undefined, { numeric: true }));
-    const modList = (db.Modul || []).filter((m: any) => m.Kelas === K);
     const pemList = (db.Pemantik || []).filter((p: any) => p.Kelas === K);
 
-    const openModalTP = (editRow?: any) => {
-      const defaultKode = `TP ${tpList.length + 1}`;
+    const getModuleTps = (m: any) => tpList.filter((t: any) => t.ModulID === m.ID);
+    const modMap = new Map<string, any>(modList.map((m: any) => [m.ID, m]));
+
+    const syncModuleTpIds = (allTp: any[], allMod: any[]) =>
+      allMod.map((m: any) => {
+        if (m.Kelas !== K) return m;
+        const linkedIds = allTp
+          .filter((t: any) => t.Kelas === K && t.ModulID === m.ID)
+          .map((t: any) => t.ID);
+        return { ...m, TPIDs: linkedIds.join(',') };
+      });
+
+    const openModalTP = (editRow?: any, defaultModulId = '') => {
+      const targetModId = editRow ? editRow.ModulID || '' : defaultModulId;
+      const countInScope = targetModId
+        ? tpList.filter((t: any) => t.ModulID === targetModId).length
+        : tpList.length;
+      const defaultKode = `TP ${countInScope + 1}`;
       setModalContent({
         title: editRow ? 'Edit Tujuan Pembelajaran & Lampiran' : 'Tambah Tujuan Pembelajaran',
         render: () => (
@@ -3885,23 +3916,27 @@ export default function App() {
             token={token}
             initial={editRow}
             defaultKode={defaultKode}
+            defaultModulId={defaultModulId}
+            modList={modList}
             onClose={() => setModalContent(null)}
             showToast={showToast}
             onSave={async payload => {
-              const next = editRow
+              const newId = editRow ? editRow.ID : uid();
+              const nextTp = editRow
                 ? (db.TP || []).map((x: any) =>
                     x.ID === editRow.ID ? { ...x, ...payload } : x
                   )
                 : [
                     ...(db.TP || []),
                     {
-                      ID: uid(),
+                      ID: newId,
                       Kelas: K,
                       ...payload
                     }
                   ];
+              const nextMod = syncModuleTpIds(nextTp, db.Modul || []);
               setModalContent(null);
-              await persistSheets({ ...db, TP: next }, 'TP');
+              await persistSheets({ ...db, TP: nextTp, Modul: nextMod }, 'TP', 'Modul');
             }}
           />
         )
@@ -3910,7 +3945,7 @@ export default function App() {
 
     const openModalModul = (editRow?: any) => {
       setModalContent({
-        title: editRow ? 'Edit Modul Ajar / RPP' : 'Tambah / Upload Modul Ajar / RPP',
+        title: editRow ? 'Edit Modul Ajar & Pemisahan TP' : 'Tambah / Upload Modul Ajar & Pisahkan TP',
         wide: true,
         render: () => (
           <ModulModalForm
@@ -3921,20 +3956,73 @@ export default function App() {
             onClose={() => setModalContent(null)}
             showToast={showToast}
             onSave={async payload => {
-              const next = editRow
+              const modulId = editRow?.ID || uid();
+              const { moduleTps, ...modulFields } = payload;
+
+              const keptExistingIds = new Set(
+                moduleTps.map(mt => mt.existingId).filter(Boolean) as string[]
+              );
+
+              // Update existing TPs and clear ModulID if detached from this module
+              const updatedTpList = (db.TP || []).map((t: any) => {
+                if (t.Kelas !== K) return t;
+                const matched = moduleTps.find(mt => mt.existingId === t.ID);
+                if (matched) {
+                  return {
+                    ...t,
+                    ModulID: modulId,
+                    Kode: matched.Kode,
+                    Tujuan: matched.Tujuan,
+                    Materi: matched.Materi,
+                    Status: matched.Status
+                  };
+                }
+                if (t.ModulID === modulId && !keptExistingIds.has(t.ID)) {
+                  return { ...t, ModulID: '' };
+                }
+                return t;
+              });
+
+              // Create newly added/extracted TPs linked strictly to this module
+              const newlyCreatedTps = moduleTps
+                .filter(mt => !mt.existingId)
+                .map(mt => ({
+                  ID: uid(),
+                  Kelas: K,
+                  ModulID: modulId,
+                  Kode: mt.Kode,
+                  Tujuan: mt.Tujuan,
+                  Materi: mt.Materi,
+                  Status: mt.Status || 'Belum',
+                  FileID: '',
+                  NamaFile: ''
+                }));
+
+              const nextTp = [...updatedTpList, ...newlyCreatedTps];
+              const linkedTpIds = [
+                ...moduleTps.map(mt => mt.existingId).filter(Boolean),
+                ...newlyCreatedTps.map(t => t.ID)
+              ] as string[];
+
+              const nextModRaw = editRow
                 ? (db.Modul || []).map((x: any) =>
-                    x.ID === editRow.ID ? { ...x, ...payload } : x
+                    x.ID === modulId
+                      ? { ...x, ...modulFields, TPIDs: linkedTpIds.join(',') }
+                      : x
                   )
                 : [
                     ...(db.Modul || []),
                     {
-                      ID: uid(),
+                      ID: modulId,
                       Kelas: K,
-                      ...payload
+                      ...modulFields,
+                      TPIDs: linkedTpIds.join(',')
                     }
                   ];
+
+              const nextMod = syncModuleTpIds(nextTp, nextModRaw);
               setModalContent(null);
-              await persistSheets({ ...db, Modul: next }, 'Modul');
+              await persistSheets({ ...db, Modul: nextMod, TP: nextTp }, 'Modul', 'TP');
             }}
           />
         )
@@ -3944,10 +4032,7 @@ export default function App() {
     if (modView) {
       const m = modList.find((x: any) => x.ID === modView);
       if (m) {
-        const tps = String(m.TPIDs || '')
-          .split(',')
-          .map(id => tpList.find((t: any) => t.ID === id))
-          .filter(Boolean);
+        const tps = getModuleTps(m);
         return (
           <div className="space-y-6">
             <div className="flex flex-wrap items-center gap-2 noprint">
@@ -3961,7 +4046,7 @@ export default function App() {
                 onClick={() => openModalModul(m)}
                 className="px-3 py-1.5 text-xs font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg flex items-center gap-1.5 cursor-pointer"
               >
-                <Edit3 className="w-3.5 h-3.5" /> Edit / Ganti File
+                <Edit3 className="w-3.5 h-3.5" /> Edit Modul & TP
               </button>
               {m.FileID && (
                 <button
@@ -4004,12 +4089,13 @@ export default function App() {
               {tps.length > 0 && (
                 <div>
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-                    Tujuan Pembelajaran
+                    Tujuan Pembelajaran Khusus Modul Ini ({tps.length})
                   </h3>
                   <ul className="list-disc pl-5 space-y-1 text-xs text-slate-800">
                     {tps.map((t: any) => (
                       <li key={t.ID}>
                         <strong>{t.Kode}:</strong> {t.Tujuan}
+                        {t.Materi ? <span className="text-slate-500"> ({t.Materi})</span> : null}
                       </li>
                     ))}
                   </ul>
@@ -4040,13 +4126,114 @@ export default function App() {
       }
     }
 
+    const renderTpTableRows = (rows: any[], showAssignHint = false) =>
+      rows.map((t: any) => (
+        <tr key={t.ID}>
+          <td className="py-2.5 px-3 font-bold text-slate-900 whitespace-nowrap">{t.Kode}</td>
+          <td className="py-2.5 px-3 text-slate-800">
+            <div>{t.Tujuan}</div>
+            {showAssignHint && modList.length > 0 && (
+              <div className="mt-1">
+                <select
+                  value={t.ModulID || ''}
+                  onChange={async e => {
+                    const nextModId = e.target.value;
+                    const nextTp = (db.TP || []).map((x: any) =>
+                      x.ID === t.ID ? { ...x, ModulID: nextModId } : x
+                    );
+                    const nextMod = syncModuleTpIds(nextTp, db.Modul || []);
+                    await persistSheets({ ...db, TP: nextTp, Modul: nextMod }, 'TP', 'Modul');
+                  }}
+                  className="px-2 py-0.5 border border-fuchsia-200 bg-fuchsia-50/50 text-fuchsia-800 rounded text-[11px] font-medium cursor-pointer"
+                >
+                  <option value="">Pindahkan ke Modul Ajar…</option>
+                  {modList.map((m: any) => (
+                    <option key={m.ID} value={m.ID}>
+                      Masukkan ke: {m.Judul}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </td>
+          <td className="py-2.5 px-3 text-slate-600">{t.Materi || '-'}</td>
+          <td className="py-2.5 px-3">
+            {t.FileID ? (
+              <button
+                type="button"
+                onClick={() => downloadAjarFile(t.FileID, t.NamaFile)}
+                title={`Unduh ${t.NamaFile || 'lampiran TP'}`}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg max-w-[190px] cursor-pointer"
+              >
+                <Download className="w-3 h-3 shrink-0" />
+                <span className="truncate">{t.NamaFile || 'Unduh File'}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => openModalTP(t)}
+                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-pink-700 bg-pink-50 hover:bg-pink-100 border border-pink-200 rounded-lg cursor-pointer"
+              >
+                <Upload className="w-3 h-3" /> Unggah File
+              </button>
+            )}
+          </td>
+          <td className="py-2.5 px-3">
+            <select
+              value={t.Status}
+              onChange={async e => {
+                const next = db.TP.map((x: any) =>
+                  x.ID === t.ID ? { ...x, Status: e.target.value } : x
+                );
+                await persistSheets({ ...db, TP: next }, 'TP');
+              }}
+              className="px-2.5 py-1 border border-slate-200 rounded-lg text-xs font-medium bg-slate-50"
+            >
+              {Object.keys(STATUS_TP).map(s => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </td>
+          <td className="py-2.5 px-3 text-right whitespace-nowrap space-x-2">
+            <button
+              onClick={() => openModalTP(t)}
+              className="text-indigo-600 hover:underline font-medium cursor-pointer"
+            >
+              Edit
+            </button>
+            <button
+              onClick={async () => {
+                const nextTp = (db.TP || []).filter((x: any) => x.ID !== t.ID);
+                const nextMod = syncModuleTpIds(nextTp, db.Modul || []);
+                await persistSheets({ ...db, TP: nextTp, Modul: nextMod }, 'TP', 'Modul');
+              }}
+              className="text-rose-600 hover:underline font-medium cursor-pointer"
+            >
+              Hapus
+            </button>
+          </td>
+        </tr>
+      ));
+
+    const unassignedTps = tpList.filter((t: any) => !t.ModulID || !modMap.has(t.ModulID));
+    const modulesToDisplay =
+      tpFilterModul === 'all'
+        ? modList
+        : tpFilterModul === '__unassigned__'
+          ? []
+          : modList.filter((m: any) => m.ID === tpFilterModul);
+    const showUnassignedGroup =
+      (tpFilterModul === 'all' || tpFilterModul === '__unassigned__') && unassignedTps.length > 0;
+
     return (
       <div className="space-y-6">
         <div className="bg-gradient-to-r from-pink-500 via-fuchsia-500 to-purple-600 text-white rounded-2xl p-6 flex flex-wrap items-center justify-between gap-4 shadow-md">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Perangkat Ajar</h1>
             <p className="text-xs text-pink-50 mt-1">
-              Tahap 3: kelola Tujuan Pembelajaran (TP), Modul Ajar / RPP beserta unggah berkas, serta Slide Pemantik Interaktif.
+              Tahap 3: kelola Tujuan Pembelajaran (TP) yang dipisahkan per Modul Ajar, unggah berkas Modul / RPP, serta Slide Pemantik Interaktif.
             </p>
           </div>
           <div className="flex p-1 bg-white/20 backdrop-blur-sm rounded-xl">
@@ -4071,11 +4258,32 @@ export default function App() {
         </div>
 
         {ajarSub === 'tp' && (
-          <div className="bg-white border border-pink-100 rounded-2xl p-6 space-y-4 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs text-slate-500 tabular-nums">
-                {tpList.filter((t: any) => t.Status === 'Tercapai').length} dari {tpList.length} TP Tercapai
-              </span>
+          <div className="space-y-4">
+            <div className="bg-white border border-pink-100 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs text-slate-600 tabular-nums">
+                  <strong className="text-slate-900">
+                    {tpList.filter((t: any) => t.Status === 'Tercapai').length}
+                  </strong>{' '}
+                  dari <strong className="text-slate-900">{tpList.length}</strong> TP Tercapai · Dipisah ke{' '}
+                  <strong className="text-fuchsia-700">{modList.length}</strong> Modul
+                </span>
+                <select
+                  value={tpFilterModul}
+                  onChange={e => setTpFilterModul(e.target.value)}
+                  className="px-3 py-1.5 border border-fuchsia-200 bg-fuchsia-50/40 rounded-lg text-xs font-semibold text-fuchsia-950"
+                >
+                  <option value="all">Semua Modul Ajar ({tpList.length} TP)</option>
+                  {modList.map((m: any) => (
+                    <option key={m.ID} value={m.ID}>
+                      Modul: {m.Judul} ({getModuleTps(m).length} TP)
+                    </option>
+                  ))}
+                  {unassignedTps.length > 0 && (
+                    <option value="__unassigned__">TP Umum / Tanpa Modul ({unassignedTps.length})</option>
+                  )}
+                </select>
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => setImportModalMode('tp')}
@@ -4084,100 +4292,149 @@ export default function App() {
                   <Upload className="w-3.5 h-3.5" /> Impor CSV TP
                 </button>
                 <button
-                  onClick={() => openModalTP()}
+                  onClick={() =>
+                    openModalTP(
+                      undefined,
+                      tpFilterModul !== 'all' && tpFilterModul !== '__unassigned__' ? tpFilterModul : ''
+                    )
+                  }
                   className="px-3.5 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer inline-flex items-center gap-1.5"
                 >
                   <Plus className="w-3.5 h-3.5" /> Tambah TP / Upload File
                 </button>
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="border-b border-slate-200 text-slate-500">
-                  <tr>
-                    <th className="py-2.5 px-3 w-24">Kode</th>
-                    <th className="py-2.5 px-3">Tujuan Pembelajaran</th>
-                    <th className="py-2.5 px-3">Materi Pokok</th>
-                    <th className="py-2.5 px-3">Berkas Lampiran</th>
-                    <th className="py-2.5 px-3 w-36">Status</th>
-                    <th className="py-2.5 px-3 text-right">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {tpList.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-400">
-                        Belum ada Tujuan Pembelajaran. Klik <strong>Tambah TP / Upload File</strong> atau <strong>Impor CSV TP</strong> untuk memulai.
-                      </td>
-                    </tr>
-                  ) : (
-                    tpList.map((t: any) => (
-                      <tr key={t.ID}>
-                        <td className="py-2.5 px-3 font-bold text-slate-900">{t.Kode}</td>
-                        <td className="py-2.5 px-3 text-slate-800">{t.Tujuan}</td>
-                        <td className="py-2.5 px-3 text-slate-600">{t.Materi || '-'}</td>
-                        <td className="py-2.5 px-3">
-                          {t.FileID ? (
-                            <button
-                              type="button"
-                              onClick={() => downloadAjarFile(t.FileID, t.NamaFile)}
-                              title={`Unduh ${t.NamaFile || 'lampiran TP'}`}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg max-w-[190px] cursor-pointer"
-                            >
-                              <Download className="w-3 h-3 shrink-0" />
-                              <span className="truncate">{t.NamaFile || 'Unduh File'}</span>
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => openModalTP(t)}
-                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-pink-700 bg-pink-50 hover:bg-pink-100 border border-pink-200 rounded-lg cursor-pointer"
-                            >
-                              <Upload className="w-3 h-3" /> Unggah File
-                            </button>
-                          )}
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <select
-                            value={t.Status}
-                            onChange={async e => {
-                              const next = db.TP.map((x: any) =>
-                                x.ID === t.ID ? { ...x, Status: e.target.value } : x
-                              );
-                              await persistSheets({ ...db, TP: next }, 'TP');
-                            }}
-                            className="px-2.5 py-1 border border-slate-200 rounded-lg text-xs font-medium bg-slate-50"
-                          >
-                            {Object.keys(STATUS_TP).map(s => (
-                              <option key={s} value={s}>
-                                {s}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="py-2.5 px-3 text-right whitespace-nowrap space-x-2">
+
+            {tpList.length === 0 && modList.length === 0 ? (
+              <div className="bg-white border border-pink-100 rounded-2xl p-10 text-center text-xs text-slate-400 shadow-sm">
+                Belum ada Tujuan Pembelajaran ataupun Modul Ajar. Unggah Modul Ajar di tab <strong>Modul Ajar / RPP</strong> atau klik <strong>Tambah TP / Upload File</strong> untuk memulai.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {modulesToDisplay.map((m: any) => {
+                  const modTps = getModuleTps(m);
+                  const tercapaiCount = modTps.filter((t: any) => t.Status === 'Tercapai').length;
+                  return (
+                    <div
+                      key={m.ID}
+                      className="bg-white border border-fuchsia-200 rounded-2xl overflow-hidden shadow-sm"
+                    >
+                      <div className="px-5 py-3.5 bg-gradient-to-r from-fuchsia-50 via-pink-50/70 to-white border-b border-fuchsia-100 flex flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-fuchsia-600 text-white rounded-md">
+                              Modul Ajar
+                            </span>
+                            <h3 className="text-sm font-bold text-slate-900 truncate">{m.Judul}</h3>
+                            <span className="text-[11px] font-semibold text-fuchsia-700 tabular-nums">
+                              ({tercapaiCount}/{modTps.length} TP Tercapai)
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                            <span>{m.Mapel || 'Umum'}</span>
+                            {m.Alokasi && <span>· {m.Alokasi}</span>}
+                            {m.FileID && (
+                              <button
+                                type="button"
+                                onClick={() => downloadAjarFile(m.FileID, m.NamaFile)}
+                                className="inline-flex items-center gap-1 text-sky-700 hover:underline font-semibold cursor-pointer"
+                              >
+                                · <Paperclip className="w-3 h-3" /> {m.NamaFile || 'File Modul'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
                           <button
-                            onClick={() => openModalTP(t)}
-                            className="text-indigo-600 hover:underline font-medium cursor-pointer"
+                            type="button"
+                            onClick={() => openModalModul(m)}
+                            className="px-2.5 py-1 text-[11px] font-semibold bg-white hover:bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200 rounded-lg cursor-pointer"
                           >
-                            Edit
+                            Edit Modul
                           </button>
                           <button
-                            onClick={async () => {
-                              const next = db.TP.filter((x: any) => x.ID !== t.ID);
-                              await persistSheets({ ...db, TP: next }, 'TP');
-                            }}
-                            className="text-rose-600 hover:underline font-medium cursor-pointer"
+                            type="button"
+                            onClick={() => openModalTP(undefined, m.ID)}
+                            className="px-2.5 py-1 text-[11px] font-semibold bg-fuchsia-600 hover:bg-fuchsia-500 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer"
                           >
-                            Hapus
+                            <Plus className="w-3 h-3" /> Tambah TP Modul Ini
                           </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                        </div>
+                      </div>
+
+                      {modTps.length === 0 ? (
+                        <div className="p-5 text-center text-xs text-slate-400">
+                          Belum ada TP terpisah untuk modul ini. Klik <strong>+ Tambah TP Modul Ini</strong> atau buka <strong>Edit Modul</strong> untuk memisahkan TP dari file modul.
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead className="border-b border-slate-200 text-slate-500 bg-slate-50/60">
+                              <tr>
+                                <th className="py-2 px-3 w-24">Kode</th>
+                                <th className="py-2 px-3">Tujuan Pembelajaran</th>
+                                <th className="py-2 px-3">Materi Pokok</th>
+                                <th className="py-2 px-3">Berkas Lampiran</th>
+                                <th className="py-2 px-3 w-36">Status</th>
+                                <th className="py-2 px-3 text-right">Aksi</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {renderTpTableRows(modTps, false)}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {showUnassignedGroup && (
+                  <div className="bg-white border border-pink-100 rounded-2xl overflow-hidden shadow-sm">
+                    <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-800">
+                          Tujuan Pembelajaran Umum / Belum Masuk Modul ({unassignedTps.length})
+                        </h3>
+                        <p className="text-[11px] text-slate-500">
+                          Anda dapat memindahkan TP ini ke salah satu Modul Ajar menggunakan pemilih di bawah setiap TP.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openModalTP(undefined, '')}
+                        className="px-2.5 py-1 text-[11px] font-semibold bg-slate-900 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" /> Tambah TP Umum
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead className="border-b border-slate-200 text-slate-500 bg-slate-50/40">
+                          <tr>
+                            <th className="py-2 px-3 w-24">Kode</th>
+                            <th className="py-2 px-3">Tujuan Pembelajaran</th>
+                            <th className="py-2 px-3">Materi Pokok</th>
+                            <th className="py-2 px-3">Berkas Lampiran</th>
+                            <th className="py-2 px-3 w-36">Status</th>
+                            <th className="py-2 px-3 text-right">Aksi</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {renderTpTableRows(unassignedTps, true)}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {modulesToDisplay.length === 0 && !showUnassignedGroup && (
+                  <div className="bg-white border border-pink-100 rounded-2xl p-8 text-center text-xs text-slate-400">
+                    Tidak ada Tujuan Pembelajaran pada filter modul yang dipilih.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -4186,7 +4443,7 @@ export default function App() {
             <div className="bg-white border border-fuchsia-100 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
               <div className="text-xs text-slate-600">
                 <strong className="text-slate-900">{modList.length}</strong> Modul Ajar / RPP tersimpan untuk kelas{' '}
-                <strong>{kelasObj.Nama || '-'}</strong>
+                <strong>{kelasObj.Nama || '-'}</strong> · Setiap modul menyimpan daftar TP terpisah.
               </div>
               <button
                 onClick={() => openModalModul()}
@@ -4200,7 +4457,7 @@ export default function App() {
               <div className="bg-white border border-dashed border-fuchsia-200 rounded-2xl p-10 text-center space-y-3">
                 <p className="text-sm font-semibold text-slate-700">Belum ada Modul Ajar / RPP di kelas ini</p>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Anda dapat mengunggah file Modul Ajar (PDF, Word, PowerPoint, gambar) maupun menyusun skenario pembelajaran langsung di sini.
+                  Anda dapat mengunggah file Modul Ajar (PDF, Word, PowerPoint, gambar) sekaligus memisahkan Tujuan Pembelajaran (TP) per modul di sini.
                 </p>
                 <button
                   onClick={() => openModalModul()}
@@ -4211,55 +4468,117 @@ export default function App() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {modList.map((m: any) => (
-                  <div
-                    key={m.ID}
-                    className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between gap-4 shadow-2xs"
-                  >
-                    <div className="space-y-2">
-                      <h3 className="text-base font-bold text-slate-900">{m.Judul}</h3>
-                      <div className="text-xs text-slate-500">
-                        {m.Mapel} · {m.Alokasi || '-'}
-                      </div>
-                      {m.FileID && (
+                {modList.map((m: any) => {
+                  const modTps = getModuleTps(m);
+                  return (
+                    <div
+                      key={m.ID}
+                      className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between gap-4 shadow-2xs"
+                    >
+                      <div className="space-y-3">
                         <div>
-                          <button
-                            type="button"
-                            onClick={() => downloadAjarFile(m.FileID, m.NamaFile)}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-fuchsia-50 hover:bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-200 rounded-lg max-w-full cursor-pointer"
-                          >
-                            <Paperclip className="w-3 h-3 shrink-0" />
-                            <span className="truncate">{m.NamaFile || 'Unduh Berkas Modul'}</span>
-                          </button>
+                          <h3 className="text-base font-bold text-slate-900">{m.Judul}</h3>
+                          <div className="text-xs text-slate-500">
+                            {m.Mapel} · {m.Alokasi || '-'}
+                          </div>
                         </div>
-                      )}
-                      {m.Inti && <p className="text-xs text-slate-600 line-clamp-3">{m.Inti}</p>}
+                        {m.FileID && (
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => downloadAjarFile(m.FileID, m.NamaFile)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-fuchsia-50 hover:bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-200 rounded-lg max-w-full cursor-pointer"
+                            >
+                              <Paperclip className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{m.NamaFile || 'Unduh Berkas Modul'}</span>
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Separated TP Section Inside Each Uploaded Module Card */}
+                        <div className="p-3 rounded-xl bg-pink-50/50 border border-pink-100 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-bold text-pink-950 uppercase tracking-wide">
+                              TP Modul Ini ({modTps.length})
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => openModalTP(undefined, m.ID)}
+                              className="px-2 py-0.5 text-[11px] font-semibold bg-white hover:bg-pink-100 text-pink-700 border border-pink-200 rounded-md inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3" /> Tambah TP
+                            </button>
+                          </div>
+                          {modTps.length === 0 ? (
+                            <p className="text-[11px] text-slate-500">
+                              Belum ada TP terpisah di modul ini. Klik <strong>+ Tambah TP</strong> atau edit modul untuk memisahkan TP.
+                            </p>
+                          ) : (
+                            <ul className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                              {modTps.map((t: any) => (
+                                <li
+                                  key={t.ID}
+                                  className="text-xs bg-white border border-pink-100 rounded-lg px-2.5 py-1.5 flex items-start justify-between gap-2"
+                                >
+                                  <div className="min-w-0">
+                                    <span className="font-bold text-pink-800 mr-1.5">{t.Kode}:</span>
+                                    <span className="text-slate-700">{t.Tujuan}</span>
+                                  </div>
+                                  <span
+                                    className={`shrink-0 px-1.5 py-0.5 text-[10px] font-semibold rounded ${
+                                      t.Status === 'Tercapai'
+                                        ? 'bg-emerald-50 text-emerald-700'
+                                        : 'bg-slate-100 text-slate-600'
+                                    }`}
+                                  >
+                                    {t.Status || 'Belum'}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+
+                        {m.Inti && <p className="text-xs text-slate-600 line-clamp-2">{m.Inti}</p>}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                        <button
+                          onClick={() => setModView(m.ID)}
+                          className="px-3 py-1.5 text-xs font-semibold bg-slate-900 text-white rounded-lg cursor-pointer"
+                        >
+                          Lihat & Cetak
+                        </button>
+                        <button
+                          onClick={() => openModalModul(m)}
+                          className="px-3 py-1.5 text-xs font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Edit3 className="w-3 h-3" /> Edit & TP
+                        </button>
+                        <button
+                          onClick={() => {
+                            setTpFilterModul(m.ID);
+                            setAjarSub('tp');
+                          }}
+                          className="px-2.5 py-1.5 text-xs font-semibold bg-pink-50 hover:bg-pink-100 text-pink-700 rounded-lg cursor-pointer"
+                        >
+                          Kelola TP ({modTps.length})
+                        </button>
+                        <button
+                          onClick={async () => {
+                            const nextMod = (db.Modul || []).filter((x: any) => x.ID !== m.ID);
+                            const nextTp = (db.TP || []).map((t: any) =>
+                              t.ModulID === m.ID ? { ...t, ModulID: '' } : t
+                            );
+                            await persistSheets({ ...db, Modul: nextMod, TP: nextTp }, 'Modul', 'TP');
+                          }}
+                          className="px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg ml-auto cursor-pointer"
+                        >
+                          Hapus
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
-                      <button
-                        onClick={() => setModView(m.ID)}
-                        className="px-3 py-1.5 text-xs font-semibold bg-slate-900 text-white rounded-lg cursor-pointer"
-                      >
-                        Lihat & Cetak
-                      </button>
-                      <button
-                        onClick={() => openModalModul(m)}
-                        className="px-3 py-1.5 text-xs font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-lg inline-flex items-center gap-1 cursor-pointer"
-                      >
-                        <Edit3 className="w-3 h-3" /> Edit
-                      </button>
-                      <button
-                        onClick={async () => {
-                          const next = db.Modul.filter((x: any) => x.ID !== m.ID);
-                          await persistSheets({ ...db, Modul: next }, 'Modul');
-                        }}
-                        className="px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg ml-auto cursor-pointer"
-                      >
-                        Hapus
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

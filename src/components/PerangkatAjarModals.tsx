@@ -1,13 +1,21 @@
 import React, { useState } from 'react';
-import { Download, Paperclip, Sparkles, Trash2, Upload } from 'lucide-react';
+import { Download, Loader2, Paperclip, Plus, Sparkles, Trash2, Upload, Unlink } from 'lucide-react';
 import { MODUL_AWAL, STATUS_TP } from '../constants';
-import { downloadAjarFile, pesanErr, uploadAjarFile } from '../api';
+import { downloadAjarFile, fetchJson, pesanErr, uploadAjarFile } from '../api';
 
 interface PendingFile {
   namaFile: string;
   mimeType: string;
   base64Data: string;
   size: number;
+}
+
+export interface ModuleTpDraft {
+  existingId?: string;
+  Kode: string;
+  Tujuan: string;
+  Materi: string;
+  Status: string;
 }
 
 function formatFileSize(bytes: number): string {
@@ -43,8 +51,11 @@ interface TpModalFormProps {
   token: string;
   initial?: any;
   defaultKode: string;
+  defaultModulId?: string;
+  modList?: any[];
   onClose: () => void;
   onSave: (payload: {
+    ModulID: string;
     Kode: string;
     Tujuan: string;
     Materi: string;
@@ -59,10 +70,13 @@ export const TpModalForm: React.FC<TpModalFormProps> = ({
   token,
   initial,
   defaultKode,
+  defaultModulId = '',
+  modList = [],
   onClose,
   onSave,
   showToast
 }) => {
+  const [modulId, setModulId] = useState<string>(initial?.ModulID || defaultModulId || '');
   const [kode, setKode] = useState<string>(initial?.Kode || defaultKode);
   const [tujuan, setTujuan] = useState<string>(initial?.Tujuan || '');
   const [materi, setMateri] = useState<string>(initial?.Materi || '');
@@ -100,6 +114,7 @@ export const TpModalForm: React.FC<TpModalFormProps> = ({
         finalNamaFile = uploaded.namaFile;
       }
       await onSave({
+        ModulID: modulId,
         Kode: kode.trim() || defaultKode,
         Tujuan: tujuanFinal,
         Materi: materi.trim(),
@@ -116,6 +131,22 @@ export const TpModalForm: React.FC<TpModalFormProps> = ({
 
   return (
     <div className="space-y-3.5">
+      <label className="block text-xs font-semibold text-slate-700">
+        Kelompokkan pada Modul Ajar (Pemisah TP per Modul)
+        <select
+          value={modulId}
+          onChange={e => setModulId(e.target.value)}
+          className="mt-1 w-full px-3 py-2 border border-fuchsia-200 bg-fuchsia-50/30 rounded-lg text-sm font-medium text-slate-800"
+        >
+          <option value="">Umum (Tidak Terikat Modul Tertentu)</option>
+          {modList.map((m: any) => (
+            <option key={m.ID} value={m.ID}>
+              Modul: {m.Judul} ({m.Mapel || 'Umum'})
+            </option>
+          ))}
+        </select>
+      </label>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="block text-xs font-semibold text-slate-700">
           Kode TP
@@ -263,7 +294,6 @@ interface ModulModalFormProps {
     Judul: string;
     Mapel: string;
     Alokasi: string;
-    TPIDs: string;
     Pembuka: string;
     Inti: string;
     Penutup: string;
@@ -272,6 +302,7 @@ interface ModulModalFormProps {
     Catatan: string;
     FileID: string;
     NamaFile: string;
+    moduleTps: ModuleTpDraft[];
   }) => Promise<void>;
   showToast: (msg: string, ms?: number) => void;
 }
@@ -288,12 +319,27 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
   const [judul, setJudul] = useState<string>(initial?.Judul || '');
   const [mapel, setMapel] = useState<string>(initial?.Mapel || mapelList[0]?.Nama || 'Umum');
   const [alokasi, setAlokasi] = useState<string>(initial?.Alokasi || '2 x 45 Menit');
-  const [tpIds, setTpIds] = useState<string[]>(
+
+  const initialTpIdSet = new Set(
     String(initial?.TPIDs || '')
       .split(',')
       .map(s => s.trim())
       .filter(Boolean)
   );
+
+  const [moduleTps, setModuleTps] = useState<ModuleTpDraft[]>(() => {
+    if (!initial) return [];
+    return (tpList || [])
+      .filter((t: any) => t.ModulID === initial.ID || (!t.ModulID && initialTpIdSet.has(t.ID)))
+      .map((t: any) => ({
+        existingId: t.ID,
+        Kode: t.Kode || '',
+        Tujuan: t.Tujuan || '',
+        Materi: t.Materi || '',
+        Status: t.Status || 'Belum'
+      }));
+  });
+
   const [pembuka, setPembuka] = useState<string>(initial ? initial.Pembuka || '' : '');
   const [inti, setInti] = useState<string>(initial ? initial.Inti || '' : '');
   const [penutup, setPenutup] = useState<string>(initial ? initial.Penutup || '' : '');
@@ -303,10 +349,90 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
   const [fileId, setFileId] = useState<string>(initial?.FileID || '');
   const [namaFile, setNamaFile] = useState<string>(initial?.NamaFile || '');
   const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
+  const [extractingTp, setExtractingTp] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const toggleTp = (id: string) => {
-    setTpIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  const availableOtherTps = (tpList || []).filter(
+    (t: any) => !moduleTps.some(mt => mt.existingId === t.ID)
+  );
+
+  const addBlankTp = () => {
+    const nextNum = (tpList?.length || 0) + moduleTps.length + 1;
+    setModuleTps(prev => [
+      ...prev,
+      {
+        Kode: `TP ${nextNum}`,
+        Tujuan: '',
+        Materi: judul.trim() || mapel.trim() || '',
+        Status: 'Belum'
+      }
+    ]);
+  };
+
+  const attachExistingTp = (tpId: string) => {
+    if (!tpId) return;
+    const found = (tpList || []).find((t: any) => t.ID === tpId);
+    if (!found) return;
+    setModuleTps(prev => [
+      ...prev,
+      {
+        existingId: found.ID,
+        Kode: found.Kode || 'TP',
+        Tujuan: found.Tujuan || '',
+        Materi: found.Materi || '',
+        Status: found.Status || 'Belum'
+      }
+    ]);
+  };
+
+  const handleExtractTpFromFile = async () => {
+    if (!pendingFile) {
+      showToast('Pilih berkas Modul Ajar yang ingin dipisahkan TP-nya terlebih dahulu.');
+      return;
+    }
+    setExtractingTp(true);
+    try {
+      const json = await fetchJson(
+        '/api/ajar/extract-tp',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token,
+            namaFile: pendingFile.namaFile,
+            mimeType: pendingFile.mimeType,
+            base64Data: pendingFile.base64Data,
+            judulModul: judul.trim() || pendingFile.namaFile.replace(/\.[^.]+$/, ''),
+            mapel: mapel.trim() || 'Umum'
+          })
+        },
+        0
+      );
+      if (!json.ok) {
+        showToast(json.error || 'Gagal memisahkan TP dari berkas modul.', 4500);
+        return;
+      }
+      const list: any[] = json.data?.tps || [];
+      if (!list.length) {
+        showToast(json.data?.note || 'Tidak ditemukan poin TP otomatis. Silakan tambah TP manual.', 4500);
+        if (moduleTps.length === 0) addBlankTp();
+        return;
+      }
+      setModuleTps(prev => [
+        ...prev,
+        ...list.map((item, idx) => ({
+          Kode: item.kode || `TP ${prev.length + idx + 1}`,
+          Tujuan: item.tujuan || '',
+          Materi: item.materi || judul.trim() || '',
+          Status: 'Belum'
+        }))
+      ]);
+      showToast(`Berhasil memisahkan ${list.length} TP dari berkas modul!`);
+    } catch (err: any) {
+      showToast('Gagal membaca TP dari file: ' + pesanErr(err), 4500);
+    } finally {
+      setExtractingTp(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -318,6 +444,7 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
       showToast('Judul Modul Ajar wajib diisi atau unggah berkas modul terlebih dahulu');
       return;
     }
+    const validTps = moduleTps.filter(t => t.Tujuan.trim().length > 0);
     setSaving(true);
     try {
       let finalFileId = fileId;
@@ -337,7 +464,6 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         Judul: judulFinal,
         Mapel: mapel.trim() || 'Umum',
         Alokasi: alokasi.trim(),
-        TPIDs: tpIds.join(','),
         Pembuka: pembuka.trim(),
         Inti: inti.trim(),
         Penutup: penutup.trim(),
@@ -345,7 +471,13 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         Media: media.trim(),
         Catatan: catatan.trim(),
         FileID: finalFileId,
-        NamaFile: finalNamaFile
+        NamaFile: finalNamaFile,
+        moduleTps: validTps.map((t, i) => ({
+          ...t,
+          Kode: t.Kode.trim() || `TP ${i + 1}`,
+          Tujuan: t.Tujuan.trim(),
+          Materi: t.Materi.trim() || judulFinal
+        }))
       });
     } catch (e) {
       showToast('Gagal menyimpan Modul Ajar: ' + pesanErr(e), 4500);
@@ -385,18 +517,36 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         </label>
 
         {pendingFile && (
-          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs">
             <div className="min-w-0 truncate text-emerald-800 font-medium">
               Siap diunggah: <strong>{pendingFile.namaFile}</strong> ({formatFileSize(pendingFile.size)})
             </div>
-            <button
-              type="button"
-              onClick={() => setPendingFile(null)}
-              className="text-rose-600 hover:text-rose-700 shrink-0 p-1 cursor-pointer"
-              title="Batalkan pilihan berkas"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleExtractTpFromFile}
+                disabled={extractingTp}
+                className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer disabled:opacity-60"
+              >
+                {extractingTp ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin" /> Memisahkan…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3 h-3" /> Pisahkan TP dari File
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingFile(null)}
+                className="text-rose-600 hover:text-rose-700 shrink-0 p-1 cursor-pointer"
+                title="Batalkan pilihan berkas"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -460,26 +610,117 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         </label>
       </div>
 
-      {tpList.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="text-xs font-semibold text-slate-700">Terkait Tujuan Pembelajaran (Opsional)</div>
-          <div className="max-h-28 overflow-y-auto border border-slate-200 rounded-lg p-2 space-y-1 bg-slate-50">
-            {tpList.map((t: any) => (
-              <label key={t.ID} className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={tpIds.includes(t.ID)}
-                  onChange={() => toggleTp(t.ID)}
-                  className="mt-0.5 rounded"
-                />
-                <span>
-                  <strong>{t.Kode}:</strong> {t.Tujuan}
-                </span>
-              </label>
-            ))}
+      {/* Separated TPs Specifically for This Uploaded Module */}
+      <div className="p-3.5 rounded-xl border border-pink-200 bg-pink-50/40 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-bold text-pink-950">
+              Tujuan Pembelajaran (TP) Khusus Modul Ini ({moduleTps.length})
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Setiap modul yang diunggah memiliki daftar TP terpisah yang otomatis terkelompok pada modul ini.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {availableOtherTps.length > 0 && (
+              <select
+                value=""
+                onChange={e => {
+                  attachExistingTp(e.target.value);
+                  e.target.value = '';
+                }}
+                className="px-2 py-1 text-[11px] font-semibold bg-white border border-pink-200 text-pink-800 rounded-lg cursor-pointer max-w-[180px]"
+              >
+                <option value="">+ Tautkan TP Ada…</option>
+                {availableOtherTps.map((t: any) => (
+                  <option key={t.ID} value={t.ID}>
+                    {t.Kode}: {String(t.Tujuan || '').slice(0, 42)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              onClick={addBlankTp}
+              className="px-2.5 py-1 text-[11px] font-semibold bg-pink-600 hover:bg-pink-500 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer"
+            >
+              <Plus className="w-3 h-3" /> Tambah TP Modul Ini
+            </button>
           </div>
         </div>
-      )}
+
+        {moduleTps.length === 0 ? (
+          <div className="p-3 rounded-lg border border-dashed border-pink-200 bg-white text-[11px] text-slate-500 text-center">
+            Belum ada TP pada modul ini. Klik <strong>+ Tambah TP Modul Ini</strong> atau unggah file lalu klik <strong>Pisahkan TP dari File</strong>.
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+            {moduleTps.map((tp, idx) => (
+              <div
+                key={tp.existingId || `draft-${idx}`}
+                className="p-2.5 rounded-lg bg-white border border-pink-100 space-y-2"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    value={tp.Kode}
+                    onChange={e =>
+                      setModuleTps(prev =>
+                        prev.map((x, i) => (i === idx ? { ...x, Kode: e.target.value } : x))
+                      )
+                    }
+                    placeholder={`TP ${idx + 1}`}
+                    className="w-24 px-2 py-1 border border-slate-300 rounded-md text-xs font-bold"
+                  />
+                  <input
+                    value={tp.Materi}
+                    onChange={e =>
+                      setModuleTps(prev =>
+                        prev.map((x, i) => (i === idx ? { ...x, Materi: e.target.value } : x))
+                      )
+                    }
+                    placeholder="Materi pokok TP..."
+                    className="flex-1 min-w-[140px] px-2 py-1 border border-slate-300 rounded-md text-xs"
+                  />
+                  <select
+                    value={tp.Status}
+                    onChange={e =>
+                      setModuleTps(prev =>
+                        prev.map((x, i) => (i === idx ? { ...x, Status: e.target.value } : x))
+                      )
+                    }
+                    className="px-2 py-1 border border-slate-300 rounded-md text-xs bg-slate-50"
+                  >
+                    {Object.keys(STATUS_TP).map(s => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setModuleTps(prev => prev.filter((_, i) => i !== idx))}
+                    className="p-1 text-rose-600 hover:bg-rose-50 rounded-md cursor-pointer"
+                    title={tp.existingId ? 'Lepas TP ini dari modul' : 'Hapus baris TP'}
+                  >
+                    {tp.existingId ? <Unlink className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                <textarea
+                  rows={2}
+                  value={tp.Tujuan}
+                  onChange={e =>
+                    setModuleTps(prev =>
+                      prev.map((x, i) => (i === idx ? { ...x, Tujuan: e.target.value } : x))
+                    )
+                  }
+                  placeholder="Rumusan Tujuan Pembelajaran (mis. Peserta didik mampu...)"
+                  className="w-full p-2 border border-slate-200 rounded-md text-xs"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="border-t border-slate-100 pt-3 space-y-3">
         <div className="flex items-center justify-between gap-2">
