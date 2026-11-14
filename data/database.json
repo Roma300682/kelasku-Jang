@@ -1,0 +1,115 @@
+{
+  "admin": null,
+  "sheets": {
+    "Pengaturan": [
+      {
+        "Kunci": "sekolah",
+        "Nilai": "Sistem Manajemen Kelas"
+      },
+      {
+        "Kunci": "logo",
+        "Nilai": ""
+      },
+      {
+        "Kunci": "jurusan",
+        "Nilai": "MIPA, IPS, Bahasa"
+      },
+      {
+        "Kunci": "jurusanLogos",
+        "Nilai": "{}"
+      },
+      {
+        "Kunci": "waInfo",
+        "Nilai": ""
+      },
+      {
+        "Kunci": "emailPemulihan",
+        "Nilai": ""
+      },
+      {
+        "Kunci": "kodeReset",
+        "Nilai": ""
+      },
+      {
+        "Kunci": "guru",
+        "Nilai": ""
+      },
+      {
+        "Kunci": "wali",
+        "Nilai": ""
+      },
+      {
+        "Kunci": "semester",
+        "Nilai": "Ganjil 2026/2027"
+      },
+      {
+        "Kunci": "mulai",
+        "Nilai": "2026-07-15"
+      },
+      {
+        "Kunci": "kkm",
+        "Nilai": "75"
+      },
+      {
+        "Kunci": "b_sikap",
+        "Nilai": "10"
+      },
+      {
+        "Kunci": "b_tugas",
+        "Nilai": "20"
+      },
+      {
+        "Kunci": "b_proyek",
+        "Nilai": "20"
+      },
+      {
+        "Kunci": "b_uts",
+        "Nilai": "20"
+      },
+      {
+        "Kunci": "b_uas",
+        "Nilai": "30"
+      },
+      {
+        "Kunci": "kaldikAutoSync",
+        "Nilai": "1"
+      },
+      {
+        "Kunci": "kaldikWilayah",
+        "Nilai": "Provinsi Jawa Barat (Disdik Jabar)"
+      },
+      {
+        "Kunci": "kaldikTahunAjaran",
+        "Nilai": "2026/2027"
+      },
+      {
+        "Kunci": "kaldikLastSync",
+        "Nilai": ""
+      }
+    ],
+    "Kelas": [],
+    "Siswa": [],
+    "Absensi": [],
+    "Tugas": [],
+    "Pengumpulan": [],
+    "Nilai": [],
+    "Perilaku": [],
+    "Checklist": [],
+    "DenahAtur": [],
+    "Denah": [],
+    "Piket": [],
+    "Struktur": [],
+    "Jadwal": [],
+    "JadwalAtur": [],
+    "Akademik": [],
+    "TP": [],
+    "Modul": [],
+    "Pemantik": [],
+    "Mapel": [],
+    "BerkasCloud": [],
+    "CBT": [],
+    "HasilCBT": [],
+    "Pengguna": [],
+    "Akun": []
+  }
+}
