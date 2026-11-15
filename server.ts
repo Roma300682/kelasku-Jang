@@ -288,7 +288,16 @@ function createSeedDatabase(): DatabaseFile {
     { ID: 'sis_12', Kelas: 'kls_10a', Nama: 'Luthfi Hakim Maulana', NIS: '102612', NoSiswa: '081234567812', NoOrtu: '081398765012', Alamat: 'Jl. Melati No. 3', Kesehatan: 'Normal' },
     { ID: 'sis_13', Kelas: 'kls_10b', Nama: 'Muhammad Rizky Pratama', NIS: '102613', NoSiswa: '081234567813', NoOrtu: '081398765013', Alamat: 'Jl. Kenanga No. 11', Kesehatan: 'Normal' },
     { ID: 'sis_14', Kelas: 'kls_10b', Nama: 'Nabila Azzahra Putri', NIS: '102614', NoSiswa: '081234567814', NoOrtu: '081398765014', Alamat: 'Jl. Anggrek No. 20', Kesehatan: 'Normal' },
-    { ID: 'sis_15', Kelas: 'kls_11a', Nama: 'Raka Danuarta', NIS: '112601', NoSiswa: '081234567815', NoOrtu: '081398765015', Alamat: 'Jl. Mawar No. 5', Kesehatan: 'Normal' }
+    { ID: 'sis_15', Kelas: 'kls_10b', Nama: 'Oka Mahendra Kusuma', NIS: '102615', NoSiswa: '081234567815', NoOrtu: '081398765015', Alamat: 'Jl. Dahlia No. 6', Kesehatan: 'Normal' },
+    { ID: 'sis_16', Kelas: 'kls_10b', Nama: 'Putri Salsabila Ramadhani', NIS: '102616', NoSiswa: '081234567816', NoOrtu: '081398765016', Alamat: 'Jl. Flamboyan No. 18', Kesehatan: 'Normal' },
+    { ID: 'sis_17', Kelas: 'kls_10b', Nama: 'Qori Firmansyah', NIS: '102617', NoSiswa: '081234567817', NoOrtu: '081398765017', Alamat: 'Jl. Teratai No. 4', Kesehatan: 'Normal' },
+    { ID: 'sis_18', Kelas: 'kls_10b', Nama: 'Rania Safitri Handayani', NIS: '102618', NoSiswa: '081234567818', NoOrtu: '081398765018', Alamat: 'Jl. Kamboja No. 15', Kesehatan: 'Normal' },
+    { ID: 'sis_19', Kelas: 'kls_11a', Nama: 'Raka Danuarta', NIS: '112601', NoSiswa: '081234567819', NoOrtu: '081398765019', Alamat: 'Jl. Mawar No. 5', Kesehatan: 'Normal' },
+    { ID: 'sis_20', Kelas: 'kls_11a', Nama: 'Salsa Bila Khairunnisa', NIS: '112602', NoSiswa: '081234567820', NoOrtu: '081398765020', Alamat: 'Jl. Tulip No. 9', Kesehatan: 'Normal' },
+    { ID: 'sis_21', Kelas: 'kls_11a', Nama: 'Taufik Hidayatulloh', NIS: '112603', NoSiswa: '081234567821', NoOrtu: '081398765021', Alamat: 'Jl. Kutilang No. 22', Kesehatan: 'Normal' },
+    { ID: 'sis_22', Kelas: 'kls_11a', Nama: 'Ulfa Nurjanah', NIS: '112604', NoSiswa: '081234567822', NoOrtu: '081398765022', Alamat: 'Jl. Merpati No. 13', Kesehatan: 'Minus mata (-1.0)' },
+    { ID: 'sis_23', Kelas: 'kls_11a', Nama: 'Vino Alfarizi', NIS: '112605', NoSiswa: '081234567823', NoOrtu: '081398765023', Alamat: 'Jl. Rajawali No. 7', Kesehatan: 'Normal' },
+    { ID: 'sis_24', Kelas: 'kls_11a', Nama: 'Wulan Dari Puspita', NIS: '112606', NoSiswa: '081234567824', NoOrtu: '081398765024', Alamat: 'Jl. Elang No. 31', Kesehatan: 'Normal' }
   ];
 
   // Default PIN '123456' for all seeded students
@@ -331,10 +340,43 @@ function createSeedDatabase(): DatabaseFile {
     });
   });
 
+  const kls10BStudents = siswa10A.filter(s => s.Kelas === 'kls_10b');
+  const kls11AStudents = siswa10A.filter(s => s.Kelas === 'kls_11a');
+
+  [d1, d0].forEach((tgl, idx) => {
+    kls10BStudents.forEach((s, sIdx) => {
+      absensiList.push({
+        Kelas: 'kls_10b',
+        Tanggal: tgl,
+        SiswaID: s.ID,
+        Kode: idx === 1 && sIdx === 4 ? 'I' : 'H',
+        Keterangan: idx === 1 && sIdx === 4 ? 'Lomba olimpiade kabupaten' : '',
+        Sumber: ''
+      });
+    });
+    kls11AStudents.forEach((s, sIdx) => {
+      absensiList.push({
+        Kelas: 'kls_11a',
+        Tanggal: tgl,
+        SiswaID: s.ID,
+        Kode: idx === 1 && sIdx === 2 ? 'T' : 'H',
+        Keterangan: idx === 1 && sIdx === 2 ? 'Hadir 07:10' : '',
+        Sumber: ''
+      });
+    });
+  });
+
   const tugasList = [
     { ID: 'tug_1', Kelas: 'kls_10a', Judul: 'Latihan Eksponen & Logaritma', Mapel: 'Matematika', Deskripsi: 'Kerjakan soal latihan nomor 1-10 lengkap dengan langkah penyelesaian.', Tenggat: d2, Jenis: 'Tugas', FileID: '', NamaFile: '' },
     { ID: 'tug_2', Kelas: 'kls_10a', Judul: 'Kuis Sistem Persamaan Linear', Mapel: 'Matematika', Deskripsi: 'Selesaikan persamaan linear 3 variabel dan unggah hasil kerja.', Tenggat: d1, Jenis: 'Kuis harian', FileID: '', NamaFile: '' },
-    { ID: 'tug_3', Kelas: 'kls_10a', Judul: 'Proyek Pemodelan Fungsi Kuadrat', Mapel: 'Matematika', Deskripsi: 'Buat laporan pemodelan parabola dalam kehidupan sehari-hari (PDF atau foto grafik).', Tenggat: fmtDate(new Date(today.getTime() + 5 * 86400000)), Jenis: 'Proyek', FileID: '', NamaFile: '' }
+    { ID: 'tug_3', Kelas: 'kls_10a', Judul: 'Proyek Pemodelan Fungsi Kuadrat', Mapel: 'Matematika', Deskripsi: 'Buat laporan pemodelan parabola dalam kehidupan sehari-hari (PDF atau foto grafik).', Tenggat: fmtDate(new Date(today.getTime() + 5 * 86400000)), Jenis: 'Proyek', FileID: '', NamaFile: '' },
+    { ID: 'tug_4', Kelas: 'kls_10a', Judul: 'Laporan Pengukuran Jangka Sorong & Mikrometer', Mapel: 'Fisika', Deskripsi: 'Catat hasil pengukuran benda di laboratorium beserta ketidakpastian pengukuran.', Tenggat: fmtDate(new Date(today.getTime() + 3 * 86400000)), Jenis: 'Praktik', FileID: '', NamaFile: '' },
+    { ID: 'tug_5', Kelas: 'kls_10a', Judul: 'Diagram Alir (Flowchart) Program Kasir Sederhana', Mapel: 'Informatika', Deskripsi: 'Buat flowchart perhitungan diskon belanja dan unggah dalam format PDF atau gambar.', Tenggat: fmtDate(new Date(today.getTime() + 4 * 86400000)), Jenis: 'Proyek', FileID: '', NamaFile: '' },
+    { ID: 'tug_6', Kelas: 'kls_10a', Judul: 'Analisis Struktur Teks Laporan Hasil Observasi', Mapel: 'Bahasa Indonesia', Deskripsi: 'Identifikasi pernyataan umum, deskripsi bagian, dan kaidah kebahasaan dari teks bacaan.', Tenggat: fmtDate(new Date(today.getTime() + 6 * 86400000)), Jenis: 'Tugas', FileID: '', NamaFile: '' },
+    { ID: 'tug_7', Kelas: 'kls_10b', Judul: 'Latihan Soal Fungsi Kuadrat & Diskriminan', Mapel: 'Matematika', Deskripsi: 'Kerjakan 8 soal penentuan titik puncak dan jenis akar fungsi kuadrat.', Tenggat: fmtDate(new Date(today.getTime() + 3 * 86400000)), Jenis: 'Tugas', FileID: '', NamaFile: '' },
+    { ID: 'tug_8', Kelas: 'kls_10b', Judul: 'Praktikum Klasifikasi Larutan Asam & Basa', Mapel: 'Kimia', Deskripsi: 'Susun tabel hasil uji indikator alami dan kertas lakmus.', Tenggat: fmtDate(new Date(today.getTime() + 5 * 86400000)), Jenis: 'Praktik', FileID: '', NamaFile: '' },
+    { ID: 'tug_9', Kelas: 'kls_11a', Judul: 'Pemodelan Matriks Transformasi Geometri', Mapel: 'Matematika', Deskripsi: 'Selesaikan latihan translasi, refleksi, dan rotasi menggunakan perkalian matriks.', Tenggat: fmtDate(new Date(today.getTime() + 4 * 86400000)), Jenis: 'Tugas', FileID: '', NamaFile: '' },
+    { ID: 'tug_10', Kelas: 'kls_11a', Judul: 'Mini Riset Keanekaragaman Sel & Jaringan', Mapel: 'Biologi', Deskripsi: 'Presentasikan perbedaan struktur sel hewan dan sel tumbuhan beserta fungsinya.', Tenggat: fmtDate(new Date(today.getTime() + 6 * 86400000)), Jenis: 'Proyek', FileID: '', NamaFile: '' }
   ];
 
   const pengumpulanList: Record<string, string>[] = [];
@@ -364,10 +406,56 @@ function createSeedDatabase(): DatabaseFile {
     });
   });
 
+  kls10BStudents.forEach((s, i) => {
+    nilaiList.push({
+      Kelas: 'kls_10b',
+      SiswaID: s.ID,
+      Sikap: '92',
+      Tugas: String(82 + ((i * 3) % 14)),
+      Proyek: String(85 + ((i * 2) % 12)),
+      UTS: String(78 + ((i * 4) % 18)),
+      UAS: String(81 + ((i * 3) % 16))
+    });
+    pengumpulanList.push({
+      TugasID: 'tug_7',
+      SiswaID: s.ID,
+      Status: i < 4 ? 'Tepat Waktu' : 'Belum',
+      Nilai: i < 4 ? String(84 + i * 2) : '',
+      FileID: '',
+      NamaFile: '',
+      TanggalKumpul: i < 4 ? d1 : '',
+      CatatanSiswa: ''
+    });
+  });
+
+  kls11AStudents.forEach((s, i) => {
+    nilaiList.push({
+      Kelas: 'kls_11a',
+      SiswaID: s.ID,
+      Sikap: '94',
+      Tugas: String(84 + ((i * 2) % 12)),
+      Proyek: String(86 + ((i * 3) % 11)),
+      UTS: String(80 + ((i * 3) % 15)),
+      UAS: String(83 + ((i * 2) % 14))
+    });
+    pengumpulanList.push({
+      TugasID: 'tug_9',
+      SiswaID: s.ID,
+      Status: i < 5 ? 'Tepat Waktu' : 'Belum',
+      Nilai: i < 5 ? String(85 + i * 2) : '',
+      FileID: '',
+      NamaFile: '',
+      TanggalKumpul: i < 5 ? d1 : '',
+      CatatanSiswa: ''
+    });
+  });
+
   const perilakuList = [
     { ID: 'per_1', Kelas: 'kls_10a', Tanggal: d2, SiswaID: 'sis_01', Jenis: 'Penguatan positif', Level: '', Catatan: 'Memimpin diskusi kelompok dan membantu teman memahami materi logaritma', TindakLanjut: 'Apresiasi di depan kelas dan poin bintang' },
     { ID: 'per_2', Kelas: 'kls_10a', Tanggal: d1, SiswaID: 'sis_03', Jenis: 'Penguatan positif', Level: '', Catatan: 'Menyiapkan perangkat proyektor dan kebersihan kelas sebelum jam pertama', TindakLanjut: 'Pesan apresiasi ke orang tua' },
-    { ID: 'per_3', Kelas: 'kls_10a', Tanggal: d1, SiswaID: 'sis_10', Jenis: 'Pelanggaran', Level: '1', Catatan: 'Kurang fokus dan mengobrol saat penjelasan materi inti', TindakLanjut: 'Pengingat lisan dan pemindahan posisi diskusi' }
+    { ID: 'per_3', Kelas: 'kls_10a', Tanggal: d1, SiswaID: 'sis_10', Jenis: 'Pelanggaran', Level: '1', Catatan: 'Kurang fokus dan mengobrol saat penjelasan materi inti', TindakLanjut: 'Pengingat lisan dan pemindahan posisi diskusi' },
+    { ID: 'per_4', Kelas: 'kls_10b', Tanggal: d1, SiswaID: 'sis_13', Jenis: 'Penguatan positif', Level: '', Catatan: 'Aktif membantu kelompok menyelesaikan praktikum pengukuran fisika', TindakLanjut: 'Apresiasi poin keaktifan' },
+    { ID: 'per_5', Kelas: 'kls_11a', Tanggal: d1, SiswaID: 'sis_19', Jenis: 'Penguatan positif', Level: '', Catatan: 'Mengkoordinir persiapan presentasi proyek kelas dengan tertib', TindakLanjut: 'Apresiasi wali kelas' }
   ];
 
   const checklistList = [0, 1, 2, 3, 4, 5].map(i => ({
@@ -377,25 +465,57 @@ function createSeedDatabase(): DatabaseFile {
   }));
 
   const denahAturList = [
-    { Kelas: 'kls_10a', Baris: '4', Kolom: '4', Grup: '2' }
+    { Kelas: 'kls_10a', Baris: '4', Kolom: '4', Grup: '2' },
+    { Kelas: 'kls_10b', Baris: '3', Kolom: '4', Grup: '2' },
+    { Kelas: 'kls_11a', Baris: '3', Kolom: '4', Grup: '2' }
   ];
 
-  const denahList = kls10AStudents.map((s, idx) => ({
-    Kelas: 'kls_10a',
-    Baris: String(Math.floor(idx / 4) + 1),
-    Kolom: String((idx % 4) + 1),
-    SiswaID: s.ID
-  }));
+  const denahList = [
+    ...kls10AStudents.map((s, idx) => ({
+      Kelas: 'kls_10a',
+      Baris: String(Math.floor(idx / 4) + 1),
+      Kolom: String((idx % 4) + 1),
+      SiswaID: s.ID
+    })),
+    ...kls10BStudents.map((s, idx) => ({
+      Kelas: 'kls_10b',
+      Baris: String(Math.floor(idx / 4) + 1),
+      Kolom: String((idx % 4) + 1),
+      SiswaID: s.ID
+    })),
+    ...kls11AStudents.map((s, idx) => ({
+      Kelas: 'kls_11a',
+      Baris: String(Math.floor(idx / 4) + 1),
+      Kolom: String((idx % 4) + 1),
+      SiswaID: s.ID
+    }))
+  ];
 
   const hariPiket = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'];
   const tugasPiket = ['Menyapu lantai', 'Mengepel', 'Menghapus papan tulis', 'Merapikan meja & kursi', 'Membuang sampah'];
-  const piketList = kls10AStudents.map((s, i) => ({
-    ID: `pik_${i + 1}`,
-    Kelas: 'kls_10a',
-    Hari: hariPiket[i % 5],
-    SiswaID: s.ID,
-    Tugas: tugasPiket[i % 5]
-  }));
+  const piketList = [
+    ...kls10AStudents.map((s, i) => ({
+      ID: `pik_10a_${i + 1}`,
+      Kelas: 'kls_10a',
+      Hari: hariPiket[i % 5],
+      SiswaID: s.ID,
+      Tugas: tugasPiket[i % 5]
+    })),
+    ...kls10BStudents.map((s, i) => ({
+      ID: `pik_10b_${i + 1}`,
+      Kelas: 'kls_10b',
+      Hari: hariPiket[i % 5],
+      SiswaID: s.ID,
+      Tugas: tugasPiket[i % 5]
+    })),
+    ...kls11AStudents.map((s, i) => ({
+      ID: `pik_11a_${i + 1}`,
+      Kelas: 'kls_11a',
+      Hari: hariPiket[i % 5],
+      SiswaID: s.ID,
+      Tugas: tugasPiket[i % 5]
+    }))
+  ];
 
   const strukturList = [
     { ID: 'str_1', Kelas: 'kls_10a', Jabatan: 'Ketua Kelas', SiswaID: 'sis_02', Tingkat: '1' },
@@ -405,11 +525,19 @@ function createSeedDatabase(): DatabaseFile {
     { ID: 'str_5', Kelas: 'kls_10a', Jabatan: 'Seksi Kebersihan', SiswaID: 'sis_05', Tingkat: '3' },
     { ID: 'str_6', Kelas: 'kls_10a', Jabatan: 'Seksi Keamanan', SiswaID: 'sis_06', Tingkat: '3' },
     { ID: 'str_7', Kelas: 'kls_10a', Jabatan: 'Seksi Kesehatan', SiswaID: 'sis_07', Tingkat: '3' },
-    { ID: 'str_8', Kelas: 'kls_10a', Jabatan: 'Seksi Perlengkapan', SiswaID: 'sis_08', Tingkat: '3' }
+    { ID: 'str_8', Kelas: 'kls_10a', Jabatan: 'Seksi Perlengkapan', SiswaID: 'sis_08', Tingkat: '3' },
+    { ID: 'str_9', Kelas: 'kls_10b', Jabatan: 'Ketua Kelas', SiswaID: 'sis_13', Tingkat: '1' },
+    { ID: 'str_10', Kelas: 'kls_10b', Jabatan: 'Sekretaris', SiswaID: 'sis_14', Tingkat: '2' },
+    { ID: 'str_11', Kelas: 'kls_10b', Jabatan: 'Bendahara', SiswaID: 'sis_15', Tingkat: '2' },
+    { ID: 'str_12', Kelas: 'kls_11a', Jabatan: 'Ketua Kelas', SiswaID: 'sis_19', Tingkat: '1' },
+    { ID: 'str_13', Kelas: 'kls_11a', Jabatan: 'Sekretaris', SiswaID: 'sis_20', Tingkat: '2' },
+    { ID: 'str_14', Kelas: 'kls_11a', Jabatan: 'Bendahara', SiswaID: 'sis_21', Tingkat: '2' }
   ];
 
   const jadwalAturList = [
-    { Kelas: 'kls_10a', Sistem: 'reguler', Mulai: '07:00', Durasi: '45', Jumlah: '8', Istirahat: '3:15,6:30' }
+    { Kelas: 'kls_10a', Sistem: 'reguler', Mulai: '07:00', Durasi: '45', Jumlah: '8', Istirahat: '3:15,6:30' },
+    { Kelas: 'kls_10b', Sistem: 'reguler', Mulai: '07:00', Durasi: '45', Jumlah: '8', Istirahat: '3:15,6:30' },
+    { Kelas: 'kls_11a', Sistem: 'reguler', Mulai: '07:00', Durasi: '45', Jumlah: '8', Istirahat: '3:15,6:30' }
   ];
 
   const jadwalList = [
@@ -422,25 +550,39 @@ function createSeedDatabase(): DatabaseFile {
     { ID: 'jd_7', Kelas: 'kls_10a', Hari: 'Rabu', Mulai: '07:00', Selesai: '08:30', Mapel: 'Matematika', Guru: 'Dra. Ratna Sari, M.Pd.', Jenis: 'Pelajaran', Pekan: '' },
     { ID: 'jd_8', Kelas: 'kls_10a', Hari: 'Rabu', Mulai: '08:30', Selesai: '10:00', Mapel: 'Biologi', Guru: 'Dewi Anggraini, M.Pd.', Jenis: 'Pelajaran', Pekan: '' },
     { ID: 'jd_9', Kelas: 'kls_10a', Hari: 'Kamis', Mulai: '07:00', Selesai: '08:30', Mapel: 'Bahasa Inggris', Guru: 'Rina Marlina, S.Pd.', Jenis: 'Pelajaran', Pekan: '' },
-    { ID: 'jd_10', Kelas: 'kls_10a', Hari: 'Jumat', Mulai: '07:00', Selesai: '08:30', Mapel: 'PJOK', Guru: 'Agus Setiawan, S.Or.', Jenis: 'Pelajaran', Pekan: '' }
+    { ID: 'jd_10', Kelas: 'kls_10a', Hari: 'Jumat', Mulai: '07:00', Selesai: '08:30', Mapel: 'PJOK', Guru: 'Agus Setiawan, S.Or.', Jenis: 'Pelajaran', Pekan: '' },
+    { ID: 'jd_11', Kelas: 'kls_10b', Hari: 'Senin', Mulai: '07:00', Selesai: '08:30', Mapel: 'Fisika', Guru: 'Budi Santoso, S.Kom.', Jenis: 'Pelajaran', Pekan: '' },
+    { ID: 'jd_12', Kelas: 'kls_10b', Hari: 'Senin', Mulai: '08:30', Selesai: '10:00', Mapel: 'Matematika', Guru: 'Dra. Ratna Sari, M.Pd.', Jenis: 'Pelajaran', Pekan: '' },
+    { ID: 'jd_13', Kelas: 'kls_10b', Hari: 'Selasa', Mulai: '07:00', Selesai: '08:30', Mapel: 'Kimia', Guru: 'Siti Aminah, S.Pd.', Jenis: 'Pelajaran', Pekan: '' },
+    { ID: 'jd_14', Kelas: 'kls_10b', Hari: 'Rabu', Mulai: '07:00', Selesai: '08:30', Mapel: 'Informatika', Guru: 'Budi Santoso, S.Kom.', Jenis: 'Pelajaran', Pekan: '' },
+    { ID: 'jd_15', Kelas: 'kls_10b', Hari: 'Kamis', Mulai: '07:00', Selesai: '08:30', Mapel: 'Bahasa Indonesia', Guru: 'Drs. Hendra Gunawan', Jenis: 'Pelajaran', Pekan: '' },
+    { ID: 'jd_16', Kelas: 'kls_10b', Hari: 'Jumat', Mulai: '07:00', Selesai: '08:30', Mapel: 'Bahasa Inggris', Guru: 'Rina Marlina, S.Pd.', Jenis: 'Pelajaran', Pekan: '' },
+    { ID: 'jd_17', Kelas: 'kls_11a', Hari: 'Senin', Mulai: '07:00', Selesai: '08:30', Mapel: 'Matematika', Guru: 'Dra. Ratna Sari, M.Pd.', Jenis: 'Pelajaran', Pekan: '' },
+    { ID: 'jd_18', Kelas: 'kls_11a', Hari: 'Selasa', Mulai: '07:00', Selesai: '08:30', Mapel: 'Biologi', Guru: 'Dewi Anggraini, M.Pd.', Jenis: 'Pelajaran', Pekan: '' },
+    { ID: 'jd_19', Kelas: 'kls_11a', Hari: 'Rabu', Mulai: '07:00', Selesai: '08:30', Mapel: 'Fisika', Guru: 'Budi Santoso, S.Kom.', Jenis: 'Pelajaran', Pekan: '' },
+    { ID: 'jd_20', Kelas: 'kls_11a', Hari: 'Kamis', Mulai: '07:00', Selesai: '08:30', Mapel: 'Informatika', Guru: 'Budi Santoso, S.Kom.', Jenis: 'Pelajaran', Pekan: '' },
+    { ID: 'jd_21', Kelas: 'kls_11a', Hari: 'Jumat', Mulai: '07:00', Selesai: '08:30', Mapel: 'Bahasa Inggris', Guru: 'Rina Marlina, S.Pd.', Jenis: 'Pelajaran', Pekan: '' }
   ];
 
   const akademikList = getKaldikJabarEvents('2026/2027');
 
   const tpList = [
-    { ID: 'tp_1', Kelas: 'kls_10a', Kode: 'TP 1', Tujuan: 'Peserta didik mampu menggeneralisasi sifat-sifat eksponen dan logaritma serta menerapkannya dalam penyelesaian masalah kontekstual.', Materi: 'Eksponen & Logaritma', Status: 'Tercapai' },
-    { ID: 'tp_2', Kelas: 'kls_10a', Kode: 'TP 2', Tujuan: 'Peserta didik mampu memodelkan dan menyelesaikan sistem persamaan linear tiga variabel (SPLTV).', Materi: 'SPLTV', Status: 'Tercapai' },
-    { ID: 'tp_3', Kelas: 'kls_10a', Kode: 'TP 3', Tujuan: 'Peserta didik mampu menganalisis karakteristik grafik fungsi kuadrat dan menentukan titik optimum.', Materi: 'Fungsi Kuadrat', Status: 'Berjalan' }
+    { ID: 'tp_1', Kelas: 'kls_10a', ModulID: '', Kode: 'TP 1', Tujuan: 'Peserta didik mampu menggeneralisasi sifat-sifat eksponen dan logaritma serta menerapkannya dalam penyelesaian masalah kontekstual.', Materi: 'Eksponen & Logaritma', Status: 'Tercapai' },
+    { ID: 'tp_2', Kelas: 'kls_10a', ModulID: '', Kode: 'TP 2', Tujuan: 'Peserta didik mampu memodelkan dan menyelesaikan sistem persamaan linear tiga variabel (SPLTV).', Materi: 'SPLTV', Status: 'Tercapai' },
+    { ID: 'tp_3', Kelas: 'kls_10a', ModulID: 'mod_1', Kode: 'TP 3', Tujuan: 'Peserta didik mampu menganalisis karakteristik grafik fungsi kuadrat dan menentukan titik optimum.', Materi: 'Fungsi Kuadrat', Status: 'Berjalan' },
+    { ID: 'tp_4', Kelas: 'kls_10a', ModulID: 'mod_2', Kode: 'TP 4', Tujuan: 'Peserta didik mampu merancang algoritma pemecahan masalah sederhana menggunakan pseudocode dan flowchart.', Materi: 'Algoritma & Flowchart', Status: 'Berjalan' },
+    { ID: 'tp_5', Kelas: 'kls_10b', ModulID: 'mod_1', Kode: 'TP 1', Tujuan: 'Peserta didik mampu menentukan titik puncak dan diskriminan fungsi kuadrat dalam masalah nyata.', Materi: 'Fungsi Kuadrat', Status: 'Berjalan' },
+    { ID: 'tp_6', Kelas: 'kls_11a', ModulID: 'mod_3', Kode: 'TP 1', Tujuan: 'Peserta didik mampu menerapkan konsep besaran, pengukuran presisi, dan angka penting dalam percobaan fisika.', Materi: 'Besaran & Pengukuran', Status: 'Tercapai' }
   ];
 
   const modulList = [
     {
       ID: 'mod_1',
-      Kelas: 'kls_10a',
+      Kelas: '__ALL__',
       Judul: 'Eksplorasi Fungsi Kuadrat & Lintasan Parabola',
       Mapel: 'Matematika',
       Alokasi: '2 × 45 menit',
-      TPIDs: 'tp_3',
+      TPIDs: 'tp_3,tp_5',
       Pembuka: 'Salam, doa, dan cek kehadiran dalam 5 menit pertama.\nApersepsi: Mengaitkan lintasan bola basket dengan kurva parabola.\nMenyampaikan tujuan pembelajaran dan kriteria keberhasilan.',
       Inti: 'Kegiatan 1: Eksplorasi grafik f(x) = ax² + bx + c menggunakan lembar kerja kelompok.\nKegiatan 2: Diskusi kelompok heterogen menganalisis pengaruh koefisien a, b, dan diskriminan D.\nDiferensiasi: Kelompok mahir menganalisis optimasi luas maksimum.',
       Penutup: 'Rangkuman bersama tentang titik puncak dan sumbu simetri.\nRefleksi singkat (exit ticket 3 menit).\nInformasi tugas proyek pertemuan berikutnya.',
@@ -451,6 +593,42 @@ function createSeedDatabase(): DatabaseFile {
       LinkSumber: JSON.stringify([
         { label: 'Simulasi Grafik GeoGebra', url: 'https://www.geogebra.org/graphing' },
         { label: 'Rumah Belajar Kemdikbud', url: 'https://belajar.kemdikbud.go.id' }
+      ])
+    },
+    {
+      ID: 'mod_2',
+      Kelas: '__ALL__',
+      Judul: 'Berpikir Komputasional: Dekomposisi & Algoritma Flowchart',
+      Mapel: 'Informatika',
+      Alokasi: '2 × 45 menit',
+      TPIDs: 'tp_4',
+      Pembuka: 'Apersepsi: Memecah proses pemesanan makanan online menjadi langkah-langkah logis.',
+      Inti: 'Kegiatan 1: Identifikasi empat pilar berpikir komputasional (Dekomposisi, Pengenalan Pola, Abstraksi, Algoritma).\nKegiatan 2: Praktik menyusun flowchart percabangan dan perulangan sederhana.',
+      Penutup: 'Presentasi hasil flowchart antar kelompok dan refleksi logika algoritma.',
+      Asesmen: 'Formatif: Rubrik kelengkapan simbol flowchart & ketepatan logika.',
+      Media: 'Kartu Alur Logika, Diagrams.net, Proyektor',
+      Catatan: 'Siswa cepat memahami percabangan if-else dengan contoh kasir.',
+      PertanyaanPemantik: 'Bagaimana aplikasi ojek online dapat menghitung tarif dan mencari rute tercepat hanya dalam hitungan detik?',
+      LinkSumber: JSON.stringify([
+        { label: 'Code.org CS Fundamentals', url: 'https://code.org' }
+      ])
+    },
+    {
+      ID: 'mod_3',
+      Kelas: '__ALL__',
+      Judul: 'Pengukuran Presisi & Ketidakpastian Alat Ukur Fisika',
+      Mapel: 'Fisika',
+      Alokasi: '2 × 45 menit',
+      TPIDs: 'tp_6',
+      Pembuka: 'Apersepsi: Mengapa teknisi mesin tidak cukup memakai penggaris biasa untuk mengukur diameter baut?',
+      Inti: 'Praktikum langsung membaca skala utama dan skala nonius pada jangka sorong serta mikrometer sekrup.',
+      Penutup: 'Pembahasan aturan angka penting dan pelaporan hasil pengukuran berulang.',
+      Asesmen: 'Praktik laboratorium & kuis pembacaan skala.',
+      Media: 'Jangka Sorong, Mikrometer Sekrup, Simulasi PhET',
+      Catatan: '',
+      PertanyaanPemantik: 'Mengapa setiap hasil pengukuran ilmiah selalu memiliki nilai ketidakpastian?',
+      LinkSumber: JSON.stringify([
+        { label: 'Simulasi PhET Colorado', url: 'https://phet.colorado.edu/in/' }
       ])
     }
   ];
@@ -468,6 +646,19 @@ function createSeedDatabase(): DatabaseFile {
       SumberPelajaran: JSON.stringify([
         { label: 'Simulasi Grafik GeoGebra', url: 'https://www.geogebra.org/graphing' },
         { label: 'Khan Academy: Quadratic Functions', url: 'https://www.khanacademy.org/math/algebra/x2f8bb11595b61c86:quadratic-functions-equations' }
+      ])
+    },
+    {
+      ID: 'pem_2',
+      Kelas: '__ALL__',
+      ModulID: 'mod_2',
+      Mapel: 'Informatika',
+      Judul: 'Bagaimana Komputer Berpikir Langkah Demi Langkah?',
+      Tautan: 'https://code.org',
+      Pertanyaan: 'Mengapa komputer membutuhkan instruksi yang sangat spesifik dan tidak boleh ambigu seperti bahasa manusia sehari-hari?',
+      Slide: 'Algoritma di Kehidupan Sehari-hari\nResep masakan, rute perjalanan, dan mesin ATM semuanya bekerja mengikuti urutan langkah yang terstruktur.\n---\n4 Pilar Berpikir Komputasional\nDekomposisi · Pengenalan Pola · Abstraksi · Algoritma.\n---\nStudi Kasus Kelas\nRancang alur logika mesin kasir otomatis yang memberi diskon 10% untuk total belanja di atas Rp100.000.',
+      SumberPelajaran: JSON.stringify([
+        { label: 'Code.org CS Fundamentals', url: 'https://code.org' }
       ])
     }
   ];
@@ -523,7 +714,92 @@ function createSeedDatabase(): DatabaseFile {
       NamaFile: '',
       UkuranFile: '',
       TanggalUpload: d1,
-      Pengunggah: 'Tim Guru Bahasa Indonesia'
+      Pengunggah: 'Drs. Hendra Gunawan'
+    },
+    {
+      ID: 'mat_4',
+      Kelas: '__ALL__',
+      Mapel: 'Fisika',
+      Judul: 'Besaran, Satuan SI, Pengukuran & Angka Penting',
+      Bab: 'Bab 1 · Hakikat Fisika & Pengukuran',
+      Ringkasan: 'Ringkasan besaran pokok dan turunan, cara membaca jangka sorong dan mikrometer sekrup, serta aturan pembulatan angka penting.',
+      IsiMateri: '1. Besaran Pokok & Satuan SI\nPanjang (m), Massa (kg), Waktu (s), Suhu (K), Kuat Arus (A), Intensitas Cahaya (cd), Jumlah Zat (mol).\n\n2. Ketelitian Alat Ukur Panjang\n- Mistar: ketelitian 0,1 cm (1 mm)\n- Jangka Sorong: ketelitian 0,01 cm (0,1 mm)\n- Mikrometer Sekrup: ketelitian 0,001 cm (0,01 mm)\n\n3. Rumus Pembacaan Jangka Sorong\nHasil = Skala Utama + (Skala Nonius × 0,01 cm).',
+      LinkSumber: JSON.stringify([
+        { label: 'Simulasi PhET Fisika', url: 'https://phet.colorado.edu/in/' }
+      ]),
+      FileID: '',
+      NamaFile: '',
+      UkuranFile: '',
+      TanggalUpload: d1,
+      Pengunggah: 'Budi Santoso, S.Kom.'
+    },
+    {
+      ID: 'mat_5',
+      Kelas: '__ALL__',
+      Mapel: 'Informatika',
+      Judul: 'Berpikir Komputasional, Flowchart & Struktur Algoritma',
+      Bab: 'Bab 2 · Berpikir Komputasional',
+      Ringkasan: 'Panduan menyusun algoritma pemecahan masalah dengan metode dekomposisi, pengenalan pola, abstraksi, serta simbol standar flowchart.',
+      IsiMateri: '1. Empat Pilar Berpikir Komputasional\n- Dekomposisi: memecah masalah besar menjadi sub-masalah kecil.\n- Pengenalan Pola: mencari kesamaan karakteristik antar masalah.\n- Abstraksi: menyaring informasi penting dan mengabaikan detail tidak relevan.\n- Algoritma: menyusun langkah penyelesaian secara runtut.\n\n2. Simbol Dasar Flowchart\n- Terminator (Oval): Mulai / Selesai\n- Input/Output (Jajar Genjang): Membaca data / menampilkan hasil\n- Proses (Persegi Panjang): Perhitungan atau penugasan nilai\n- Decision (Belah Ketupat): Kondisi percabangan Ya/Tidak.',
+      LinkSumber: JSON.stringify([
+        { label: 'Code.org CS Fundamentals', url: 'https://code.org' }
+      ]),
+      FileID: '',
+      NamaFile: '',
+      UkuranFile: '',
+      TanggalUpload: d1,
+      Pengunggah: 'Budi Santoso, S.Kom.'
+    },
+    {
+      ID: 'mat_6',
+      Kelas: '__ALL__',
+      Mapel: 'Kimia',
+      Judul: 'Struktur Atom, Konfigurasi Elektron & Sistem Periodik Unsur',
+      Bab: 'Bab 2 · Struktur Atom',
+      Ringkasan: 'Materi dasar mengenai partikel penyusun atom (proton, neutron, elektron), nomor atom, nomor massa, isotop, dan golongan periode unsur.',
+      IsiMateri: '1. Partikel Penyusun Atom\n- Proton (+1) dan Neutron (0) berada di inti atom.\n- Elektron (-1) bergerak mengelilingi inti pada kulit atom.\n\n2. Notasi Unsur (Z^A X)\n- Nomor Atom (Z) = jumlah proton = jumlah elektron (atom netral).\n- Nomor Massa (A) = jumlah proton + jumlah neutron.\n\n3. Aturan Kulit Elektron (Bohr)\nJumlah elektron maksimal tiap kulit ke-n adalah 2n² (Kulit K=2, L=8, M=18, N=32).',
+      LinkSumber: JSON.stringify([
+        { label: 'Tabel Periodik Interaktif Ptable', url: 'https://ptable.com/?lang=id' }
+      ]),
+      FileID: '',
+      NamaFile: '',
+      UkuranFile: '',
+      TanggalUpload: d2,
+      Pengunggah: 'Siti Aminah, S.Pd.'
+    },
+    {
+      ID: 'mat_7',
+      Kelas: '__ALL__',
+      Mapel: 'Biologi',
+      Judul: 'Keanekaragaman Hayati, Klasifikasi & Struktur Sel',
+      Bab: 'Bab 1 · Keanekaragaman Hayati & Sel',
+      Ringkasan: 'Memahami tingkat keanekaragaman hayati (gen, jenis, ekosistem), tata nama binomial nomenklatur, serta organel utama sel.',
+      IsiMateri: '1. Tiga Tingkat Keanekaragaman Hayati\n- Tingkat Gen: variasi dalam satu spesies (misalnya varietas mangga).\n- Tingkat Jenis: perbedaan antar spesies dalam satu famili.\n- Tingkat Ekosistem: perbedaan kondisi biotik dan abiotik.\n\n2. Perbedaan Sel Hewan & Sel Tumbuhan\nSel tumbuhan memiliki dinding sel, kloroplas, dan vakuola besar, sedangkan sel hewan memiliki sentriol dan lisosom.',
+      LinkSumber: JSON.stringify([
+        { label: 'Khan Academy Biology', url: 'https://www.khanacademy.org/science/biology' }
+      ]),
+      FileID: '',
+      NamaFile: '',
+      UkuranFile: '',
+      TanggalUpload: d2,
+      Pengunggah: 'Dewi Anggraini, M.Pd.'
+    },
+    {
+      ID: 'mat_8',
+      Kelas: '__ALL__',
+      Mapel: 'Bahasa Inggris',
+      Judul: 'Descriptive Text & Recount Text: Structure & Language Features',
+      Bab: 'Unit 1 · Descriptive & Recount',
+      Ringkasan: 'Panduan lengkap memahami tujuan komunikatif, generic structure, penggunaan Simple Present vs Simple Past Tense, dan contoh paragraf.',
+      IsiMateri: '1. Descriptive Text\n- Social Function: To describe a particular person, place, or thing.\n- Generic Structure: Identification + Description.\n- Language Features: Simple Present Tense, specific participant, adjectives.\n\n2. Recount Text\n- Social Function: To retell past events or experiences chronologically.\n- Generic Structure: Orientation + Events + Re-orientation.\n- Language Features: Simple Past Tense (V2), time connectives (first, then, finally).',
+      LinkSumber: JSON.stringify([
+        { label: 'British Council LearnEnglish', url: 'https://learnenglish.britishcouncil.org' }
+      ]),
+      FileID: '',
+      NamaFile: '',
+      UkuranFile: '',
+      TanggalUpload: d1,
+      Pengunggah: 'Rina Marlina, S.Pd.'
     }
   ];
 
@@ -565,6 +841,10 @@ function createSeedDatabase(): DatabaseFile {
 2. Persamaan Eksponen: Jika a^f(x) = a^g(x) dengan a > 0 dan a ≠ 1, maka f(x) = g(x).
 3. Definisi Logaritma: ^a log b = c jika dan hanya jika a^c = b, dengan syarat basis a > 0, a ≠ 1, dan numerus b > 0.
 4. Sifat Logaritma: ^a log(x·y) = ^a log x + ^a log y; ^a log(x/y) = ^a log x - ^a log y; dan ^a log(x^n) = n · ^a log x.`;
+
+  const sampleMateriInfCBT = `Ringkasan Materi Berpikir Komputasional & Flowchart:
+1. Empat pilar berpikir komputasional meliputi Dekomposisi, Pengenalan Pola, Abstraksi, dan Algoritma.
+2. Pada diagram alir (flowchart), simbol Oval (Terminator) menandai Mulai/Selesai, Persegi Panjang menandai Proses, Jajar Genjang menandai Input/Output, dan Belah Ketupat (Decision) menandai Percabangan Kondisi.`;
 
   const cbtList = [
     {
@@ -658,6 +938,55 @@ function createSeedDatabase(): DatabaseFile {
           }
         ]
       })
+    },
+    {
+      ID: 'cbt_demo2',
+      Kelas: 'kls_10b',
+      Judul: 'Kuis Informatika: Berpikir Komputasional & Flowchart',
+      Mapel: 'Informatika',
+      Durasi: '25',
+      Status: 'Aktif',
+      Acak: '0',
+      SumberMateri: sampleMateriInfCBT,
+      NamaFileMateri: '',
+      TanggalBuat: d1,
+      SoalJSON: JSON.stringify({
+        soalPG: [
+          {
+            id: 'inf_pg_1',
+            pertanyaan: 'Proses memecah masalah kompleks menjadi bagian-bagian kecil agar mudah diselesaikan disebut…',
+            opsiA: 'Abstraksi',
+            opsiB: 'Dekomposisi',
+            opsiC: 'Iterasi',
+            opsiD: 'Kompilasi',
+            opsiE: 'Enkapsulasi',
+            kunci: 'B',
+            pembahasan: 'Dekomposisi memecah masalah besar menjadi sub-masalah yang lebih terkelola.',
+            kutipanMateri: 'Empat pilar berpikir komputasional meliputi Dekomposisi'
+          },
+          {
+            id: 'inf_pg_2',
+            pertanyaan: 'Pada diagram alir (flowchart), simbol Belah Ketupat (Decision) digunakan untuk…',
+            opsiA: 'Menandai awal dan akhir program',
+            opsiB: 'Menampilkan hasil ke layar',
+            opsiC: 'Mengambil keputusan percabangan kondisi Ya/Tidak',
+            opsiD: 'Menghitung operasi aritmetika',
+            opsiE: 'Menghubungkan halaman berbeda',
+            kunci: 'C',
+            pembahasan: 'Belah ketupat melambangkan percabangan logika berdasarkan syarat kondisi.',
+            kutipanMateri: 'Belah Ketupat (Decision) menandai Percabangan Kondisi'
+          }
+        ],
+        soalUraian: [
+          {
+            id: 'inf_ur_1',
+            pertanyaan: 'Sebutkan empat pilar berpikir komputasional dan jelaskan fungsi simbol Persegi Panjang serta Jajar Genjang pada flowchart!',
+            kunciRubrik: 'Pilar: Dekomposisi, Pengenalan Pola, Abstraksi, Algoritma. Persegi Panjang untuk Proses, Jajar Genjang untuk Input/Output.',
+            poinMaksimal: 100,
+            kutipanMateri: 'Empat pilar berpikir komputasional meliputi Dekomposisi, Pengenalan Pola, Abstraksi, dan Algoritma.'
+          }
+        ]
+      })
     }
   ];
 
@@ -710,6 +1039,32 @@ function createSeedDatabase(): DatabaseFile {
           PenerimaNama: 'Semua Siswa (Kelas)',
           Pesan: 'Selamat datang di ruang diskusi kelas X MIPA 1! Silakan gunakan ruang ini untuk berdiskusi materi pelajaran atau berkonsultasi tanya guru.',
           Waktu: new Date(Date.now() - 3600000).toISOString(),
+          Tipe: 'pengumuman',
+          Lampiran: ''
+        },
+        {
+          ID: 'msg_seed_2',
+          Kelas: 'kls_10b',
+          PengirimID: 'usr_wali1',
+          PengirimNama: 'Dra. Ratna Sari, M.Pd.',
+          PengirimPeran: 'guru',
+          PenerimaID: 'ALL',
+          PenerimaNama: 'Semua Siswa (Kelas)',
+          Pesan: 'Halo siswa X MIPA 2! Jangan lupa pelajari Materi Fungsi Kuadrat dan kerjakan latihan soalnya sebelum pertemuan berikutnya.',
+          Waktu: new Date(Date.now() - 3200000).toISOString(),
+          Tipe: 'pengumuman',
+          Lampiran: ''
+        },
+        {
+          ID: 'msg_seed_3',
+          Kelas: 'kls_11a',
+          PengirimID: 'usr_guru1',
+          PengirimNama: 'Budi Santoso, S.Kom.',
+          PengirimPeran: 'wali',
+          PenerimaID: 'ALL',
+          PenerimaNama: 'Semua Siswa (Kelas)',
+          Pesan: 'Selamat datang di ruang kelas XI MIPA 1! Silakan cek materi Biologi, Fisika, dan jadwal praktikum minggu ini.',
+          Waktu: new Date(Date.now() - 2800000).toISOString(),
           Tipe: 'pengumuman',
           Lampiran: ''
         }
@@ -785,7 +1140,7 @@ async function ensureDbLoaded(): Promise<void> {
           initial = normalizeLoadedDb(JSON.parse(fs.readFileSync(DB_PATH, 'utf8')));
         }
       } catch (_) {}
-      dbCache = initial || createCleanDatabase();
+      dbCache = initial || createSeedDatabase();
       await saveRemoteState(dbCache);
     }
     remoteLoaded = true;
@@ -804,9 +1159,9 @@ function getDb(): DatabaseFile {
       return dbCache;
     }
   } catch (e) {
-    console.error('Failed reading DB, resetting to clean state:', e);
+    console.error('Failed reading DB, resetting to seed state:', e);
   }
-  dbCache = createCleanDatabase();
+  dbCache = createSeedDatabase();
   saveDb();
   return dbCache;
 }
@@ -2086,7 +2441,8 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       'BerkasCloud',
       'CBT',
       'HasilCBT',
-      'Akun'
+      'Akun',
+      'Pesan'
     ];
     for (const s of operationalSheets) {
       db.sheets[s] = [];

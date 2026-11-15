@@ -74,8 +74,8 @@ const PARTIAL_CATEGORIES = [
   },
   {
     id: 'perangkat_ajar',
-    title: 'Perangkat Ajar (TP, Modul, Pemantik)',
-    desc: 'Hapus seluruh Tujuan Pembelajaran, Modul Ajar, dan Slide Pemantik.'
+    title: 'Perangkat Ajar & Materi Pelajaran',
+    desc: 'Hapus seluruh Tujuan Pembelajaran, Modul Ajar, Slide Pemantik, dan Materi Pelajaran.'
   },
   {
     id: 'kalender',
@@ -174,6 +174,7 @@ export default function ResetDatabasePanel({
     ['Tugas', (db.Tugas || []).length],
     ['Nilai', (db.Nilai || []).length],
     ['TP / Modul', (db.TP || []).length + (db.Modul || []).length],
+    ['Materi', (db.Materi || []).length],
     ['Jadwal', (db.Jadwal || []).length],
     ['CBT', (db.CBT || []).length]
   ];
@@ -343,7 +344,7 @@ export default function ResetDatabasePanel({
         </div>
 
         {/* Record Counts Overview */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-2.5">
           {localStats.map(([label, val]) => (
             <div
               key={String(label)}

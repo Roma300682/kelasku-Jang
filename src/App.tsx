@@ -2038,12 +2038,14 @@ export default function App() {
               />
             )}
             <div className="min-w-0">
-              <h1 className="text-2xl font-bold tracking-tight truncate">Dasbor Kelas {kelasObj.Nama}</h1>
+              <h1 className="text-2xl font-bold tracking-tight truncate">
+                {kelasObj.Nama ? `Dasbor Kelas ${kelasObj.Nama}` : 'Dasbor Manajemen Kelas'}
+              </h1>
               <div className="flex flex-wrap items-center gap-2 text-xs text-sky-100 mt-1">
                 <span>
                   {kelasObj.Jurusan
                     ? `Jurusan ${kelasObj.Jurusan}`
-                    : kelasObj.Mapel || 'Atur jurusan kelas di Pengaturan'}
+                    : kelasObj.Mapel || 'Atur daftar kelas dan mata pelajaran di Pengaturan'}
                 </span>
                 {mg !== null && (
                   <>
@@ -2090,6 +2092,53 @@ export default function App() {
             </button>
           </div>
         </div>
+
+        {(db.Kelas || []).length === 0 ? (
+          <div className="bg-white border border-indigo-200 rounded-2xl p-6 shadow-sm flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1 max-w-2xl">
+              <h2 className="text-base font-bold text-slate-900">Mulai Siapkan Data Sekolah</h2>
+              <p className="text-xs text-slate-600">
+                Belum ada kelas terdaftar. Tambahkan daftar kelas, jurusan, dan mata pelajaran di menu Pengaturan, atau muat paket data contoh lengkap agar seluruh modul siap digunakan.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTab('set')}
+                className="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-xs cursor-pointer"
+              >
+                Atur Kelas &amp; Mapel
+              </button>
+              {role === 'admin' && (
+                <button
+                  type="button"
+                  onClick={handleResetDemoData}
+                  className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl cursor-pointer"
+                >
+                  Isi Data Contoh Lengkap
+                </button>
+              )}
+            </div>
+          </div>
+        ) : siswaK.length === 0 ? (
+          <div className="bg-white border border-amber-200 rounded-2xl p-5 shadow-sm flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1">
+              <h2 className="text-sm font-bold text-slate-900">Kelas {kelasObj.Nama} Belum Memiliki Siswa</h2>
+              <p className="text-xs text-slate-600">
+                Tambahkan data siswa atau impor daftar siswa untuk mulai mencatat absensi, tugas, denah duduk, dan nilai.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTab('sis')}
+                className="px-3.5 py-2 text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-white rounded-xl shadow-xs cursor-pointer"
+              >
+                Kelola Data Siswa →
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {/* 4 Colorful Key Metrics */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -2629,58 +2678,74 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {siswaK.map((s: any, i: number) => (
-                  <tr key={s.ID} className="hover:bg-slate-50/70">
-                    <td className="py-2.5 px-3 tabular-nums text-slate-400">{i + 1}</td>
-                    <td className="py-2.5 px-3 font-semibold text-slate-900">{s.Nama}</td>
-                    <td className="py-2.5 px-3">
-                      <div className="flex items-center gap-1.5">
-                        {Object.keys(KODE).map(k => {
-                          const on = absDraft[s.ID] === k;
-                          return (
-                            <button
-                              key={k}
-                              onClick={() =>
-                                setAbsDraft(prev => ({
-                                  ...prev,
-                                  [s.ID]: prev[s.ID] === k ? '' : k
-                                }))
-                              }
-                              title={KODE[k][0]}
-                              style={
-                                on
-                                  ? {
-                                      backgroundColor: KODE[k][1],
-                                      borderColor: KODE[k][1],
-                                      color: '#fff'
-                                    }
-                                  : {}
-                              }
-                              className={`w-8 h-8 rounded-lg font-bold text-xs border transition-colors cursor-pointer ${
-                                on
-                                  ? ''
-                                  : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-100'
-                              }`}
-                            >
-                              {k}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <input
-                        type="text"
-                        value={absNote[s.ID] || ''}
-                        onChange={e =>
-                          setAbsNote(prev => ({ ...prev, [s.ID]: e.target.value }))
-                        }
-                        placeholder="Catatan tambahan..."
-                        className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs"
-                      />
+                {siswaK.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-10 px-4 text-center text-xs text-slate-500">
+                      Belum ada siswa di kelas ini. Tambahkan siswa di menu{' '}
+                      <button
+                        type="button"
+                        onClick={() => setTab('sis')}
+                        className="text-indigo-600 font-semibold hover:underline cursor-pointer"
+                      >
+                        Data Siswa
+                      </button>
+                      .
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  siswaK.map((s: any, i: number) => (
+                    <tr key={s.ID} className="hover:bg-slate-50/70">
+                      <td className="py-2.5 px-3 tabular-nums text-slate-400">{i + 1}</td>
+                      <td className="py-2.5 px-3 font-semibold text-slate-900">{s.Nama}</td>
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center gap-1.5">
+                          {Object.keys(KODE).map(k => {
+                            const on = absDraft[s.ID] === k;
+                            return (
+                              <button
+                                key={k}
+                                onClick={() =>
+                                  setAbsDraft(prev => ({
+                                    ...prev,
+                                    [s.ID]: prev[s.ID] === k ? '' : k
+                                  }))
+                                }
+                                title={KODE[k][0]}
+                                style={
+                                  on
+                                    ? {
+                                        backgroundColor: KODE[k][1],
+                                        borderColor: KODE[k][1],
+                                        color: '#fff'
+                                      }
+                                    : {}
+                                }
+                                className={`w-8 h-8 rounded-lg font-bold text-xs border transition-colors cursor-pointer ${
+                                  on
+                                    ? ''
+                                    : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-100'
+                                }`}
+                              >
+                                {k}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <input
+                          type="text"
+                          value={absNote[s.ID] || ''}
+                          onChange={e =>
+                            setAbsNote(prev => ({ ...prev, [s.ID]: e.target.value }))
+                          }
+                          placeholder="Catatan tambahan..."
+                          className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs"
+                        />
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -3216,120 +3281,137 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {siswaK.map((s: any, i: number) => {
-                  const hasPin = (db.punyaPIN || []).includes(s.ID);
-                  const noSw = s.NoSiswa || s.KontakOrtu || '';
-                  const noOrtu = s.NoOrtu || '';
-                  return (
-                    <tr key={s.ID} className="hover:bg-amber-50/30">
-                      <td className="py-2.5 px-4 tabular-nums text-slate-400">{i + 1}</td>
-                      <td className="py-2.5 px-4">
-                        <div className="flex items-center gap-2.5">
-                          <div className={`w-7 h-7 rounded-lg bg-gradient-to-br ${avatarColorFor(s.Nama)} text-white text-xs font-bold flex items-center justify-center shrink-0`}>
-                            {s.Nama.slice(0, 1).toUpperCase()}
-                          </div>
-                          <span className="font-semibold text-slate-900">{s.Nama}</span>
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-4 font-mono tabular-nums text-indigo-700 font-medium">
-                        {s.NIS || '-'}
-                      </td>
-                      <td className="py-2.5 px-4 tabular-nums text-slate-600">
-                        {noSw ? (
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono text-[11px]">{noSw}</span>
-                            <button
-                              type="button"
-                              onClick={() => setWaBlastState({ open: true, studentId: s.ID, targetType: 'siswa' })}
-                              title="Kirim WhatsApp ke Siswa"
-                              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-md whitespace-nowrap cursor-pointer"
-                            >
-                              <MessageCircle className="w-3 h-3" /> WA
-                            </button>
-                          </div>
-                        ) : (
-                          '-'
-                        )}
-                      </td>
-                      <td className="py-2.5 px-4 tabular-nums text-slate-600">
-                        {noOrtu ? (
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono text-[11px]">{noOrtu}</span>
-                            <button
-                              type="button"
-                              onClick={() => setWaBlastState({ open: true, studentId: s.ID, targetType: 'ortu' })}
-                              title="Kirim WhatsApp ke Orang Tua"
-                              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-md whitespace-nowrap cursor-pointer"
-                            >
-                              <MessageCircle className="w-3 h-3" /> WA
-                            </button>
-                          </div>
-                        ) : (
-                          '-'
-                        )}
-                      </td>
-                      <td className="py-2.5 px-4 text-slate-600">{s.Alamat || '-'}</td>
-                      <td className="py-2.5 px-4 text-slate-600">{s.Kesehatan || '-'}</td>
-                      <td className="py-2.5 px-4 whitespace-nowrap">
-                        <span
-                          className={`font-semibold ${
-                            hasPin ? 'text-emerald-700' : 'text-amber-700'
-                          }`}
-                        >
-                          {hasPin ? 'PIN Aktif' : 'Belum ada PIN'}
-                        </span>
-                        <span className="mx-1.5 text-slate-300">·</span>
+                {siswaK.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="py-12 px-4 text-center text-xs text-slate-500">
+                      <div className="space-y-2">
+                        <p>Belum ada siswa terdaftar di kelas {kelasObj.Nama || 'ini'}.</p>
                         <button
-                          onClick={() => handleAturPin(s.ID)}
-                          className="text-indigo-600 hover:underline font-semibold"
+                          type="button"
+                          onClick={() => openModalSiswa()}
+                          className="px-3.5 py-1.5 text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-white rounded-lg cursor-pointer"
                         >
-                          Reset PIN
+                          + Tambah Siswa Pertama
                         </button>
-                      </td>
-                      <td className="py-2.5 px-4 text-right whitespace-nowrap space-x-2">
-                        <button
-                          onClick={() => openModalSiswa(s.ID)}
-                          className="text-sky-600 hover:text-sky-800 font-semibold"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={async () => {
-                            if (
-                              await askConfirm(
-                                `Hapus siswa "${s.Nama}" beserta seluruh absensi dan nilainya?`
-                              )
-                            ) {
-                              const nextDb = {
-                                ...db,
-                                Siswa: db.Siswa.filter((x: any) => x.ID !== s.ID),
-                                Absensi: db.Absensi.filter((x: any) => x.SiswaID !== s.ID),
-                                Nilai: db.Nilai.filter((x: any) => x.SiswaID !== s.ID),
-                                Pengumpulan: db.Pengumpulan.filter((x: any) => x.SiswaID !== s.ID),
-                                Perilaku: db.Perilaku.filter((x: any) => x.SiswaID !== s.ID),
-                                Denah: db.Denah.filter((x: any) => x.SiswaID !== s.ID),
-                                Piket: db.Piket.filter((x: any) => x.SiswaID !== s.ID)
-                              };
-                              await persistSheets(
-                                nextDb,
-                                'Siswa',
-                                'Absensi',
-                                'Nilai',
-                                'Pengumpulan',
-                                'Perilaku',
-                                'Denah',
-                                'Piket'
-                              );
-                            }
-                          }}
-                          className="text-rose-600 hover:text-rose-700 font-semibold"
-                        >
-                          Hapus
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  siswaK.map((s: any, i: number) => {
+                    const hasPin = (db.punyaPIN || []).includes(s.ID);
+                    const noSw = s.NoSiswa || s.KontakOrtu || '';
+                    const noOrtu = s.NoOrtu || '';
+                    return (
+                      <tr key={s.ID} className="hover:bg-amber-50/30">
+                        <td className="py-2.5 px-4 tabular-nums text-slate-400">{i + 1}</td>
+                        <td className="py-2.5 px-4">
+                          <div className="flex items-center gap-2.5">
+                            <div className={`w-7 h-7 rounded-lg bg-gradient-to-br ${avatarColorFor(s.Nama)} text-white text-xs font-bold flex items-center justify-center shrink-0`}>
+                              {s.Nama.slice(0, 1).toUpperCase()}
+                            </div>
+                            <span className="font-semibold text-slate-900">{s.Nama}</span>
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-4 font-mono tabular-nums text-indigo-700 font-medium">
+                          {s.NIS || '-'}
+                        </td>
+                        <td className="py-2.5 px-4 tabular-nums text-slate-600">
+                          {noSw ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-[11px]">{noSw}</span>
+                              <button
+                                type="button"
+                                onClick={() => setWaBlastState({ open: true, studentId: s.ID, targetType: 'siswa' })}
+                                title="Kirim WhatsApp ke Siswa"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-md whitespace-nowrap cursor-pointer"
+                              >
+                                <MessageCircle className="w-3 h-3" /> WA
+                              </button>
+                            </div>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td className="py-2.5 px-4 tabular-nums text-slate-600">
+                          {noOrtu ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-[11px]">{noOrtu}</span>
+                              <button
+                                type="button"
+                                onClick={() => setWaBlastState({ open: true, studentId: s.ID, targetType: 'ortu' })}
+                                title="Kirim WhatsApp ke Orang Tua"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-md whitespace-nowrap cursor-pointer"
+                              >
+                                <MessageCircle className="w-3 h-3" /> WA
+                              </button>
+                            </div>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td className="py-2.5 px-4 text-slate-600">{s.Alamat || '-'}</td>
+                        <td className="py-2.5 px-4 text-slate-600">{s.Kesehatan || '-'}</td>
+                        <td className="py-2.5 px-4 whitespace-nowrap">
+                          <span
+                            className={`font-semibold ${
+                              hasPin ? 'text-emerald-700' : 'text-amber-700'
+                            }`}
+                          >
+                            {hasPin ? 'PIN Aktif' : 'Belum ada PIN'}
+                          </span>
+                          <span className="mx-1.5 text-slate-300">·</span>
+                          <button
+                            onClick={() => handleAturPin(s.ID)}
+                            className="text-indigo-600 hover:underline font-semibold"
+                          >
+                            Reset PIN
+                          </button>
+                        </td>
+                        <td className="py-2.5 px-4 text-right whitespace-nowrap space-x-2">
+                          <button
+                            onClick={() => openModalSiswa(s.ID)}
+                            className="text-sky-600 hover:text-sky-800 font-semibold"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (
+                                await askConfirm(
+                                  `Hapus siswa "${s.Nama}" beserta seluruh absensi dan nilainya?`
+                                )
+                              ) {
+                                const nextDb = {
+                                  ...db,
+                                  Siswa: db.Siswa.filter((x: any) => x.ID !== s.ID),
+                                  Absensi: db.Absensi.filter((x: any) => x.SiswaID !== s.ID),
+                                  Nilai: db.Nilai.filter((x: any) => x.SiswaID !== s.ID),
+                                  Pengumpulan: db.Pengumpulan.filter((x: any) => x.SiswaID !== s.ID),
+                                  Perilaku: db.Perilaku.filter((x: any) => x.SiswaID !== s.ID),
+                                  Denah: db.Denah.filter((x: any) => x.SiswaID !== s.ID),
+                                  Piket: db.Piket.filter((x: any) => x.SiswaID !== s.ID)
+                                };
+                                await persistSheets(
+                                  nextDb,
+                                  'Siswa',
+                                  'Absensi',
+                                  'Nilai',
+                                  'Pengumpulan',
+                                  'Perilaku',
+                                  'Denah',
+                                  'Piket'
+                                );
+                              }
+                            }}
+                            className="text-rose-600 hover:text-rose-700 font-semibold"
+                          >
+                            Hapus
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -6595,32 +6677,48 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {siswaK.map((s: any, i: number) => {
-                  const r = getNilaiRow(s.ID) || {};
-                  const a = hitungAkhir(r);
-                  const pr = getPredikat(a);
-                  return (
-                    <tr key={s.ID} className="hover:bg-slate-50/70">
-                      <td className="py-2 px-3 tabular-nums text-slate-400">{i + 1}</td>
-                      <td className="py-2 px-3 font-semibold text-slate-900">{s.Nama}</td>
-                      {['Sikap', 'Tugas', 'Proyek', 'UTS', 'UAS'].map(f => (
-                        <td key={f} className="py-2 px-2 text-center">
-                          <input
-                            type="text"
-                            value={r[f] || ''}
-                            onChange={e => updateNilaiField(s.ID, f, e.target.value)}
-                            className="w-16 px-2 py-1 text-center border border-slate-200 rounded-md font-mono tabular-nums text-xs"
-                          />
+                {siswaK.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="py-10 px-4 text-center text-xs text-slate-500">
+                      Belum ada siswa di kelas ini. Tambahkan siswa di menu{' '}
+                      <button
+                        type="button"
+                        onClick={() => setTab('sis')}
+                        className="text-indigo-600 font-semibold hover:underline cursor-pointer"
+                      >
+                        Data Siswa
+                      </button>{' '}
+                      untuk mulai menginput nilai.
+                    </td>
+                  </tr>
+                ) : (
+                  siswaK.map((s: any, i: number) => {
+                    const r = getNilaiRow(s.ID) || {};
+                    const a = hitungAkhir(r);
+                    const pr = getPredikat(a);
+                    return (
+                      <tr key={s.ID} className="hover:bg-slate-50/70">
+                        <td className="py-2 px-3 tabular-nums text-slate-400">{i + 1}</td>
+                        <td className="py-2 px-3 font-semibold text-slate-900">{s.Nama}</td>
+                        {['Sikap', 'Tugas', 'Proyek', 'UTS', 'UAS'].map(f => (
+                          <td key={f} className="py-2 px-2 text-center">
+                            <input
+                              type="text"
+                              value={r[f] || ''}
+                              onChange={e => updateNilaiField(s.ID, f, e.target.value)}
+                              className="w-16 px-2 py-1 text-center border border-slate-200 rounded-md font-mono tabular-nums text-xs"
+                            />
+                          </td>
+                        ))}
+                        <td className="py-2 px-3 text-right font-mono tabular-nums font-bold text-slate-900">
+                          {fmt(a)}
                         </td>
-                      ))}
-                      <td className="py-2 px-3 text-right font-mono tabular-nums font-bold text-slate-900">
-                        {fmt(a)}
-                      </td>
-                      <td className="py-2 px-3 text-center font-bold text-indigo-600">{pr[0]}</td>
-                      <td className="py-2 px-3 text-slate-600">{getTindakLanjut(a)}</td>
-                    </tr>
-                  );
-                })}
+                        <td className="py-2 px-3 text-center font-bold text-indigo-600">{pr[0]}</td>
+                        <td className="py-2 px-3 text-slate-600">{getTindakLanjut(a)}</td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -6802,36 +6900,44 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {list.map((p: any) => (
-                  <tr key={p.ID}>
-                    <td className="py-2.5 px-4 tabular-nums text-slate-600">{p.Tanggal}</td>
-                    <td className="py-2.5 px-4 font-semibold text-slate-900">
-                      {namaSiswa(p.SiswaID)}
-                    </td>
-                    <td className="py-2.5 px-4">
-                      <span
-                        className={`font-semibold ${
-                          p.Jenis === 'Pelanggaran' ? 'text-rose-600' : 'text-emerald-700'
-                        }`}
-                      >
-                        {p.Jenis === 'Pelanggaran' ? `Pelanggaran Level ${p.Level}` : 'Penguatan Positif'}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-4 text-slate-700">{p.Catatan}</td>
-                    <td className="py-2.5 px-4 text-slate-600">{p.TindakLanjut}</td>
-                    <td className="py-2.5 px-4 text-right">
-                      <button
-                        onClick={async () => {
-                          const next = db.Perilaku.filter((x: any) => x.ID !== p.ID);
-                          await persistSheets({ ...db, Perilaku: next }, 'Perilaku');
-                        }}
-                        className="text-rose-600 hover:underline font-medium"
-                      >
-                        Hapus
-                      </button>
+                {list.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-10 px-4 text-center text-xs text-slate-500">
+                      Belum ada catatan perilaku untuk kelas ini.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  list.map((p: any) => (
+                    <tr key={p.ID}>
+                      <td className="py-2.5 px-4 tabular-nums text-slate-600">{p.Tanggal}</td>
+                      <td className="py-2.5 px-4 font-semibold text-slate-900">
+                        {namaSiswa(p.SiswaID)}
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <span
+                          className={`font-semibold ${
+                            p.Jenis === 'Pelanggaran' ? 'text-rose-600' : 'text-emerald-700'
+                          }`}
+                        >
+                          {p.Jenis === 'Pelanggaran' ? `Pelanggaran Level ${p.Level}` : 'Penguatan Positif'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-4 text-slate-700">{p.Catatan}</td>
+                      <td className="py-2.5 px-4 text-slate-600">{p.TindakLanjut}</td>
+                      <td className="py-2.5 px-4 text-right">
+                        <button
+                          onClick={async () => {
+                            const next = db.Perilaku.filter((x: any) => x.ID !== p.ID);
+                            await persistSheets({ ...db, Perilaku: next }, 'Perilaku');
+                          }}
+                          className="text-rose-600 hover:underline font-medium"
+                        >
+                          Hapus
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
