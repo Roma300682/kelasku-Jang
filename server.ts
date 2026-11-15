@@ -137,6 +137,7 @@ const SKEMA: Record<string, string[]> = {
   TP: ['ID', 'Kelas', 'ModulID', 'Kode', 'Tujuan', 'Materi', 'Status', 'FileID', 'NamaFile'],
   Modul: ['ID', 'Kelas', 'Judul', 'Mapel', 'Alokasi', 'TPIDs', 'Pembuka', 'Inti', 'Penutup', 'Asesmen', 'Media', 'Catatan', 'FileID', 'NamaFile', 'PertanyaanPemantik', 'LinkSumber'],
   Pemantik: ['ID', 'Kelas', 'ModulID', 'Mapel', 'Judul', 'Tautan', 'Pertanyaan', 'Slide', 'SumberPelajaran'],
+  Materi: ['ID', 'Kelas', 'Mapel', 'Judul', 'Bab', 'Ringkasan', 'IsiMateri', 'LinkSumber', 'FileID', 'NamaFile', 'UkuranFile', 'TanggalUpload', 'Pengunggah'],
   Mapel: ['ID', 'Nama'],
   BerkasCloud: ['ID', 'Kelas', 'NamaFile', 'TipeMime', 'Ukuran', 'TanggalUnggah', 'Pengunggah', 'StatusCloud', 'PathSimpan', 'AnalisisJSON'],
   CBT: ['ID', 'Kelas', 'Judul', 'Mapel', 'Durasi', 'Status', 'Acak', 'SumberMateri', 'NamaFileMateri', 'SoalJSON', 'TanggalBuat'],
@@ -148,8 +149,8 @@ const SKEMA: Record<string, string[]> = {
 
 const SHEET_TERKUNCI = ['Pengaturan', 'Akun', 'Pengguna'];
 const IZIN_TULIS: Record<string, string[]> = {
-  wali: ['Siswa', 'Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'BerkasCloud', 'CBT', 'HasilCBT', 'Pesan'],
-  guru: ['Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'BerkasCloud', 'CBT', 'HasilCBT', 'Pesan']
+  wali: ['Siswa', 'Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'Materi', 'BerkasCloud', 'CBT', 'HasilCBT', 'Pesan'],
+  guru: ['Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'Materi', 'BerkasCloud', 'CBT', 'HasilCBT', 'Pesan']
 };
 const TTL_SESI = 21600 * 1000; // 6 hours in ms
 
@@ -470,6 +471,61 @@ function createSeedDatabase(): DatabaseFile {
     }
   ];
 
+  const materiList = [
+    {
+      ID: 'mat_1',
+      Kelas: '__ALL__',
+      Mapel: 'Matematika',
+      Judul: 'Fungsi Kuadrat, Grafik Parabola & Nilai Optimum',
+      Bab: 'Bab 3 · Fungsi Kuadrat',
+      Ringkasan: 'Panduan lengkap memahami bentuk umum fungsi kuadrat f(x) = ax² + bx + c, sumbu simetri, titik puncak, serta penerapannya dalam soal cerita.',
+      IsiMateri: '1. Bentuk Umum Fungsi Kuadrat\nf(x) = ax² + bx + c dengan a, b, c ∈ R dan a ≠ 0.\n\n2. Pengaruh Koefisien a\n- Jika a > 0 maka parabola terbuka ke atas (memiliki nilai minimum).\n- Jika a < 0 maka parabola terbuka ke bawah (memiliki nilai maksimum).\n\n3. Sumbu Simetri & Titik Puncak (Optimum)\n- Sumbu simetri: x = -b / (2a)\n- Nilai optimum: y = -D / (4a), di mana D = b² - 4ac (Diskriminan).\n\n4. Analisis Diskriminan (D)\n- D > 0: memotong sumbu X di dua titik berbeda.\n- D = 0: menyinggung sumbu X di satu titik.\n- D < 0: tidak memotong sumbu X.',
+      LinkSumber: JSON.stringify([
+        { label: 'Simulasi Grafik GeoGebra', url: 'https://www.geogebra.org/graphing' },
+        { label: 'Khan Academy: Fungsi Kuadrat', url: 'https://www.khanacademy.org/math/algebra/x2f8bb11595b61c86:quadratic-functions-equations' }
+      ]),
+      FileID: '',
+      NamaFile: '',
+      UkuranFile: '',
+      TanggalUpload: d1,
+      Pengunggah: 'Dra. Ratna Sari, M.Pd.'
+    },
+    {
+      ID: 'mat_2',
+      Kelas: '__ALL__',
+      Mapel: 'Matematika',
+      Judul: 'Ringkasan Sifat Eksponen & Logaritma',
+      Bab: 'Bab 1 · Eksponen & Logaritma',
+      Ringkasan: 'Rangkuman sifat-sifat bilangan berpangkat, persamaan eksponen sederhana, dan aturan dasar logaritma beserta contoh penyelesaian.',
+      IsiMateri: '1. Sifat-Sifat Eksponen (a > 0)\n- a^m × a^n = a^(m + n)\n- a^m / a^n = a^(m - n)\n- (a^m)^n = a^(m × n)\n- a^0 = 1 dan a^(-n) = 1 / a^n\n\n2. Definisi Logaritma\n^a log b = c ⇔ a^c = b, dengan syarat basis a > 0, a ≠ 1, dan numerus b > 0.\n\n3. Sifat Dasar Logaritma\n- ^a log(x · y) = ^a log x + ^a log y\n- ^a log(x / y) = ^a log x - ^a log y\n- ^a log(x^n) = n · ^a log x',
+      LinkSumber: JSON.stringify([
+        { label: 'Rumah Belajar Kemdikbud', url: 'https://belajar.kemdikbud.go.id' }
+      ]),
+      FileID: '',
+      NamaFile: '',
+      UkuranFile: '',
+      TanggalUpload: d2,
+      Pengunggah: 'Dra. Ratna Sari, M.Pd.'
+    },
+    {
+      ID: 'mat_3',
+      Kelas: '__ALL__',
+      Mapel: 'Bahasa Indonesia',
+      Judul: 'Struktur & Kaidah Kebahasaan Teks Laporan Hasil Observasi',
+      Bab: 'Bab 1 · Teks LHO',
+      Ringkasan: 'Materi pembelajaran mengenai pengertian, ciri objektif, struktur (pernyataan umum, deskripsi bagian, deskripsi manfaat), serta contoh analisis teks LHO.',
+      IsiMateri: '1. Pengertian Teks LHO\nTeks yang menyajikan informasi faktual hasil pengamatan suatu objek secara objektif, sistematis, dan dapat dipertanggungjawabkan.\n\n2. Struktur Teks LHO\n- Pernyataan Umum (Klasifikasi): pengantar tentang objek yang diamati secara garis besar.\n- Deskripsi Bagian: perincian bagian-bagian objek, ciri fisik, atau klasifikasi khusus.\n- Deskripsi Manfaat / Simpulan: kegunaan atau kesimpulan umum dari objek pengamatan.\n\n3. Kaidah Kebahasaan\nMenggunakan kata benda/nomina, verba relasional (adalah, merupakan, yaitu), istilah ilmiah bidang terkait, dan kalimat definisi/deskripsi.',
+      LinkSumber: JSON.stringify([
+        { label: 'KBBI Daring Kemdikbud', url: 'https://kbbi.kemdikbud.go.id' }
+      ]),
+      FileID: '',
+      NamaFile: '',
+      UkuranFile: '',
+      TanggalUpload: d1,
+      Pengunggah: 'Tim Guru Bahasa Indonesia'
+    }
+  ];
+
   const berkasCloudList = [
     {
       ID: 'cld_sample1',
@@ -635,6 +691,7 @@ function createSeedDatabase(): DatabaseFile {
       TP: tpList,
       Modul: modulList,
       Pemantik: pemantikList,
+      Materi: materiList,
       Mapel: mapelList,
       BerkasCloud: berkasCloudList,
       CBT: cbtList,
@@ -943,7 +1000,7 @@ function bacaIzin_(nama: string, izin: string[] | null) {
     const t = tugasIzin_(izin);
     return rows.filter(r => t.milik[r.TugasID]);
   }
-  if (nama === 'Modul' || nama === 'TP' || nama === 'Pemantik') {
+  if (nama === 'Modul' || nama === 'TP' || nama === 'Pemantik' || nama === 'Materi') {
     return rows.filter(r => rowMatchesIzin(r.Kelas, izin));
   }
   if (SKEMA[nama].includes('Kelas')) return rows.filter(r => izin.includes(r.Kelas));
@@ -957,7 +1014,7 @@ function gabungIzin_(nama: string, rows: Record<string, any>[], izin: string[]) 
     return lama.filter(r => t.semua[r.TugasID] && !t.milik[r.TugasID]).concat(rows.filter(r => t.milik[r.TugasID]));
   }
   if (!SKEMA[nama].includes('Kelas')) throw new Error('Akses ditolak.');
-  if (nama === 'Modul' || nama === 'TP' || nama === 'Pemantik') {
+  if (nama === 'Modul' || nama === 'TP' || nama === 'Pemantik' || nama === 'Materi') {
     return lama.filter(r => !rowMatchesIzin(r.Kelas, izin)).concat(rows.filter(r => rowMatchesIzin(r.Kelas, izin)));
   }
   return lama.filter(r => !izin.includes(r.Kelas)).concat(rows.filter(r => izin.includes(r.Kelas)));
@@ -1872,9 +1929,8 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
             });
         });
 
-        const allModules = baca_('Modul');
-        const allTps = baca_('TP');
-        const matchingModules = allModules.filter((m: any) => {
+        const allMateri = baca_('Materi');
+        const matchingMateri = allMateri.filter((m: any) => {
           const kRaw = String(m.Kelas || '').trim();
           const mMapel = String(m.Mapel || '').trim().toLowerCase();
           if (kRaw === '__ALL__' || kRaw === 'all' || !kRaw) {
@@ -1885,45 +1941,20 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
           return ids.includes(siswa.Kelas);
         });
 
-        const tpToMod = new Map<string, string>();
-        allModules.forEach((m: any) => {
-          String(m.TPIDs || '')
-            .split(',')
-            .map(s => s.trim())
-            .filter(Boolean)
-            .forEach(id => {
-              if (!tpToMod.has(id)) tpToMod.set(id, m.ID);
-            });
-        });
-
-        return matchingModules.map((m: any) => {
-          const modTps = allTps.filter(
-            (t: any) => t.ModulID === m.ID || (!t.ModulID && tpToMod.get(t.ID) === m.ID)
-          );
-          return {
-            ID: m.ID,
-            Judul: m.Judul,
-            Mapel: m.Mapel || 'Umum',
-            Alokasi: m.Alokasi || '',
-            Pembuka: m.Pembuka || '',
-            Inti: m.Inti || '',
-            Penutup: m.Penutup || '',
-            Asesmen: m.Asesmen || '',
-            Media: m.Media || '',
-            PertanyaanPemantik: m.PertanyaanPemantik || '',
-            LinkSumber: m.LinkSumber || '',
-            FileID: m.FileID || '',
-            NamaFile: m.NamaFile || '',
-            tps: modTps.map((t: any) => ({
-              ID: t.ID,
-              Kode: t.Kode || 'TP',
-              Tujuan: t.Tujuan || '',
-              Materi: t.Materi || '',
-              FileID: t.FileID || '',
-              NamaFile: t.NamaFile || ''
-            }))
-          };
-        });
+        return matchingMateri.map((m: any) => ({
+          ID: m.ID,
+          Judul: m.Judul || '',
+          Mapel: m.Mapel || 'Umum',
+          Bab: m.Bab || '',
+          Ringkasan: m.Ringkasan || '',
+          IsiMateri: m.IsiMateri || '',
+          LinkSumber: m.LinkSumber || '',
+          FileID: m.FileID || '',
+          NamaFile: m.NamaFile || '',
+          UkuranFile: m.UkuranFile || '',
+          TanggalUpload: m.TanggalUpload || '',
+          Pengunggah: m.Pengunggah || ''
+        }));
       })()
     };
   },
@@ -2025,6 +2056,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       'TP',
       'Modul',
       'Pemantik',
+      'Materi',
       'BerkasCloud',
       'CBT',
       'HasilCBT',
@@ -2064,7 +2096,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       nilai_tugas: ['Tugas', 'Pengumpulan', 'Nilai'],
       cbt: ['CBT', 'HasilCBT'],
       operasional_kelas: ['DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur'],
-      perangkat_ajar: ['TP', 'Modul', 'Pemantik'],
+      perangkat_ajar: ['TP', 'Modul', 'Pemantik', 'Materi'],
       kalender: ['Akademik', 'Checklist'],
       siswa: ['Siswa', 'Akun']
     };
@@ -3524,19 +3556,21 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
     }
   });
 
-  // Download Lampiran Perangkat Ajar (TP & Modul Ajar)
+  // Download / Preview Lampiran Perangkat Ajar & Materi Pelajaran
   app.get('/api/ajar/file/:fileId', async (req, res) => {
     try {
       const fileId = String(req.params.fileId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      const isInline = String(req.query.inline || '') === '1' || String(req.query.inline || '') === 'true';
+      const disp = isInline ? 'inline' : 'attachment';
       if (!fileId) {
-        res.status(404).send('Berkas perangkat ajar tidak ditemukan');
+        res.status(404).send('Berkas tidak ditemukan');
         return;
       }
       if (fs.existsSync(AJAR_DIR)) {
         const match = fs.readdirSync(AJAR_DIR).find(f => f.startsWith(fileId + '__'));
         if (match) {
           const origName = match.slice((fileId + '__').length).replace(/"/g, '');
-          res.setHeader('Content-Disposition', `attachment; filename="${origName}"`);
+          res.setHeader('Content-Disposition', `${disp}; filename="${origName}"`);
           res.sendFile(path.join(AJAR_DIR, match));
           return;
         }
@@ -3546,14 +3580,14 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
         if (remote) {
           const safeName = String(remote.filename || 'lampiran').replace(/"/g, '');
           if (remote.mime) res.setHeader('Content-Type', remote.mime);
-          res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+          res.setHeader('Content-Disposition', `${disp}; filename="${safeName}"`);
           res.send(Buffer.from(remote.contentBase64, 'base64'));
           return;
         }
       }
-      res.status(404).send('Berkas perangkat ajar tidak ditemukan');
+      res.status(404).send('Berkas tidak ditemukan');
     } catch {
-      res.status(500).send('Gagal mengunduh berkas perangkat ajar');
+      res.status(500).send('Gagal mengunduh berkas');
     }
   });
 

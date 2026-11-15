@@ -395,3 +395,27 @@ export function downloadAjarFile(fileId: string, namaFile?: string): void {
   a.remove();
 }
 
+export function getAjarFilePreviewUrl(fileId: string): string {
+  if (!fileId) return '';
+  if (fileId.startsWith('local_ajr_')) {
+    const rec = readLocalAjarFiles()[fileId];
+    if (!rec) return '';
+    return `data:${rec.mimeType || 'application/octet-stream'};base64,${rec.base64Data}`;
+  }
+  return `/api/ajar/file/${encodeURIComponent(fileId)}?inline=1`;
+}
+
+export function downloadTextAsFile(filename: string, content: string): void {
+  const safeName = String(filename || 'materi-pelajaran.txt').replace(/[\\/:*?"<>|]+/g, '_');
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = safeName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+

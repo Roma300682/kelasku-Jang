@@ -10,7 +10,7 @@ import {
   Trash2,
   Upload,
   Unlink,
-  Users,
+  BookOpen,
   Check,
   Layers
 } from 'lucide-react';
@@ -1443,4 +1443,439 @@ export const PemantikModalForm: React.FC<PemantikModalFormProps> = ({
     </div>
   );
 };
+
+interface MateriModalFormProps {
+  token: string;
+  initial?: any;
+  mapelList: any[];
+  kelasList?: any[];
+  currentKelasId?: string;
+  defaultPengunggah?: string;
+  onClose: () => void;
+  onSave: (payload: {
+    Kelas: string;
+    Mapel: string;
+    Judul: string;
+    Bab: string;
+    Ringkasan: string;
+    IsiMateri: string;
+    LinkSumber: string;
+    FileID: string;
+    NamaFile: string;
+    UkuranFile: string;
+    TanggalUpload: string;
+    Pengunggah: string;
+  }) => Promise<void>;
+  showToast: (msg: string, ms?: number) => void;
+}
+
+export const MateriModalForm: React.FC<MateriModalFormProps> = ({
+  token,
+  initial,
+  mapelList,
+  kelasList = [],
+  currentKelasId = '',
+  defaultPengunggah = '',
+  onClose,
+  onSave,
+  showToast
+}) => {
+  const [judul, setJudul] = useState<string>(initial?.Judul || '');
+  const [mapel, setMapel] = useState<string>(initial?.Mapel || mapelList[0]?.Nama || 'Umum');
+  const [bab, setBab] = useState<string>(initial?.Bab || '');
+  const [ringkasan, setRingkasan] = useState<string>(initial?.Ringkasan || '');
+  const [isiMateri, setIsiMateri] = useState<string>(initial?.IsiMateri || '');
+
+  const initKelasStr = String(initial?.Kelas || '').trim();
+  const initIsAll = !initial || initKelasStr === '__ALL__' || initKelasStr === 'all' || !initKelasStr;
+  const [cakupanKelas, setCakupanKelas] = useState<'all_subject' | 'selected'>(
+    initIsAll ? 'all_subject' : 'selected'
+  );
+  const [selectedKelasIds, setSelectedKelasIds] = useState<string[]>(() => {
+    if (!initIsAll && initKelasStr) {
+      return initKelasStr.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    return currentKelasId ? [currentKelasId] : [];
+  });
+
+  const [links, setLinks] = useState<SumberLinkItem[]>(() => {
+    const parsed = parseSumberLinks(initial?.LinkSumber);
+    return parsed.length > 0 ? parsed : [{ label: '', url: '' }];
+  });
+
+  const [fileId, setFileId] = useState<string>(initial?.FileID || '');
+  const [namaFile, setNamaFile] = useState<string>(initial?.NamaFile || '');
+  const [ukuranFile, setUkuranFile] = useState<string>(initial?.UkuranFile || '');
+  const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const handleFilePick = (file: File | undefined) => {
+    if (!file) return;
+    readFileAsBase64(file, showToast, pf => {
+      setPendingFile(pf);
+      setUkuranFile(formatFileSize(pf.size));
+      if (!judul.trim()) {
+        setJudul(file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
+      }
+    });
+  };
+
+  const handleSubmit = async () => {
+    const cleanJudul = judul.trim() || pendingFile?.namaFile?.replace(/\.[^.]+$/, '') || '';
+    if (!cleanJudul) {
+      showToast('Judul materi pelajaran wajib diisi');
+      return;
+    }
+    if (!isiMateri.trim() && !ringkasan.trim() && !pendingFile && !fileId && !links.some(l => normalizeHttpUrl(l.url))) {
+      showToast('Isi ringkasan/materi, unggah berkas, atau tambahkan minimal satu link sumber');
+      return;
+    }
+
+    const finalKelas =
+      cakupanKelas === 'all_subject'
+        ? '__ALL__'
+        : selectedKelasIds.length > 0
+          ? selectedKelasIds.join(',')
+          : currentKelasId || '__ALL__';
+
+    const cleanLinks = links
+      .map(l => ({ label: l.label.trim(), url: normalizeHttpUrl(l.url) }))
+      .filter(l => /^https?:\/\//i.test(l.url));
+    const serializedLinks = serializeSumberLinks(cleanLinks);
+
+    setSaving(true);
+    try {
+      let finalFileId = fileId;
+      let finalNamaFile = namaFile;
+      let finalUkuran = ukuranFile;
+      if (pendingFile) {
+        showToast('Mengunggah berkas materi pelajaran…', 6000);
+        const uploaded = await uploadAjarFile(
+          token,
+          pendingFile.namaFile,
+          pendingFile.mimeType,
+          pendingFile.base64Data
+        );
+        finalFileId = uploaded.fileId;
+        finalNamaFile = uploaded.namaFile;
+        finalUkuran = formatFileSize(pendingFile.size);
+      }
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+      await onSave({
+        Kelas: finalKelas,
+        Mapel: mapel.trim() || 'Umum',
+        Judul: cleanJudul,
+        Bab: bab.trim(),
+        Ringkasan: ringkasan.trim(),
+        IsiMateri: isiMateri.trim(),
+        LinkSumber: serializedLinks,
+        FileID: finalFileId,
+        NamaFile: finalNamaFile,
+        UkuranFile: finalUkuran,
+        TanggalUpload: initial?.TanggalUpload || todayStr,
+        Pengunggah: initial?.Pengunggah || defaultPengunggah || 'Guru Mata Pelajaran'
+      });
+    } catch (e) {
+      showToast('Gagal menyimpan materi pelajaran: ' + pesanErr(e), 4500);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/60 flex items-start gap-2.5 text-xs text-emerald-950">
+        <BookOpen className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+        <div>
+          <div className="font-bold">Materi Pelajaran Khusus Siswa</div>
+          <p className="text-[11px] text-emerald-800 mt-0.5">
+            Materi yang ditambahkan di sini akan langsung tampil di <strong>Portal Siswa</strong> agar peserta didik dapat membaca ringkasan, mengakses tautan belajar, dan mengunduh berkas bahan ajar (terpisah dari Modul Ajar/RPP guru).
+          </p>
+        </div>
+      </div>
+
+      {/* Upload File Materi */}
+      <div className="p-3.5 rounded-xl border border-teal-200 bg-teal-50/40 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-bold text-teal-950">
+              Berkas Materi Pelajaran (PDF / PPT / Word / Gambar / Video / Audio)
+            </div>
+            <p className="text-[11px] text-slate-600">
+              Siswa dapat melihat dan mengunduh langsung berkas ini di Portal Siswa (maks. 15 MB).
+            </p>
+          </div>
+          <label className="px-3 py-1.5 text-xs font-semibold bg-teal-600 hover:bg-teal-500 text-white rounded-lg inline-flex items-center gap-1.5 cursor-pointer shadow-xs">
+            <Upload className="w-3.5 h-3.5" />
+            <span>{pendingFile || namaFile ? 'Ganti Berkas' : 'Pilih Berkas Materi'}</span>
+            <input
+              type="file"
+              accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.csv,.jpg,.jpeg,.png,.webp,.mp4,.mp3"
+              onChange={e => handleFilePick(e.target.files?.[0])}
+              className="hidden"
+            />
+          </label>
+        </div>
+
+        {(pendingFile || fileId) && (
+          <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-white border border-teal-200 rounded-lg text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <Paperclip className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+              <span className="font-semibold text-slate-800 truncate">
+                {pendingFile ? pendingFile.namaFile : namaFile || 'Lampiran Materi'}
+              </span>
+              {(pendingFile || ukuranFile) && (
+                <span className="text-[11px] text-slate-400 shrink-0">
+                  ({pendingFile ? formatFileSize(pendingFile.size) : ukuranFile})
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {!pendingFile && fileId && (
+                <button
+                  type="button"
+                  onClick={() => downloadAjarFile(fileId, namaFile)}
+                  className="text-sky-600 hover:underline font-semibold inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <Download className="w-3 h-3" /> Unduh
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingFile(null);
+                  setFileId('');
+                  setNamaFile('');
+                  setUkuranFile('');
+                }}
+                className="text-rose-600 hover:underline font-medium cursor-pointer"
+              >
+                Hapus
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <label className="sm:col-span-2 block text-xs font-semibold text-slate-700">
+          Judul Materi Pelajaran
+          <input
+            value={judul}
+            onChange={e => setJudul(e.target.value)}
+            placeholder="Contoh: Handout Persamaan Kuadrat & Contoh Soal"
+            className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+          />
+        </label>
+        <label className="block text-xs font-semibold text-slate-700">
+          Mata Pelajaran
+          <input
+            list="materi-mapel-list"
+            value={mapel}
+            onChange={e => setMapel(e.target.value)}
+            className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+          />
+          <datalist id="materi-mapel-list">
+            {mapelList.map((m: any) => (
+              <option key={m.ID} value={m.Nama} />
+            ))}
+          </datalist>
+        </label>
+      </div>
+
+      <label className="block text-xs font-semibold text-slate-700">
+        Bab / Pertemuan / Topik (opsional)
+        <input
+          value={bab}
+          onChange={e => setBab(e.target.value)}
+          placeholder="mis. Bab 2 · Pertemuan 3"
+          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+        />
+      </label>
+
+      {/* Cakupan Kelas (1x Upload) */}
+      <div className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/50 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-1">
+          <label className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5 text-indigo-600" />
+            Cakupan Kelas (1x Upload untuk Semua Kelas Mapel Ini)
+          </label>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <label
+            onClick={() => setCakupanKelas('all_subject')}
+            className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-start gap-2.5 transition-colors ${
+              cakupanKelas === 'all_subject'
+                ? 'bg-white border-indigo-500 shadow-2xs text-indigo-950 font-semibold'
+                : 'bg-white/60 border-slate-200 text-slate-700'
+            }`}
+          >
+            <input
+              type="radio"
+              name="materiCakupanKelas"
+              checked={cakupanKelas === 'all_subject'}
+              onChange={() => setCakupanKelas('all_subject')}
+              className="mt-0.5 text-indigo-600"
+            />
+            <div>
+              <div className="font-semibold text-indigo-950">Semua Kelas yang Mempelajari {mapel || 'Mapel ini'}</div>
+              <div className="text-[11px] font-normal text-slate-500 mt-0.5">
+                Cukup 1x unggah, siswa di seluruh kelas terkait otomatis bisa melihat &amp; mengunduh.
+              </div>
+            </div>
+          </label>
+          <label
+            onClick={() => setCakupanKelas('selected')}
+            className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-start gap-2.5 transition-colors ${
+              cakupanKelas === 'selected'
+                ? 'bg-white border-indigo-500 shadow-2xs text-indigo-950 font-semibold'
+                : 'bg-white/60 border-slate-200 text-slate-700'
+            }`}
+          >
+            <input
+              type="radio"
+              name="materiCakupanKelas"
+              checked={cakupanKelas === 'selected'}
+              onChange={() => setCakupanKelas('selected')}
+              className="mt-0.5 text-indigo-600"
+            />
+            <div>
+              <div className="font-semibold text-indigo-950">Pilih Kelas Tertentu</div>
+              <div className="text-[11px] font-normal text-slate-500 mt-0.5">
+                Hanya tampil di Portal Siswa kelas yang dicentang di bawah.
+              </div>
+            </div>
+          </label>
+        </div>
+
+        {cakupanKelas === 'selected' && kelasList && kelasList.length > 0 && (
+          <div className="pt-1 border-t border-indigo-100 flex flex-wrap gap-2">
+            {kelasList.map((k: any) => {
+              const isChecked = selectedKelasIds.includes(k.ID);
+              return (
+                <button
+                  type="button"
+                  key={k.ID}
+                  onClick={() => {
+                    setSelectedKelasIds(prev =>
+                      prev.includes(k.ID) ? prev.filter(id => id !== k.ID) : [...prev, k.ID]
+                    );
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${
+                    isChecked
+                      ? 'bg-indigo-600 text-white border-indigo-600 font-semibold'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  {isChecked && <Check className="w-3.5 h-3.5" />}
+                  <span>{k.Nama}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <label className="block text-xs font-semibold text-slate-700">
+        Ringkasan Singkat
+        <textarea
+          rows={2}
+          value={ringkasan}
+          onChange={e => setRingkasan(e.target.value)}
+          placeholder="Ringkasan topik yang akan dipelajari siswa dari materi ini..."
+          className="mt-1 w-full p-2.5 border border-slate-300 rounded-lg text-xs"
+        />
+      </label>
+
+      <label className="block text-xs font-semibold text-slate-700">
+        Isi / Penjelasan Materi Pelajaran (dapat dibaca langsung oleh siswa)
+        <textarea
+          rows={5}
+          value={isiMateri}
+          onChange={e => setIsiMateri(e.target.value)}
+          placeholder="Tuliskan poin-poin penting materi, rumus, definisi, atau catatan belajar untuk siswa..."
+          className="mt-1 w-full p-2.5 border border-slate-300 rounded-lg text-xs leading-relaxed"
+        />
+      </label>
+
+      {/* Link Sumber / Video Pembelajaran */}
+      <div className="p-3.5 rounded-xl border border-sky-200 bg-sky-50/40 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-bold text-sky-950 flex items-center gap-1.5">
+              <ExternalLink className="w-3.5 h-3.5 text-sky-600" /> Link Video / Referensi Belajar (opsional)
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Siswa dapat langsung membuka tautan video YouTube, artikel, atau simulasi belajar.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setLinks(prev => [...prev, { label: '', url: '' }])}
+            className="px-2.5 py-1 text-[11px] font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer"
+          >
+            <Plus className="w-3 h-3" /> Tambah Link
+          </button>
+        </div>
+        <div className="space-y-2">
+          {links.map((row, idx) => (
+            <div key={idx} className="flex flex-wrap items-center gap-2">
+              <input
+                value={row.label}
+                onChange={e =>
+                  setLinks(prev =>
+                    prev.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x))
+                  )
+                }
+                placeholder="Nama Sumber (mis. Video Pembahasan)"
+                className="w-44 px-2.5 py-1.5 border border-slate-300 bg-white rounded-lg text-xs"
+              />
+              <input
+                value={row.url}
+                onChange={e =>
+                  setLinks(prev =>
+                    prev.map((x, i) => (i === idx ? { ...x, url: e.target.value } : x))
+                  )
+                }
+                placeholder="https://youtube.com/... atau link sumber belajar"
+                className="flex-1 min-w-[200px] px-2.5 py-1.5 border border-slate-300 bg-white rounded-lg text-xs"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setLinks(prev => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : [{ label: '', url: '' }]))
+                }
+                className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                title="Hapus baris link"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-2 pt-2">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={saving}
+          className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+        >
+          Batal
+        </button>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={saving}
+          className="px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg cursor-pointer disabled:opacity-50"
+        >
+          {saving ? 'Menyimpan…' : 'Simpan Materi Pelajaran'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 

@@ -94,6 +94,7 @@ function createCleanLocalDb(): LocalDb {
       TP: [],
       Modul: [],
       Pemantik: [],
+      Materi: [],
       Mapel: [],
       BerkasCloud: [],
       CBT: [],
@@ -318,6 +319,42 @@ async function createSeedLocalDb(): Promise<LocalDb> {
             { label: 'Simulasi Grafik GeoGebra', url: 'https://www.geogebra.org/graphing' },
             { label: 'Khan Academy: Quadratic Functions', url: 'https://www.khanacademy.org/math/algebra/x2f8bb11595b61c86:quadratic-functions-equations' }
           ])
+        }
+      ],
+      Materi: [
+        {
+          ID: 'mat_1',
+          Kelas: '__ALL__',
+          Mapel: 'Matematika',
+          Judul: 'Fungsi Kuadrat, Grafik Parabola & Nilai Optimum',
+          Bab: 'Bab 3 · Fungsi Kuadrat',
+          Ringkasan: 'Panduan lengkap memahami bentuk umum fungsi kuadrat f(x) = ax² + bx + c, sumbu simetri, titik puncak, serta penerapannya.',
+          IsiMateri: '1. Bentuk Umum Fungsi Kuadrat\nf(x) = ax² + bx + c dengan a, b, c ∈ R dan a ≠ 0.\n\n2. Sumbu Simetri & Titik Optimum\n- Sumbu simetri: x = -b / (2a)\n- Nilai optimum: y = -D / (4a), di mana D = b² - 4ac.',
+          LinkSumber: JSON.stringify([
+            { label: 'Simulasi Grafik GeoGebra', url: 'https://www.geogebra.org/graphing' }
+          ]),
+          FileID: '',
+          NamaFile: '',
+          UkuranFile: '',
+          TanggalUpload: d1,
+          Pengunggah: 'Dra. Ratna Sari, M.Pd.'
+        },
+        {
+          ID: 'mat_2',
+          Kelas: '__ALL__',
+          Mapel: 'Bahasa Indonesia',
+          Judul: 'Struktur & Kaidah Kebahasaan Teks LHO',
+          Bab: 'Bab 1 · Teks Laporan Hasil Observasi',
+          Ringkasan: 'Materi pembelajaran mengenai pengertian, struktur, serta contoh analisis Teks Laporan Hasil Observasi.',
+          IsiMateri: '1. Pernyataan Umum\n2. Deskripsi Bagian\n3. Deskripsi Manfaat / Simpulan.',
+          LinkSumber: JSON.stringify([
+            { label: 'KBBI Daring Kemdikbud', url: 'https://kbbi.kemdikbud.go.id' }
+          ]),
+          FileID: '',
+          NamaFile: '',
+          UkuranFile: '',
+          TanggalUpload: d1,
+          Pengunggah: 'Tim Guru Bahasa Indonesia'
         }
       ],
       Mapel: mapelList,
@@ -839,9 +876,8 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
           if (clean) classMapelSet.add(clean);
         });
 
-        const allModules = db.sheets.Modul || [];
-        const allTps = db.sheets.TP || [];
-        const matchingModules = allModules.filter((m: any) => {
+        const allMateri = db.sheets.Materi || [];
+        const matchingMateri = allMateri.filter((m: any) => {
           const kRaw = String(m.Kelas || '').trim();
           const mMapel = String(m.Mapel || '').trim().toLowerCase();
           if (kRaw === '__ALL__' || kRaw === 'all' || !kRaw) {
@@ -852,45 +888,20 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
           return ids.includes(siswa.Kelas);
         });
 
-        const tpToMod = new Map<string, string>();
-        allModules.forEach((m: any) => {
-          String(m.TPIDs || '')
-            .split(',')
-            .map(s => s.trim())
-            .filter(Boolean)
-            .forEach(id => {
-              if (!tpToMod.has(id)) tpToMod.set(id, m.ID);
-            });
-        });
-
-        return matchingModules.map((m: any) => {
-          const modTps = allTps.filter(
-            (t: any) => t.ModulID === m.ID || (!t.ModulID && tpToMod.get(t.ID) === m.ID)
-          );
-          return {
-            ID: m.ID,
-            Judul: m.Judul,
-            Mapel: m.Mapel || 'Umum',
-            Alokasi: m.Alokasi || '',
-            Pembuka: m.Pembuka || '',
-            Inti: m.Inti || '',
-            Penutup: m.Penutup || '',
-            Asesmen: m.Asesmen || '',
-            Media: m.Media || '',
-            PertanyaanPemantik: m.PertanyaanPemantik || '',
-            LinkSumber: m.LinkSumber || '',
-            FileID: m.FileID || '',
-            NamaFile: m.NamaFile || '',
-            tps: modTps.map((t: any) => ({
-              ID: t.ID,
-              Kode: t.Kode || 'TP',
-              Tujuan: t.Tujuan || '',
-              Materi: t.Materi || '',
-              FileID: t.FileID || '',
-              NamaFile: t.NamaFile || ''
-            }))
-          };
-        });
+        return matchingMateri.map((m: any) => ({
+          ID: m.ID,
+          Judul: m.Judul || '',
+          Mapel: m.Mapel || 'Umum',
+          Bab: m.Bab || '',
+          Ringkasan: m.Ringkasan || '',
+          IsiMateri: m.IsiMateri || '',
+          LinkSumber: m.LinkSumber || '',
+          FileID: m.FileID || '',
+          NamaFile: m.NamaFile || '',
+          UkuranFile: m.UkuranFile || '',
+          TanggalUpload: m.TanggalUpload || '',
+          Pengunggah: m.Pengunggah || ''
+        }));
       })()
     };
   }
@@ -924,7 +935,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
     const operational = [
       'Siswa', 'Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku',
       'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal',
-      'JadwalAtur', 'Akademik', 'TP', 'Modul', 'Pemantik', 'BerkasCloud',
+      'JadwalAtur', 'Akademik', 'TP', 'Modul', 'Pemantik', 'Materi', 'BerkasCloud',
       'CBT', 'HasilCBT', 'Akun'
     ];
     operational.forEach(s => { db.sheets[s] = []; });
@@ -946,7 +957,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
       nilai_tugas: ['Tugas', 'Pengumpulan', 'Nilai'],
       cbt: ['CBT', 'HasilCBT'],
       operasional_kelas: ['DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur'],
-      perangkat_ajar: ['TP', 'Modul', 'Pemantik'],
+      perangkat_ajar: ['TP', 'Modul', 'Pemantik', 'Materi'],
       kalender: ['Akademik', 'Checklist'],
       siswa: ['Siswa', 'Akun']
     };

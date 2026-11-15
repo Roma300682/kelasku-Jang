@@ -52,7 +52,9 @@ import {
   adaPelajaran,
   slotJadwal,
   waLink,
-  downloadAjarFile
+  downloadAjarFile,
+  downloadTextAsFile,
+  getAjarFilePreviewUrl
 } from './api';
 import StudentPortal from './components/StudentPortal';
 import CloudAiHub from './components/CloudAiHub';
@@ -66,6 +68,7 @@ import {
   TpModalForm,
   ModulModalForm,
   PemantikModalForm,
+  MateriModalForm,
   SumberLinkItem,
   parseSumberLinks,
   extractUrlsFromText
@@ -292,6 +295,7 @@ export default function App() {
     TP: [],
     Modul: [],
     Pemantik: [],
+    Materi: [],
     Mapel: [],
     CBT: [],
     HasilCBT: [],
@@ -331,7 +335,7 @@ export default function App() {
   const [denPick, setDenPick] = useState('');
   const [denDirty, setDenDirty] = useState(false);
   const [akBulan, setAkBulan] = useState(ymd(new Date()).slice(0, 7));
-  const [ajarSub, setAjarSub] = useState<'tp' | 'mod' | 'pem'>('tp');
+  const [ajarSub, setAjarSub] = useState<'tp' | 'mod' | 'pem' | 'mat'>('mat');
   const [ajarMapelFilter, setAjarMapelFilter] = useState<string>('ALL');
   const [tpFilterModul, setTpFilterModul] = useState<string>('all');
   const [modView, setModView] = useState('');
@@ -4018,6 +4022,16 @@ export default function App() {
       return isModulForClass(p, K, classMapelList);
     });
 
+    const matListAllForClass = (db.Materi || []).filter((m: any) =>
+      isModulForClass(m, K, classMapelList)
+    );
+    const matList =
+      activeAjarMapel === 'ALL'
+        ? matListAllForClass
+        : matListAllForClass.filter(
+            (m: any) => String(m.Mapel || '').trim().toLowerCase() === activeAjarMapel.toLowerCase()
+          );
+
     const getModuleTps = (m: any) => tpList.filter((t: any) => t.ModulID === m.ID);
     const modMap = new Map<string, any>(modList.map((m: any) => [m.ID, m]));
 
@@ -4229,6 +4243,162 @@ export default function App() {
               showToast('Slide Pemantik & Link Sumber berhasil disimpan');
             }}
           />
+        )
+      });
+    };
+
+    const openModalMateri = (editRow?: any) => {
+      const prioritizedMapel = [
+        ...classMapelList.map((name, i) => ({ ID: `cls_m_${i}`, Nama: name })),
+        ...(db.Mapel || []).filter(
+          (m: any) => !classMapelList.some(cn => cn.toLowerCase() === String(m.Nama || '').toLowerCase())
+        )
+      ];
+      setModalContent({
+        title: editRow ? 'Edit Materi Pelajaran' : 'Tambah / Upload Materi Pelajaran',
+        wide: true,
+        render: () => (
+          <MateriModalForm
+            token={token}
+            initial={editRow}
+            mapelList={prioritizedMapel}
+            kelasList={db.Kelas || []}
+            currentKelasId={K}
+            defaultPengunggah={peran === 'admin' ? S.guru || 'Admin / Guru' : db.namaPengguna || S.guru || 'Guru Mata Pelajaran'}
+            onClose={() => setModalContent(null)}
+            showToast={showToast}
+            onSave={async payload => {
+              const matId = editRow?.ID || uid();
+              const nextMat = editRow
+                ? (db.Materi || []).map((x: any) =>
+                    x.ID === matId ? { ...x, ...payload } : x
+                  )
+                : [
+                    ...(db.Materi || []),
+                    {
+                      ID: matId,
+                      ...payload
+                    }
+                  ];
+              setModalContent(null);
+              await persistSheets({ ...db, Materi: nextMat }, 'Materi');
+              showToast('Materi pelajaran berhasil disimpan & tersedia di Portal Siswa');
+            }}
+          />
+        )
+      });
+    };
+
+    const openPreviewMateri = (m: any) => {
+      const matLinks = parseSumberLinks(m.LinkSumber);
+      const previewUrl = m.FileID ? getAjarFilePreviewUrl(m.FileID) : '';
+      const lowerName = String(m.NamaFile || '').toLowerCase();
+      const isImg = /\.(png|jpe?g|webp|gif|svg)$/i.test(lowerName);
+      const isPdf = /\.pdf$/i.test(lowerName);
+      const handleDownload = () => {
+        if (m.FileID) {
+          downloadAjarFile(m.FileID, m.NamaFile);
+        } else {
+          const textBody = [
+            `MATERI PELAJARAN: ${m.Judul}`,
+            `Mata Pelajaran: ${m.Mapel || 'Umum'}`,
+            m.Bab ? `Bab/Topik: ${m.Bab}` : '',
+            m.Pengunggah ? `Guru: ${m.Pengunggah}` : '',
+            '',
+            m.Ringkasan ? `RINGKASAN:\n${m.Ringkasan}\n` : '',
+            m.IsiMateri ? `ISI MATERI:\n${m.IsiMateri}\n` : '',
+            matLinks.length > 0
+              ? `SUMBER BELAJAR:\n${matLinks.map(l => `- ${l.label}: ${l.url}`).join('\n')}`
+              : ''
+          ]
+            .filter(Boolean)
+            .join('\n');
+          downloadTextAsFile(`${m.Judul || 'materi-pelajaran'}.txt`, textBody);
+        }
+      };
+
+      setModalContent({
+        title: `${m.Mapel || 'Umum'} · ${m.Judul}`,
+        wide: true,
+        render: () => (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+              <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2">
+                {m.Bab && (
+                  <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-semibold">
+                    {m.Bab}
+                  </span>
+                )}
+                {m.Pengunggah && <span>Oleh {m.Pengunggah}</span>}
+                {m.TanggalUpload && <span>· {tglIndo(m.TanggalUpload) || m.TanggalUpload}</span>}
+              </div>
+              <button
+                type="button"
+                onClick={handleDownload}
+                className="px-3.5 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{m.FileID ? `Unduh ${m.NamaFile || 'Berkas'}` : 'Unduh Teks (.txt)'}</span>
+              </button>
+            </div>
+
+            {m.Ringkasan && (
+              <div className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-100 text-xs text-slate-700">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 mb-1">Ringkasan</div>
+                <p className="whitespace-pre-line leading-relaxed">{m.Ringkasan}</p>
+              </div>
+            )}
+
+            {m.IsiMateri && (
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 max-h-72 overflow-y-auto">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Penjelasan Materi</div>
+                <p className="whitespace-pre-line leading-relaxed">{m.IsiMateri}</p>
+              </div>
+            )}
+
+            {previewUrl && (isImg || isPdf) && (
+              <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50">
+                <div className="px-3 py-2 bg-slate-100 border-b border-slate-200 text-[11px] font-semibold text-slate-700 flex items-center justify-between">
+                  <span className="truncate">Pratinjau Lampiran: {m.NamaFile}</span>
+                  <a
+                    href={previewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sky-700 hover:underline inline-flex items-center gap-1 shrink-0"
+                  >
+                    <ExternalLink className="w-3 h-3" /> Buka Tab Baru
+                  </a>
+                </div>
+                {isImg ? (
+                  <img src={previewUrl} alt={m.NamaFile} className="max-h-96 mx-auto object-contain p-2" />
+                ) : (
+                  <iframe src={previewUrl} title={m.NamaFile} className="w-full h-96 border-0 bg-white" />
+                )}
+              </div>
+            )}
+
+            {matLinks.length > 0 && (
+              <div className="space-y-1.5">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  Link Sumber Belajar ({matLinks.length})
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {matLinks.map((lk, i) => (
+                    <a
+                      key={i}
+                      href={lk.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>{lk.label}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )
       });
     };
@@ -4473,8 +4643,9 @@ export default function App() {
               <strong>{kelasObj.Nama || ''}</strong> — 1x upload modul langsung tersedia di seluruh kelas mapel terkait.
             </p>
           </div>
-          <div className="flex p-1 bg-white/20 backdrop-blur-sm rounded-xl">
+          <div className="flex flex-wrap p-1 bg-white/20 backdrop-blur-sm rounded-xl gap-0.5">
             {[
+              ['mat', 'Materi Pelajaran'],
               ['tp', 'Tujuan Pembelajaran'],
               ['mod', 'Modul Ajar / RPP'],
               ['pem', 'Slide Pemantik']
@@ -4508,10 +4679,11 @@ export default function App() {
                     : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-fuchsia-50'
                 }`}
               >
-                Semua ({modListAllForClass.length})
+                Semua ({ajarSub === 'mat' ? matListAllForClass.length : modListAllForClass.length})
               </button>
               {classMapelList.map(subj => {
-                const count = modListAllForClass.filter(
+                const targetArr = ajarSub === 'mat' ? matListAllForClass : modListAllForClass;
+                const count = targetArr.filter(
                   (m: any) => String(m.Mapel || '').trim().toLowerCase() === subj.toLowerCase()
                 ).length;
                 const active = activeAjarMapel.toLowerCase() === subj.toLowerCase();
@@ -4531,6 +4703,161 @@ export default function App() {
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {ajarSub === 'mat' && (
+          <div className="space-y-4">
+            <div className="bg-white border border-emerald-200 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+              <div className="text-xs text-slate-600">
+                <strong className="text-slate-900">{matList.length}</strong> Materi Pelajaran tersedia untuk kelas{' '}
+                <strong>{kelasObj.Nama || '-'}</strong> · Materi di sini tampil untuk <strong>dilihat dan diunduh siswa di Portal Siswa</strong> (terpisah dari RPP/Modul guru).
+              </div>
+              <button
+                type="button"
+                onClick={() => openModalMateri()}
+                className="px-3.5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5" /> + Tambah / Upload Materi Pelajaran
+              </button>
+            </div>
+
+            {matList.length === 0 ? (
+              <div className="bg-white border border-dashed border-emerald-200 rounded-2xl p-10 text-center space-y-3">
+                <p className="text-sm font-semibold text-slate-700">Belum ada Materi Pelajaran di kelas ini</p>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  Unggah file materi (PDF, PPT, Word, Gambar) atau tulis ringkasan materi pelajaran agar siswa dapat langsung membaca dan mengunduhnya dari Portal Siswa.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => openModalMateri()}
+                  className="px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Tambah Materi Pelajaran
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {matList.map((m: any) => {
+                  const matLinks = parseSumberLinks(m.LinkSumber);
+                  const isShared = !m.Kelas || m.Kelas === '__ALL__' || m.Kelas === 'all' || String(m.Kelas).includes(',');
+                  return (
+                    <div
+                      key={m.ID}
+                      className="bg-white border border-emerald-200/80 rounded-xl p-5 flex flex-col justify-between gap-4 shadow-2xs"
+                    >
+                      <div className="space-y-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-800 rounded">
+                                {m.Mapel || 'Umum'}
+                              </span>
+                              {m.Bab && <span className="text-[11px] font-medium text-slate-500">{m.Bab}</span>}
+                            </div>
+                            <h3 className="text-base font-bold text-slate-900 mt-1">{m.Judul}</h3>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 text-[10px] font-bold rounded border shrink-0 ${
+                              isShared
+                                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                : 'bg-slate-50 text-slate-600 border-slate-200'
+                            }`}
+                          >
+                            {m.Kelas === '__ALL__' || m.Kelas === 'all' || !m.Kelas
+                              ? 'Lintas Kelas (Mapel)'
+                              : String(m.Kelas).includes(',')
+                              ? `${String(m.Kelas).split(',').length} Kelas`
+                              : 'Kelas Ini'}
+                          </span>
+                        </div>
+
+                        {m.Ringkasan && (
+                          <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">{m.Ringkasan}</p>
+                        )}
+                        {!m.Ringkasan && m.IsiMateri && (
+                          <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">{m.IsiMateri}</p>
+                        )}
+
+                        {m.FileID && (
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => downloadAjarFile(m.FileID, m.NamaFile)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg max-w-full cursor-pointer"
+                            >
+                              <Paperclip className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{m.NamaFile || 'Berkas Materi'}</span>
+                              {m.UkuranFile && <span className="opacity-70 shrink-0">({m.UkuranFile})</span>}
+                            </button>
+                          </div>
+                        )}
+
+                        {matLinks.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {matLinks.map((lk, idx) => (
+                              <a
+                                key={idx}
+                                href={lk.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded"
+                              >
+                                <ExternalLink className="w-3 h-3 shrink-0" />
+                                <span className="truncate max-w-[160px]">{lk.label}</span>
+                              </a>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="text-[11px] text-slate-400">
+                          {m.Pengunggah ? `Oleh ${m.Pengunggah}` : ''}
+                          {m.TanggalUpload ? `${m.Pengunggah ? ' · ' : ''}${tglIndo(m.TanggalUpload) || m.TanggalUpload}` : ''}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                        <button
+                          type="button"
+                          onClick={() => openPreviewMateri(m)}
+                          className="px-3 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" /> Lihat
+                        </button>
+                        {m.FileID && (
+                          <button
+                            type="button"
+                            onClick={() => downloadAjarFile(m.FileID, m.NamaFile)}
+                            className="px-3 py-1.5 text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Download className="w-3.5 h-3.5" /> Unduh
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => openModalMateri(m)}
+                          className="px-3 py-1.5 text-xs font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Edit3 className="w-3 h-3" /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const ok = await askConfirm(`Hapus materi pelajaran "${m.Judul}"?`);
+                            if (!ok) return;
+                            const nextMat = (db.Materi || []).filter((x: any) => x.ID !== m.ID);
+                            await persistSheets({ ...db, Materi: nextMat }, 'Materi');
+                          }}
+                          className="px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg ml-auto cursor-pointer"
+                        >
+                          Hapus
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
