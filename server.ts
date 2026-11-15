@@ -1,8 +1,10 @@
+import http from 'http';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import zlib from 'zlib';
+import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { getKaldikJabarEvents, KALDIK_JABAR_REF } from './src/data/kaldikJabar.ts';
 import {
@@ -140,13 +142,14 @@ const SKEMA: Record<string, string[]> = {
   CBT: ['ID', 'Kelas', 'Judul', 'Mapel', 'Durasi', 'Status', 'Acak', 'SumberMateri', 'NamaFileMateri', 'SoalJSON', 'TanggalBuat'],
   HasilCBT: ['ID', 'CBTID', 'Kelas', 'SiswaID', 'Mulai', 'Selesai', 'JawabanJSON', 'SkorPG', 'SkorUraian', 'SkorAkhir', 'FeedbackAI', 'StatusNilai'],
   Pengguna: ['ID', 'Nama', 'Username', 'Peran', 'Kelas', 'Hash', 'Mapel', 'KelasWali', 'KelasMengajar'],
-  Akun: ['SiswaID', 'Hash']
+  Akun: ['SiswaID', 'Hash'],
+  Pesan: ['ID', 'Kelas', 'PengirimID', 'PengirimNama', 'PengirimPeran', 'PenerimaID', 'PenerimaNama', 'Pesan', 'Waktu', 'Tipe', 'Lampiran']
 };
 
 const SHEET_TERKUNCI = ['Pengaturan', 'Akun', 'Pengguna'];
 const IZIN_TULIS: Record<string, string[]> = {
-  wali: ['Siswa', 'Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'BerkasCloud', 'CBT', 'HasilCBT'],
-  guru: ['Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'BerkasCloud', 'CBT', 'HasilCBT']
+  wali: ['Siswa', 'Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'BerkasCloud', 'CBT', 'HasilCBT', 'Pesan'],
+  guru: ['Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'BerkasCloud', 'CBT', 'HasilCBT', 'Pesan']
 };
 const TTL_SESI = 21600 * 1000; // 6 hours in ms
 
@@ -637,7 +640,22 @@ function createSeedDatabase(): DatabaseFile {
       CBT: cbtList,
       HasilCBT: [],
       Pengguna: penggunaList,
-      Akun: akunList
+      Akun: akunList,
+      Pesan: [
+        {
+          ID: 'msg_seed_1',
+          Kelas: 'kls_10a',
+          PengirimID: 'usr_wali1',
+          PengirimNama: 'Dra. Ratna Sari, M.Pd.',
+          PengirimPeran: 'wali',
+          PenerimaID: 'ALL',
+          PenerimaNama: 'Semua Siswa (Kelas)',
+          Pesan: 'Selamat datang di ruang diskusi kelas X MIPA 1! Silakan gunakan ruang ini untuk berdiskusi materi pelajaran atau berkonsultasi tanya guru.',
+          Waktu: new Date(Date.now() - 3600000).toISOString(),
+          Tipe: 'pengumuman',
+          Lampiran: ''
+        }
+      ]
     }
   };
 }
@@ -1779,7 +1797,74 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
             ),
             hasil
           };
-        })
+        }),
+      materi: (() => {
+        const classMapelSet = new Set<string>();
+        String(kelas.Mapel || '')
+          .split(',')
+          .map(s => s.trim().toLowerCase())
+          .filter(Boolean)
+          .forEach(s => classMapelSet.add(s));
+        jadwal.forEach((j: any) => {
+          const clean = String(j.Mapel || '').trim().toLowerCase();
+          if (clean && clean !== 'istirahat') classMapelSet.add(clean);
+        });
+        tugas.forEach((t: any) => {
+          const clean = String(t.Mapel || '').trim().toLowerCase();
+          if (clean) classMapelSet.add(clean);
+        });
+
+        const allModules = baca_('Modul');
+        const allTps = baca_('TP');
+        const matchingModules = allModules.filter((m: any) => {
+          const kRaw = String(m.Kelas || '').trim();
+          if (kRaw === '__ALL__' || kRaw === 'all' || !kRaw) return true;
+          const ids = kRaw.split(',').map(s => s.trim()).filter(Boolean);
+          if (ids.includes(siswa.Kelas)) return true;
+          if (m.Mapel && classMapelSet.has(m.Mapel.trim().toLowerCase())) return true;
+          return false;
+        });
+
+        const tpToMod = new Map<string, string>();
+        allModules.forEach((m: any) => {
+          String(m.TPIDs || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .forEach(id => {
+              if (!tpToMod.has(id)) tpToMod.set(id, m.ID);
+            });
+        });
+
+        return matchingModules.map((m: any) => {
+          const modTps = allTps.filter(
+            (t: any) => t.ModulID === m.ID || (!t.ModulID && tpToMod.get(t.ID) === m.ID)
+          );
+          return {
+            ID: m.ID,
+            Judul: m.Judul,
+            Mapel: m.Mapel || 'Umum',
+            Alokasi: m.Alokasi || '',
+            Pembuka: m.Pembuka || '',
+            Inti: m.Inti || '',
+            Penutup: m.Penutup || '',
+            Asesmen: m.Asesmen || '',
+            Media: m.Media || '',
+            PertanyaanPemantik: m.PertanyaanPemantik || '',
+            LinkSumber: m.LinkSumber || '',
+            FileID: m.FileID || '',
+            NamaFile: m.NamaFile || '',
+            tps: modTps.map((t: any) => ({
+              ID: t.ID,
+              Kode: t.Kode || 'TP',
+              Tujuan: t.Tujuan || '',
+              Materi: t.Materi || '',
+              FileID: t.FileID || '',
+              NamaFile: t.NamaFile || ''
+            }))
+          };
+        });
+      })()
     };
   },
 
@@ -3592,6 +3677,78 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
     }
   });
 
+  let broadcastChatMessage: (msg: any) => void = () => {};
+
+  // Endpoint Chat Antar Siswa & Guru
+  app.get('/api/chat/messages', async (req, res) => {
+    try {
+      await ensureDbLoaded();
+      const kelas = String(req.query.kelas || '').trim();
+      const userId = String(req.query.userId || '').trim();
+      const peran = String(req.query.peran || '').trim();
+      const allMessages = baca_('Pesan');
+      const filtered = allMessages.filter((m: any) => {
+        const mKelas = String(m.Kelas || '').trim();
+        const matchKelas = !kelas || mKelas === '__ALL__' || mKelas === kelas || !mKelas;
+        if (!matchKelas) return false;
+        const penerima = String(m.PenerimaID || 'ALL').trim();
+        const pengirim = String(m.PengirimID || '').trim();
+        if (penerima === 'ALL') return true;
+        if (peran === 'admin' || peran === 'wali' || peran === 'guru') return true;
+        if (userId && (penerima === userId || pengirim === userId)) return true;
+        return false;
+      });
+      res.json({ ok: true, data: filtered });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message || 'Gagal memuat pesan chat' });
+    }
+  });
+
+  app.post('/api/chat/send', async (req, res) => {
+    try {
+      await ensureDbLoaded();
+      const {
+        kelas,
+        pengirimId,
+        pengirimNama,
+        pengirimPeran,
+        penerimaId,
+        penerimaNama,
+        pesan,
+        tipe,
+        lampiran
+      } = req.body || {};
+      const cleanPesan = String(pesan || '').trim();
+      if (!cleanPesan) {
+        res.status(400).json({ ok: false, error: 'Pesan tidak boleh kosong' });
+        return;
+      }
+      const newMsg = {
+        ID: 'msg_' + uidShort(),
+        Kelas: String(kelas || '').trim(),
+        PengirimID: String(pengirimId || '').trim(),
+        PengirimNama: String(pengirimNama || 'Anonim').trim(),
+        PengirimPeran: String(pengirimPeran || 'siswa').trim(),
+        PenerimaID: String(penerimaId || 'ALL').trim(),
+        PenerimaNama: String(penerimaNama || 'Semua Siswa').trim(),
+        Pesan: cleanPesan,
+        Waktu: new Date().toISOString(),
+        Tipe: String(tipe || 'teks').trim(),
+        Lampiran: String(lampiran || '').trim()
+      };
+      const cur = baca_('Pesan');
+      cur.push(newMsg);
+      tulis_('Pesan', cur);
+      await saveStateToDisk();
+
+      broadcastChatMessage(newMsg);
+
+      res.json({ ok: true, data: newMsg });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message || 'Gagal mengirim pesan chat' });
+    }
+  });
+
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, storage: detectStorageEngine() });
   });
@@ -3624,7 +3781,97 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
       });
     }
 
-    app.listen(PORT, '0.0.0.0', () => {
+    const server = http.createServer(app);
+
+    // Setup WebSocket server for real-time chat
+    const wss = new WebSocketServer({ server, path: '/ws/chat' });
+    interface ChatClientInfo {
+      ws: WebSocket;
+      kelas: string;
+      userId: string;
+      peran: string;
+      nama: string;
+    }
+    const chatClients = new Set<ChatClientInfo>();
+
+    broadcastChatMessage = (msg: any) => {
+      const payload = JSON.stringify({ type: 'message', message: msg });
+      for (const client of chatClients) {
+        if (client.ws.readyState === WebSocket.OPEN) {
+          const matchKelas = !client.kelas || !msg.Kelas || msg.Kelas === '__ALL__' || client.kelas === msg.Kelas;
+          if (!matchKelas) continue;
+          const penerima = msg.PenerimaID || 'ALL';
+          const pengirim = msg.PengirimID || '';
+          const canReceive =
+            penerima === 'ALL' ||
+            client.peran === 'admin' ||
+            client.peran === 'wali' ||
+            client.peran === 'guru' ||
+            (client.userId && (penerima === client.userId || pengirim === client.userId));
+          if (canReceive) {
+            try {
+              client.ws.send(payload);
+            } catch {}
+          }
+        }
+      }
+    };
+
+    wss.on('connection', ws => {
+      const clientInfo: ChatClientInfo = {
+        ws,
+        kelas: '',
+        userId: '',
+        peran: 'siswa',
+        nama: ''
+      };
+      chatClients.add(clientInfo);
+
+      ws.on('message', async raw => {
+        try {
+          const data = JSON.parse(String(raw || ''));
+          if (data.type === 'join') {
+            clientInfo.kelas = String(data.kelas || '').trim();
+            clientInfo.userId = String(data.userId || '').trim();
+            clientInfo.peran = String(data.peran || 'siswa').trim();
+            clientInfo.nama = String(data.nama || '').trim();
+            ws.send(JSON.stringify({ type: 'joined', ok: true }));
+            return;
+          }
+          if (data.type === 'chat') {
+            const cleanPesan = String(data.pesan || '').trim();
+            if (!cleanPesan) return;
+            const newMsg = {
+              ID: 'msg_' + uidShort(),
+              Kelas: String(data.kelas || clientInfo.kelas || '').trim(),
+              PengirimID: String(data.pengirimId || clientInfo.userId || '').trim(),
+              PengirimNama: String(data.pengirimNama || clientInfo.nama || 'Anonim').trim(),
+              PengirimPeran: String(data.pengirimPeran || clientInfo.peran || 'siswa').trim(),
+              PenerimaID: String(data.penerimaId || 'ALL').trim(),
+              PenerimaNama: String(data.penerimaNama || 'Semua Siswa').trim(),
+              Pesan: cleanPesan,
+              Waktu: new Date().toISOString(),
+              Tipe: String(data.tipe || 'teks').trim(),
+              Lampiran: String(data.lampiran || '').trim()
+            };
+            const cur = baca_('Pesan');
+            cur.push(newMsg);
+            tulis_('Pesan', cur);
+            await saveStateToDisk();
+
+            broadcastChatMessage(newMsg);
+          }
+        } catch (err) {
+          console.error('WS Chat Error:', err);
+        }
+      });
+
+      ws.on('close', () => {
+        chatClients.delete(clientInfo);
+      });
+    });
+
+    server.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on http://localhost:${PORT} [${detectStorageEngine().label}]`);
       if (process.env.NODE_ENV !== 'production') {
         import('vite')

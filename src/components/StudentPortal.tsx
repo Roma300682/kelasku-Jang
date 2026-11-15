@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { KODE, HARI, LVL_STR, JENIS_AK } from '../constants';
-import { num, fmt, ymd, tglIndo, pad, waLink, fetchJson } from '../api';
+import { num, fmt, ymd, tglIndo, pad, waLink, fetchJson, downloadAjarFile } from '../api';
+import { parseSumberLinks } from './PerangkatAjarModals';
+import { ClassChatDrawer } from './ClassChatDrawer';
 import {
   LogOut,
   RefreshCw,
@@ -24,7 +26,9 @@ import {
   X,
   Upload,
   Download,
-  Paperclip
+  Paperclip,
+  ExternalLink,
+  Sparkles
 } from 'lucide-react';
 
 interface StudentPortalProps {

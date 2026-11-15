@@ -99,7 +99,8 @@ function createCleanLocalDb(): LocalDb {
       CBT: [],
       HasilCBT: [],
       Pengguna: [],
-      Akun: []
+      Akun: [],
+      Pesan: []
     }
   };
 }
@@ -324,7 +325,22 @@ async function createSeedLocalDb(): Promise<LocalDb> {
       CBT: [],
       HasilCBT: [],
       Pengguna: penggunaList,
-      Akun: akunList
+      Akun: akunList,
+      Pesan: [
+        {
+          ID: 'msg_seed_1',
+          Kelas: 'kls_10a',
+          PengirimID: 'usr_wali1',
+          PengirimNama: 'Dra. Ratna Sari, M.Pd.',
+          PengirimPeran: 'wali',
+          PenerimaID: 'ALL',
+          PenerimaNama: 'Semua Siswa (Kelas)',
+          Pesan: 'Selamat datang di ruang diskusi kelas X MIPA 1! Silakan gunakan ruang ini untuk berdiskusi materi pelajaran atau berkonsultasi tanya guru.',
+          Waktu: new Date(Date.now() - 3600000).toISOString(),
+          Tipe: 'pengumuman',
+          Lampiran: ''
+        }
+      ]
     }
   };
 }
@@ -772,7 +788,74 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
           };
         }),
       nilai: (db.sheets.Nilai || []).find(n => n.Kelas === siswa.Kelas && n.SiswaID === siswa.ID) || null,
-      cbtList: []
+      cbtList: [],
+      materi: (() => {
+        const classMapelSet = new Set<string>();
+        String(kelas.Mapel || '')
+          .split(',')
+          .map(s => s.trim().toLowerCase())
+          .filter(Boolean)
+          .forEach(s => classMapelSet.add(s));
+        (db.sheets.Jadwal || []).filter(j => j.Kelas === siswa.Kelas).forEach((j: any) => {
+          const clean = String(j.Mapel || '').trim().toLowerCase();
+          if (clean && clean !== 'istirahat') classMapelSet.add(clean);
+        });
+        (db.sheets.Tugas || []).filter(t => t.Kelas === siswa.Kelas).forEach((t: any) => {
+          const clean = String(t.Mapel || '').trim().toLowerCase();
+          if (clean) classMapelSet.add(clean);
+        });
+
+        const allModules = db.sheets.Modul || [];
+        const allTps = db.sheets.TP || [];
+        const matchingModules = allModules.filter((m: any) => {
+          const kRaw = String(m.Kelas || '').trim();
+          if (kRaw === '__ALL__' || kRaw === 'all' || !kRaw) return true;
+          const ids = kRaw.split(',').map(s => s.trim()).filter(Boolean);
+          if (ids.includes(siswa.Kelas)) return true;
+          if (m.Mapel && classMapelSet.has(m.Mapel.trim().toLowerCase())) return true;
+          return false;
+        });
+
+        const tpToMod = new Map<string, string>();
+        allModules.forEach((m: any) => {
+          String(m.TPIDs || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .forEach(id => {
+              if (!tpToMod.has(id)) tpToMod.set(id, m.ID);
+            });
+        });
+
+        return matchingModules.map((m: any) => {
+          const modTps = allTps.filter(
+            (t: any) => t.ModulID === m.ID || (!t.ModulID && tpToMod.get(t.ID) === m.ID)
+          );
+          return {
+            ID: m.ID,
+            Judul: m.Judul,
+            Mapel: m.Mapel || 'Umum',
+            Alokasi: m.Alokasi || '',
+            Pembuka: m.Pembuka || '',
+            Inti: m.Inti || '',
+            Penutup: m.Penutup || '',
+            Asesmen: m.Asesmen || '',
+            Media: m.Media || '',
+            PertanyaanPemantik: m.PertanyaanPemantik || '',
+            LinkSumber: m.LinkSumber || '',
+            FileID: m.FileID || '',
+            NamaFile: m.NamaFile || '',
+            tps: modTps.map((t: any) => ({
+              ID: t.ID,
+              Kode: t.Kode || 'TP',
+              Tujuan: t.Tujuan || '',
+              Materi: t.Materi || '',
+              FileID: t.FileID || '',
+              NamaFile: t.NamaFile || ''
+            }))
+          };
+        });
+      })()
     };
   }
 

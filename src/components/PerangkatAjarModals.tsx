@@ -1,5 +1,19 @@
 import React, { useState } from 'react';
-import { Download, ExternalLink, Link2, Loader2, Paperclip, Plus, Sparkles, Trash2, Upload, Unlink } from 'lucide-react';
+import {
+  Download,
+  ExternalLink,
+  Link2,
+  Loader2,
+  Paperclip,
+  Plus,
+  Sparkles,
+  Trash2,
+  Upload,
+  Unlink,
+  Users,
+  Check,
+  Layers
+} from 'lucide-react';
 import { MODUL_AWAL, STATUS_TP } from '../constants';
 import { downloadAjarFile, fetchJson, pesanErr, uploadAjarFile } from '../api';
 
@@ -398,6 +412,8 @@ interface ModulModalFormProps {
   initial?: any;
   mapelList: any[];
   tpList: any[];
+  kelasList?: any[];
+  currentKelasId?: string;
   onClose: () => void;
   onSave: (payload: {
     Judul: string;
@@ -414,6 +430,7 @@ interface ModulModalFormProps {
     FileID: string;
     NamaFile: string;
     moduleTps: ModuleTpDraft[];
+    Kelas?: string;
   }) => Promise<void>;
   showToast: (msg: string, ms?: number) => void;
 }
@@ -423,6 +440,8 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
   initial,
   mapelList,
   tpList,
+  kelasList = [],
+  currentKelasId = '',
   onClose,
   onSave,
   showToast
@@ -430,6 +449,17 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
   const [judul, setJudul] = useState<string>(initial?.Judul || '');
   const [mapel, setMapel] = useState<string>(initial?.Mapel || mapelList[0]?.Nama || 'Umum');
   const [alokasi, setAlokasi] = useState<string>(initial?.Alokasi || '2 x 45 Menit');
+  const [cakupanKelas, setCakupanKelas] = useState<'all_subject' | 'selected'>(() => {
+    if (!initial?.Kelas) return 'all_subject';
+    if (initial.Kelas === '__ALL__' || initial.Kelas === 'all') return 'all_subject';
+    return 'selected';
+  });
+  const [selectedKelasIds, setSelectedKelasIds] = useState<string[]>(() => {
+    if (initial?.Kelas && initial.Kelas !== '__ALL__' && initial.Kelas !== 'all') {
+      return String(initial.Kelas).split(',').map(s => s.trim()).filter(Boolean);
+    }
+    return currentKelasId ? [currentKelasId] : (kelasList?.map(k => k.ID) || []);
+  });
 
   const initialTpIdSet = new Set(
     String(initial?.TPIDs || '')
@@ -589,6 +619,11 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         finalFileId = uploaded.fileId;
         finalNamaFile = uploaded.namaFile;
       }
+      const finalKelas =
+        cakupanKelas === 'all_subject'
+          ? '__ALL__'
+          : (selectedKelasIds.length > 0 ? selectedKelasIds.join(',') : (currentKelasId || '__ALL__'));
+
       await onSave({
         Judul: judulFinal,
         Mapel: mapel.trim() || 'Umum',
@@ -603,6 +638,7 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         LinkSumber: serializeSumberLinks(linkSumberRows),
         FileID: finalFileId,
         NamaFile: finalNamaFile,
+        Kelas: finalKelas,
         moduleTps: validTps.map((t, i) => ({
           ...t,
           Kode: t.Kode.trim() || `TP ${i + 1}`,
@@ -739,6 +775,95 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
             className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
           />
         </label>
+      </div>
+
+      {/* Cakupan Kelas (Hanya Sekali Upload Modul) */}
+      <div className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/50 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-1">
+          <label className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5 text-indigo-600" />
+            Cakupan Kelas (Cukup Sekali Upload Modul)
+          </label>
+          <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-100/70 px-2 py-0.5 rounded">
+            Otomatis Lintas Kelas
+          </span>
+        </div>
+        <p className="text-[11px] text-slate-600">
+          Sesuaikan agar guru tidak perlu mengunggah ulang modul ajar untuk setiap kelas yang mempelajari mata pelajaran ini.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <label
+            onClick={() => setCakupanKelas('all_subject')}
+            className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-start gap-2.5 transition-colors ${
+              cakupanKelas === 'all_subject'
+                ? 'bg-white border-indigo-500 shadow-2xs text-indigo-950 font-semibold'
+                : 'bg-white/60 border-slate-200 text-slate-700'
+            }`}
+          >
+            <input
+              type="radio"
+              name="cakupanKelas"
+              checked={cakupanKelas === 'all_subject'}
+              onChange={() => setCakupanKelas('all_subject')}
+              className="mt-0.5 text-indigo-600"
+            />
+            <div>
+              <div className="font-semibold text-indigo-950">Semua Kelas yang Mempelajari {mapel || 'Mapel ini'}</div>
+              <div className="text-[11px] font-normal text-slate-500 mt-0.5">
+                (Direkomendasikan) 1x upload modul berlaku untuk seluruh kelas yang mempelajari mata pelajaran ini.
+              </div>
+            </div>
+          </label>
+          <label
+            onClick={() => setCakupanKelas('selected')}
+            className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-start gap-2.5 transition-colors ${
+              cakupanKelas === 'selected'
+                ? 'bg-white border-indigo-500 shadow-2xs text-indigo-950 font-semibold'
+                : 'bg-white/60 border-slate-200 text-slate-700'
+            }`}
+          >
+            <input
+              type="radio"
+              name="cakupanKelas"
+              checked={cakupanKelas === 'selected'}
+              onChange={() => setCakupanKelas('selected')}
+              className="mt-0.5 text-indigo-600"
+            />
+            <div>
+              <div className="font-semibold text-indigo-950">Pilih Kelas Tertentu</div>
+              <div className="text-[11px] font-normal text-slate-500 mt-0.5">
+                Khusus untuk kelas tertentu saja yang dicentang di bawah.
+              </div>
+            </div>
+          </label>
+        </div>
+
+        {cakupanKelas === 'selected' && kelasList && kelasList.length > 0 && (
+          <div className="pt-1 border-t border-indigo-100 flex flex-wrap gap-2">
+            {kelasList.map((k: any) => {
+              const isChecked = selectedKelasIds.includes(k.ID);
+              return (
+                <button
+                  type="button"
+                  key={k.ID}
+                  onClick={() => {
+                    setSelectedKelasIds(prev =>
+                      prev.includes(k.ID) ? prev.filter(id => id !== k.ID) : [...prev, k.ID]
+                    );
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${
+                    isChecked
+                      ? 'bg-indigo-600 text-white border-indigo-600 font-semibold'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  {isChecked && <Check className="w-3.5 h-3.5" />}
+                  <span>{k.Nama}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Separated TPs Specifically for This Uploaded Module */}
