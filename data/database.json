@@ -11,6 +11,10 @@
         "Nilai": ""
       },
       {
+        "Kunci": "loginBg",
+        "Nilai": "preset:classroom"
+      },
+      {
         "Kunci": "jurusan",
         "Nilai": "MIPA, IPS, Bahasa"
       },
@@ -110,6 +114,8 @@
     "CBT": [],
     "HasilCBT": [],
     "Pengguna": [],
-    "Akun": []
+    "Akun": [],
+    "Materi": [],
+    "Pesan": []
   }
 }

@@ -157,6 +157,7 @@ const TTL_SESI = 21600 * 1000; // 6 hours in ms
 const PENGATURAN_AWAL: Record<string, string> = {
   sekolah: 'Sistem Manajemen Kelas',
   logo: '',
+  loginBg: 'preset:classroom',
   jurusan: 'MIPA, IPS, Bahasa',
   jurusanLogos: '{}',
   waInfo: '',
@@ -1188,6 +1189,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       adminAda: adminAda_(),
       sekolah: set.sekolah || 'Sistem Manajemen Kelas',
       logo: set.logo || '',
+      loginBg: set.loginBg || '',
       jurusan: set.jurusan || '',
       jurusanLogos: set.jurusanLogos || '{}',
       waInfo: set.waInfo || '',
@@ -1198,7 +1200,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
     };
   },
 
-  api_updateLoginBranding(logo: string, jurusan: string, sekolah?: string, jurusanLogos?: any) {
+  api_updateLoginBranding(logo: string, jurusan: string, sekolah?: string, jurusanLogos?: any, loginBg?: string) {
     const cleanLogo = String(logo || '').trim();
     if (cleanLogo && !cleanLogo.startsWith('data:image/')) {
       throw new Error('Format logo harus berupa gambar valid (PNG, JPG, WebP, atau SVG).');
@@ -1219,6 +1221,22 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       throw new Error('Minimal isi 1 nama jurusan.');
     }
     const cur = pengaturan_();
+    let nextLoginBg = cur.loginBg || '';
+    if (loginBg !== undefined) {
+      const cleanBg = String(loginBg || '').trim();
+      if (
+        cleanBg &&
+        cleanBg !== 'none' &&
+        !cleanBg.startsWith('preset:') &&
+        !cleanBg.startsWith('data:image/')
+      ) {
+        throw new Error('Format gambar latar tidak valid.');
+      }
+      if (cleanBg.length > 1500000) {
+        throw new Error('Ukuran gambar latar terlalu besar. Gunakan gambar di bawah 1 MB.');
+      }
+      nextLoginBg = cleanBg;
+    }
     let nextLogosStr = cur.jurusanLogos || '{}';
     if (jurusanLogos !== undefined) {
       const sanitized = sanitizeJurusanLogos_(jurusanLogos);
@@ -1232,6 +1250,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
     const baru: Record<string, string> = {
       ...cur,
       logo: cleanLogo,
+      loginBg: nextLoginBg,
       jurusan: cleanJurusan,
       jurusanLogos: nextLogosStr,
       ...(cleanSekolah ? { sekolah: cleanSekolah } : {})
@@ -1243,6 +1262,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
     return {
       sekolah: baru.sekolah || 'Sistem Manajemen Kelas',
       logo: baru.logo || '',
+      loginBg: baru.loginBg || '',
       jurusan: baru.jurusan || '',
       jurusanLogos: baru.jurusanLogos || '{}'
     };
@@ -1900,26 +1920,11 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
         }),
       materi: (() => {
         const classMapelSet = new Set<string>();
-        String(kelas.Mapel || '')
-          .split(',')
-          .map(s => s.trim())
-          .filter(Boolean)
-          .forEach(tok => {
-            const resolved = mapelNamaById.get(tok) || tok;
-            if (resolved) classMapelSet.add(resolved.toLowerCase());
-          });
-        jadwal.forEach((j: any) => {
-          const clean = String(j.Mapel || '').trim().toLowerCase();
-          if (clean && clean !== 'istirahat') classMapelSet.add(clean);
-        });
-        tugas.forEach((t: any) => {
-          const clean = String(t.Mapel || '').trim().toLowerCase();
-          if (clean) classMapelSet.add(clean);
-        });
-        baca_('Pengguna').forEach(u => {
-          const p = perluas_(u);
-          if (!p.wali.includes(siswa.Kelas) && !p.mengajar.includes(siswa.Kelas)) return;
-          String(u.Mapel || '')
+        const explicitRaw = String(kelas.Mapel || '').trim();
+        if (explicitRaw === '__NONE__') {
+          // Explicitly cleared all subjects for this class
+        } else if (explicitRaw) {
+          explicitRaw
             .split(',')
             .map(s => s.trim())
             .filter(Boolean)
@@ -1927,7 +1932,28 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
               const resolved = mapelNamaById.get(tok) || tok;
               if (resolved) classMapelSet.add(resolved.toLowerCase());
             });
-        });
+        } else {
+          jadwal.forEach((j: any) => {
+            const clean = String(j.Mapel || '').trim().toLowerCase();
+            if (clean && clean !== 'istirahat') classMapelSet.add(clean);
+          });
+          tugas.forEach((t: any) => {
+            const clean = String(t.Mapel || '').trim().toLowerCase();
+            if (clean) classMapelSet.add(clean);
+          });
+          baca_('Pengguna').forEach(u => {
+            const p = perluas_(u);
+            if (!p.wali.includes(siswa.Kelas) && !p.mengajar.includes(siswa.Kelas)) return;
+            String(u.Mapel || '')
+              .split(',')
+              .map(s => s.trim())
+              .filter(Boolean)
+              .forEach(tok => {
+                const resolved = mapelNamaById.get(tok) || tok;
+                if (resolved) classMapelSet.add(resolved.toLowerCase());
+              });
+          });
+        }
 
         const allMateri = baca_('Materi');
         const matchingMateri = allMateri.filter((m: any) => {

@@ -56,6 +56,13 @@ import {
   downloadTextAsFile,
   getAjarFilePreviewUrl
 } from './api';
+import {
+  LOGIN_BG_PRESETS,
+  DEFAULT_LOGIN_BG,
+  resolveLoginBgUrl,
+  getLoginBgLabel,
+  prosesBackgroundGambar
+} from './loginBackgrounds';
 import StudentPortal from './components/StudentPortal';
 import CloudAiHub from './components/CloudAiHub';
 import CbtManager from './components/CbtManager';
@@ -64,6 +71,12 @@ import KalenderPendidikan from './components/KalenderPendidikan';
 import ResetDatabasePanel from './components/ResetDatabasePanel';
 import ImportTableModal, { ImportTableMode } from './components/ImportTableModal';
 import { ClassChatDrawer } from './components/ClassChatDrawer';
+import {
+  AturMapelKelasModal,
+  EditableKelasRow,
+  EditableJurusanRow,
+  EditableMapelRow
+} from './components/SettingListEditors';
 import {
   TpModalForm,
   ModulModalForm,
@@ -120,9 +133,7 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
-  Link2,
-  Layers,
-  Check
+  Link2
 } from 'lucide-react';
 
 const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
@@ -236,6 +247,7 @@ export default function App() {
   const [publicInfo, setPublicInfo] = useState<{
     sekolah: string;
     logo: string;
+    loginBg?: string;
     jurusan: string;
     jurusanLogos?: string;
     waInfo: string;
@@ -243,6 +255,7 @@ export default function App() {
   }>({
     sekolah: 'Sistem Manajemen Kelas',
     logo: '',
+    loginBg: DEFAULT_LOGIN_BG,
     jurusan: 'MIPA, IPS, Bahasa',
     jurusanLogos: '{}',
     waInfo: '',
@@ -268,6 +281,8 @@ export default function App() {
   const [importModalMode, setImportModalMode] = useState<ImportTableMode | null>(null);
   const [loginBrandEdit, setLoginBrandEdit] = useState(false);
   const [brandLogoDraft, setBrandLogoDraft] = useState('');
+  const [brandBgDraft, setBrandBgDraft] = useState(DEFAULT_LOGIN_BG);
+  const [loginBgError, setLoginBgError] = useState(false);
   const [brandSekolahDraft, setBrandSekolahDraft] = useState('');
   const [brandJurusanItems, setBrandJurusanItems] = useState<Array<{ name: string; logo: string }>>([]);
   const [brandNewJurusan, setBrandNewJurusan] = useState('');
@@ -447,12 +462,14 @@ export default function App() {
         const info = {
           sekolah: st.sekolah || 'Sistem Manajemen Kelas',
           logo: st.logo || '',
+          loginBg: st.loginBg || DEFAULT_LOGIN_BG,
           jurusan: st.jurusan || '',
           jurusanLogos: st.jurusanLogos || '{}',
           waInfo: st.waInfo || '',
           emailHint: st.emailHint || ''
         };
         setPublicInfo(info);
+        setLoginBgError(false);
         try {
           localStorage.setItem('mk_public_info', JSON.stringify(info));
         } catch (_) {}
@@ -592,11 +609,13 @@ export default function App() {
       setPublicInfo({
         sekolah: st.sekolah || 'Sistem Manajemen Kelas',
         logo: st.logo || '',
+        loginBg: st.loginBg || DEFAULT_LOGIN_BG,
         jurusan: st.jurusan || '',
         jurusanLogos: st.jurusanLogos || '{}',
         waInfo: st.waInfo || '',
         emailHint: st.emailHint || ''
       });
+      setLoginBgError(false);
     } catch (_) {}
   }
 
@@ -635,6 +654,8 @@ export default function App() {
 
   function bukaEditorBrandingLogin() {
     setBrandLogoDraft(publicInfo.logo || '');
+    setBrandBgDraft(publicInfo.loginBg || DEFAULT_LOGIN_BG);
+    setLoginBgError(false);
     setBrandSekolahDraft(publicInfo.sekolah || 'Sistem Manajemen Kelas');
     const list = String(publicInfo.jurusan || 'MIPA, IPS, Bahasa')
       .split(',')
@@ -683,18 +704,25 @@ export default function App() {
         brandLogoDraft,
         cleanedNames.join(', '),
         brandSekolahDraft.trim(),
-        JSON.stringify(logoMap)
+        JSON.stringify(logoMap),
+        brandBgDraft
       );
-      setPublicInfo(p => ({
-        ...p,
-        sekolah: res.sekolah || p.sekolah,
+      const nextInfo = {
+        ...publicInfo,
+        sekolah: res.sekolah || publicInfo.sekolah,
         logo: res.logo || '',
+        loginBg: res.loginBg || DEFAULT_LOGIN_BG,
         jurusan: res.jurusan || '',
         jurusanLogos: res.jurusanLogos || '{}'
-      }));
+      };
+      setPublicInfo(nextInfo);
+      setLoginBgError(false);
+      try {
+        localStorage.setItem('mk_public_info', JSON.stringify(nextInfo));
+      } catch (_) {}
       setLoginBrandEdit(false);
       setBrandNewJurusan('');
-      showToast('Logo sekolah, logo jurusan & daftar jurusan berhasil diperbarui');
+      showToast('Logo, gambar latar & daftar jurusan berhasil diperbarui');
     } catch (err: any) {
       setBrandMsg(pesanErr(err));
     } finally {
@@ -732,7 +760,13 @@ export default function App() {
     ...sheetNames: string[]
   ): Promise<boolean> {
     try {
-      setDb(nextDb);
+      setDb(prev => {
+        const merged = { ...prev };
+        sheetNames.forEach(n => {
+          merged[n] = nextDb[n];
+        });
+        return merged;
+      });
       showToast('Menyimpan perubahan…', 6000);
       for (const n of sheetNames) {
         await apiCall('api_saveSheet', n, nextDb[n]);
@@ -833,11 +867,13 @@ export default function App() {
         setPublicInfo({
           sekolah: st.sekolah || 'Sistem Manajemen Kelas',
           logo: st.logo || '',
+          loginBg: st.loginBg || DEFAULT_LOGIN_BG,
           jurusan: st.jurusan || '',
           jurusanLogos: st.jurusanLogos || '{}',
           waInfo: st.waInfo || '',
           emailHint: st.emailHint || ''
         });
+        setLoginBgError(false);
       }
       showToast('Seluruh data berhasil direset ke kondisi kosong');
     } catch (err: any) {
@@ -868,11 +904,13 @@ export default function App() {
       setPublicInfo({
         sekolah: st.sekolah || 'Sistem Manajemen Kelas',
         logo: st.logo || '',
+        loginBg: st.loginBg || DEFAULT_LOGIN_BG,
         jurusan: st.jurusan || '',
         jurusanLogos: st.jurusanLogos || '{}',
         waInfo: st.waInfo || '',
         emailHint: st.emailHint || ''
       });
+      setLoginBgError(false);
       showToast('Basis data berhasil dikembalikan ke kondisi awal');
     } catch (err: any) {
       showToast('Gagal mengembalikan data demo: ' + pesanErr(err), 4500);
@@ -887,11 +925,13 @@ export default function App() {
     setPublicInfo({
       sekolah: st.sekolah || 'Sistem Manajemen Kelas',
       logo: st.logo || '',
+      loginBg: st.loginBg || DEFAULT_LOGIN_BG,
       jurusan: st.jurusan || '',
       jurusanLogos: st.jurusanLogos || '{}',
       waInfo: st.waInfo || '',
       emailHint: st.emailHint || ''
     });
+    setLoginBgError(false);
   }
 
   async function handleExportBackup(includeFiles: boolean) {
@@ -962,11 +1002,18 @@ export default function App() {
       if (!subjectSet.has(key)) subjectSet.set(key, clean);
     };
 
-    String(kRow.Mapel || '')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean)
-      .forEach(tok => reg(mapelById.get(tok) || tok));
+    const explicitRaw = String(kRow.Mapel || '').trim();
+    if (explicitRaw === '__NONE__') {
+      return [];
+    }
+    if (explicitRaw) {
+      explicitRaw
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+        .forEach(tok => reg(mapelById.get(tok) || tok));
+      return Array.from(subjectSet.values()).sort((a, b) => a.localeCompare(b, 'id'));
+    }
 
     (db.Jadwal || [])
       .filter((j: any) => j.Kelas === classId && (!j.Jenis || j.Jenis === 'Pelajaran'))
@@ -1145,12 +1192,46 @@ export default function App() {
           `Halo Admin / Informasi ${publicInfo.sekolah}, saya memerlukan informasi terkait akses Sistem Manajemen Kelas.`
         )
       : '';
+    const activeBgValue = loginBrandEdit
+      ? brandBgDraft
+      : publicInfo.loginBg || DEFAULT_LOGIN_BG;
+    const activeBgUrl = resolveLoginBgUrl(activeBgValue);
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-violet-600 to-sky-500 flex items-center justify-center p-6">
-        <div className="w-full max-w-md bg-white rounded-3xl border border-white/40 overflow-hidden shadow-2xl">
+      <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-900 via-indigo-950 to-sky-900 flex items-center justify-center p-4 sm:p-6">
+        {activeBgUrl && !loginBgError && (
+          <img
+            src={activeBgUrl}
+            alt={`Latar Pembelajaran ${publicInfo.sekolah}`}
+            referrerPolicy="no-referrer"
+            onError={() => setLoginBgError(true)}
+            className="absolute inset-0 w-full h-full object-cover select-none"
+          />
+        )}
+        <div
+          aria-hidden="true"
+          className={`absolute inset-0 ${
+            activeBgUrl && !loginBgError
+              ? 'bg-gradient-to-br from-slate-950/65 via-indigo-950/45 to-slate-900/70 backdrop-blur-[1.5px]'
+              : 'bg-gradient-to-br from-indigo-600/80 via-violet-600/80 to-sky-500/80'
+          }`}
+        />
+
+        {!loginBrandEdit && (
+          <button
+            type="button"
+            onClick={bukaEditorBrandingLogin}
+            title="Ubah Gambar Latar Laman Login"
+            className="hidden sm:inline-flex fixed bottom-5 right-5 z-20 items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-950/65 hover:bg-slate-950/85 text-white text-xs font-semibold border border-white/20 backdrop-blur-md shadow-lg transition-colors cursor-pointer"
+          >
+            <ImageIcon className="w-3.5 h-3.5 text-sky-300" />
+            <span>Ganti Gambar Latar</span>
+          </button>
+        )}
+
+        <div className="relative z-10 w-full max-w-md bg-white/95 backdrop-blur-md rounded-3xl border border-white/60 overflow-hidden shadow-2xl">
           <div className="h-2 rainbow-strip" />
-          <div className="p-8 space-y-5">
+          <div className="p-6 sm:p-8 space-y-5">
             <div>
               <div className="flex items-start justify-between gap-2.5 text-indigo-700 font-bold text-sm mb-2.5">
                 <div className="flex items-center gap-3 min-w-0">
@@ -1178,10 +1259,10 @@ export default function App() {
                   <button
                     type="button"
                     onClick={bukaEditorBrandingLogin}
-                    title="Ganti Logo Sekolah & Jurusan"
-                    className="px-2.5 py-1.5 text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl flex items-center gap-1 shrink-0 cursor-pointer transition-colors"
+                    title="Ganti Logo Sekolah, Gambar Latar & Jurusan"
+                    className="px-2.5 py-1.5 text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl flex items-center gap-1 shrink-0 cursor-pointer transition-colors whitespace-nowrap"
                   >
-                    <Edit3 className="w-3 h-3" /> Logo & Jurusan
+                    <Edit3 className="w-3 h-3" /> Logo & Latar
                   </button>
                 )}
               </div>
@@ -1213,7 +1294,7 @@ export default function App() {
               })()}
               <h1 className="text-2xl font-bold text-slate-900">
                 {loginBrandEdit
-                  ? 'Ganti Logo & Jurusan Sekolah'
+                  ? 'Sesuaikan Tampilan Login'
                   : forgotMode
                   ? isAdm
                     ? 'Lupa Kata Sandi'
@@ -1222,7 +1303,7 @@ export default function App() {
               </h1>
               <p className="text-xs text-slate-500 mt-1">
                 {loginBrandEdit
-                  ? 'Sesuaikan logo resmi sekolah, nama sekolah, dan daftar jurusan langsung dari halaman masuk.'
+                  ? 'Atur logo sekolah, gambar latar bertema pembelajaran, nama sekolah, dan daftar jurusan.'
                   : forgotMode
                   ? isAdm
                     ? 'Verifikasi kepemilikan akun untuk mengatur ulang kata sandi Admin atau Guru/Wali Kelas.'
@@ -1281,6 +1362,104 @@ export default function App() {
                       )}
                     </div>
                     <div className="text-[10px] text-slate-500">Format PNG, JPG, WebP, atau SVG.</div>
+                  </div>
+                </div>
+
+                {/* Background Laman Login Picker */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-bold text-slate-800">Gambar Latar Laman Login</div>
+                      <div className="text-[10px] text-slate-500">
+                        Aktif: <span className="font-semibold text-indigo-700">{getLoginBgLabel(brandBgDraft)}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <label className="px-2.5 py-1.5 text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl inline-flex items-center gap-1 cursor-pointer shadow-xs whitespace-nowrap">
+                        <Upload className="w-3 h-3" /> Unggah Foto
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={async e => {
+                            const f = e.target.files?.[0];
+                            e.target.value = '';
+                            if (!f) return;
+                            try {
+                              const dataUrl = await prosesBackgroundGambar(f);
+                              setBrandBgDraft(dataUrl);
+                              setLoginBgError(false);
+                              setBrandMsg('');
+                            } catch (err: any) {
+                              setBrandMsg(pesanErr(err));
+                            }
+                          }}
+                        />
+                      </label>
+                      {brandBgDraft !== DEFAULT_LOGIN_BG && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBrandBgDraft(DEFAULT_LOGIN_BG);
+                            setLoginBgError(false);
+                          }}
+                          title="Kembalikan ke latar bawaan"
+                          className="p-1.5 text-slate-600 hover:text-indigo-700 bg-white border border-slate-200 rounded-xl cursor-pointer"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-2">
+                    {LOGIN_BG_PRESETS.map(preset => {
+                      const active = (brandBgDraft || DEFAULT_LOGIN_BG) === preset.id;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => {
+                            setBrandBgDraft(preset.id);
+                            setLoginBgError(false);
+                          }}
+                          title={preset.label}
+                          className={`group relative rounded-xl overflow-hidden border-2 transition-all cursor-pointer text-left ${
+                            active
+                              ? 'border-indigo-600 ring-2 ring-indigo-500/30'
+                              : 'border-slate-200 hover:border-indigo-300'
+                          }`}
+                        >
+                          <img
+                            src={preset.src}
+                            alt={preset.label}
+                            referrerPolicy="no-referrer"
+                            className="w-full h-11 object-cover"
+                          />
+                          <div className="px-1 py-0.5 bg-white text-[9px] font-semibold text-slate-700 truncate">
+                            {preset.label.split('&')[0].trim()}
+                          </div>
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBrandBgDraft('none');
+                        setLoginBgError(false);
+                      }}
+                      title="Latar Gradien Tanpa Foto"
+                      className={`rounded-xl overflow-hidden border-2 transition-all cursor-pointer text-left ${
+                        brandBgDraft === 'none'
+                          ? 'border-indigo-600 ring-2 ring-indigo-500/30'
+                          : 'border-slate-200 hover:border-indigo-300'
+                      }`}
+                    >
+                      <div className="w-full h-11 bg-gradient-to-br from-indigo-600 via-violet-600 to-sky-500" />
+                      <div className="px-1 py-0.5 bg-white text-[9px] font-semibold text-slate-700 truncate">
+                        Gradien
+                      </div>
+                    </button>
                   </div>
                 </div>
 
@@ -5658,41 +5837,75 @@ export default function App() {
       }
     };
 
-    // 1. Explicitly listed on Kelas.Mapel (if any)
-    String(kelasObj.Mapel || '')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean)
-      .forEach(tok => registerSubject(mapelById.get(tok) || tok));
+    const explicitMapelRaw = String(kelasObj.Mapel || '').trim();
+    const hasExplicitClassMapel = explicitMapelRaw.length > 0;
 
-    // 2. Subjects scheduled in db.Jadwal for class K
-    (db.Jadwal || [])
-      .filter((j: any) => j.Kelas === K && (!j.Jenis || j.Jenis === 'Pelajaran'))
-      .forEach((j: any) => registerSubject(j.Mapel, j.Guru));
-
-    // 3. Subjects taught by teachers assigned to class K
-    (db.Pengguna || []).forEach((u: any) => {
-      const kelasTaught = new Set([
-        ...String(u.Kelas || '').split(','),
-        ...String(u.KelasWali || '').split(','),
-        ...String(u.KelasMengajar || '').split(',')
-      ].map(s => s.trim()).filter(Boolean));
-      if (!kelasTaught.has(K)) return;
-      String(u.Mapel || '')
+    if (explicitMapelRaw === '__NONE__') {
+      // Explicitly configured to 0 subjects
+    } else if (hasExplicitClassMapel) {
+      // 1. Explicitly listed on Kelas.Mapel
+      explicitMapelRaw
         .split(',')
         .map(s => s.trim())
         .filter(Boolean)
-        .forEach(tok => registerSubject(mapelById.get(tok) || tok, u.Nama));
-    });
+        .forEach(tok => registerSubject(mapelById.get(tok) || tok));
 
-    // 4. Subjects already present in Tugas, Modul, or CBT of class K
-    tugasK.forEach((t: any) => registerSubject(t.Mapel));
-    (db.Modul || []).filter((m: any) => m.Kelas === K).forEach((m: any) => registerSubject(m.Mapel));
-    (db.CBT || []).filter((c: any) => c.Kelas === K).forEach((c: any) => registerSubject(c.Mapel));
+      // Attach teacher names for explicitly configured subjects
+      const attachTeacherIfMatch = (rawName: string, teacherName?: string) => {
+        const clean = String(rawName || '').trim();
+        if (!clean || !teacherName?.trim()) return;
+        const matched = classSubjectSet.get(clean.toLowerCase());
+        if (matched) {
+          if (!subjectTeacherMap.has(matched)) subjectTeacherMap.set(matched, new Set());
+          subjectTeacherMap.get(matched)!.add(teacherName.trim());
+        }
+      };
+      (db.Jadwal || [])
+        .filter((j: any) => j.Kelas === K && (!j.Jenis || j.Jenis === 'Pelajaran'))
+        .forEach((j: any) => attachTeacherIfMatch(j.Mapel, j.Guru));
+      (db.Pengguna || []).forEach((u: any) => {
+        const kelasTaught = new Set([
+          ...String(u.Kelas || '').split(','),
+          ...String(u.KelasWali || '').split(','),
+          ...String(u.KelasMengajar || '').split(',')
+        ].map(s => s.trim()).filter(Boolean));
+        if (!kelasTaught.has(K)) return;
+        String(u.Mapel || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+          .forEach(tok => attachTeacherIfMatch(mapelById.get(tok) || tok, u.Nama));
+      });
+    } else {
+      // 2. Subjects scheduled in db.Jadwal for class K
+      (db.Jadwal || [])
+        .filter((j: any) => j.Kelas === K && (!j.Jenis || j.Jenis === 'Pelajaran'))
+        .forEach((j: any) => registerSubject(j.Mapel, j.Guru));
 
-    // 5. Fallback to school-wide master subjects if the class has none configured yet
-    if (classSubjectSet.size === 0) {
-      (db.Mapel || []).forEach((m: any) => registerSubject(m.Nama));
+      // 3. Subjects taught by teachers assigned to class K
+      (db.Pengguna || []).forEach((u: any) => {
+        const kelasTaught = new Set([
+          ...String(u.Kelas || '').split(','),
+          ...String(u.KelasWali || '').split(','),
+          ...String(u.KelasMengajar || '').split(',')
+        ].map(s => s.trim()).filter(Boolean));
+        if (!kelasTaught.has(K)) return;
+        String(u.Mapel || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+          .forEach(tok => registerSubject(mapelById.get(tok) || tok, u.Nama));
+      });
+
+      // 4. Subjects already present in Tugas, Modul, or CBT of class K
+      tugasK.forEach((t: any) => registerSubject(t.Mapel));
+      (db.Modul || []).filter((m: any) => m.Kelas === K).forEach((m: any) => registerSubject(m.Mapel));
+      (db.CBT || []).filter((c: any) => c.Kelas === K).forEach((c: any) => registerSubject(c.Mapel));
+
+      // 5. Fallback to school-wide master subjects if the class has none configured yet
+      if (classSubjectSet.size === 0) {
+        (db.Mapel || []).forEach((m: any) => registerSubject(m.Nama));
+      }
     }
 
     const classMapelList = Array.from(classSubjectSet.values()).sort((a, b) =>
@@ -7033,7 +7246,7 @@ export default function App() {
         });
         const baru = { ...S, logo: dataUrl };
         await apiCall('api_savePengaturan', baru);
-        setDb({ ...db, Pengaturan: baru });
+        setDb(prev => ({ ...prev, Pengaturan: baru }));
         setPublicInfo(p => ({ ...p, logo: dataUrl }));
         showToast('Logo sekolah berhasil diperbarui');
       } catch (err: any) {
@@ -7052,10 +7265,14 @@ export default function App() {
       });
       const logosJson = JSON.stringify(filteredLogos);
       const baru = { ...S, jurusan: cleaned.join(', '), jurusanLogos: logosJson };
-      await apiCall('api_savePengaturan', baru);
-      setDb({ ...db, Pengaturan: baru });
-      setPublicInfo(p => ({ ...p, jurusan: baru.jurusan, jurusanLogos: logosJson }));
-      showToast('Daftar & logo jurusan diperbarui');
+      try {
+        await apiCall('api_savePengaturan', baru);
+        setDb(prev => ({ ...prev, Pengaturan: baru }));
+        setPublicInfo(p => ({ ...p, jurusan: baru.jurusan, jurusanLogos: logosJson }));
+        showToast('Daftar & logo jurusan diperbarui');
+      } catch (err: any) {
+        showToast('Gagal menyimpan jurusan: ' + pesanErr(err), 4000);
+      }
     };
 
     const handleJurusanLogoUpload = async (jurusanName: string, file: File) => {
@@ -7145,7 +7362,7 @@ export default function App() {
                 onClick={async () => {
                   const baru = { ...S, logo: '' };
                   await apiCall('api_savePengaturan', baru);
-                  setDb({ ...db, Pengaturan: baru });
+                  setDb(prev => ({ ...prev, Pengaturan: baru }));
                   setPublicInfo(p => ({ ...p, logo: '' }));
                   showToast('Logo dikembalikan ke ikon bawaan');
                 }}
@@ -7154,6 +7371,140 @@ export default function App() {
                 Reset Logo Bawaan
               </button>
             )}
+          </div>
+        </div>
+
+        {/* Gambar Latar Laman Login Card */}
+        <div className="bg-white border border-indigo-100 rounded-2xl p-6 space-y-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-4 min-w-0">
+              {resolveLoginBgUrl(S.loginBg || DEFAULT_LOGIN_BG) ? (
+                <img
+                  src={resolveLoginBgUrl(S.loginBg || DEFAULT_LOGIN_BG)}
+                  alt="Pratinjau Latar Login"
+                  referrerPolicy="no-referrer"
+                  className="w-24 h-16 rounded-xl object-cover border border-indigo-200 shadow-xs shrink-0"
+                />
+              ) : (
+                <div className="w-24 h-16 rounded-xl bg-gradient-to-br from-indigo-600 via-violet-600 to-sky-500 border border-indigo-200 shadow-xs shrink-0" />
+              )}
+              <div className="min-w-0">
+                <h2 className="text-base font-bold text-slate-900">Gambar Latar Laman Login</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Aktif: <span className="font-semibold text-indigo-700">{getLoginBgLabel(S.loginBg || DEFAULT_LOGIN_BG)}</span> · Pilih tema pembelajaran bawaan atau unggah foto sekolah sendiri.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="px-3.5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer">
+                <Upload className="w-3.5 h-3.5" /> Unggah Gambar Latar
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={async e => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!f) return;
+                    try {
+                      showToast('Memproses gambar latar…', 4000);
+                      const dataUrl = await prosesBackgroundGambar(f);
+                      const baru = { ...S, loginBg: dataUrl };
+                      await apiCall('api_savePengaturan', baru);
+                      setDb(prev => ({ ...prev, Pengaturan: baru }));
+                      setPublicInfo(p => ({ ...p, loginBg: dataUrl }));
+                      setLoginBgError(false);
+                      showToast('Gambar latar laman login berhasil diperbarui');
+                    } catch (err: any) {
+                      showToast(pesanErr(err), 4000);
+                    }
+                  }}
+                />
+              </label>
+              {(S.loginBg || DEFAULT_LOGIN_BG) !== DEFAULT_LOGIN_BG && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const baru = { ...S, loginBg: DEFAULT_LOGIN_BG };
+                    await apiCall('api_savePengaturan', baru);
+                    setDb(prev => ({ ...prev, Pengaturan: baru }));
+                    setPublicInfo(p => ({ ...p, loginBg: DEFAULT_LOGIN_BG }));
+                    setLoginBgError(false);
+                    showToast('Gambar latar dikembalikan ke bawaan pembelajaran');
+                  }}
+                  className="px-3 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl cursor-pointer flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Reset Bawaan
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {LOGIN_BG_PRESETS.map(preset => {
+              const currentVal = S.loginBg || DEFAULT_LOGIN_BG;
+              const isSelected = currentVal === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const baru = { ...S, loginBg: preset.id };
+                      await apiCall('api_savePengaturan', baru);
+                      setDb(prev => ({ ...prev, Pengaturan: baru }));
+                      setPublicInfo(p => ({ ...p, loginBg: preset.id }));
+                      setLoginBgError(false);
+                      showToast(`Latar login diubah ke ${preset.label}`);
+                    } catch (err: any) {
+                      showToast(pesanErr(err), 4000);
+                    }
+                  }}
+                  className={`rounded-xl overflow-hidden border-2 text-left transition-all cursor-pointer ${
+                    isSelected
+                      ? 'border-indigo-600 ring-2 ring-indigo-500/25 shadow-sm'
+                      : 'border-slate-200 hover:border-indigo-300'
+                  }`}
+                >
+                  <img
+                    src={preset.src}
+                    alt={preset.label}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-20 object-cover"
+                  />
+                  <div className="px-2.5 py-1.5 bg-white flex items-center justify-between gap-1">
+                    <span className="text-[11px] font-semibold text-slate-800 truncate">{preset.label}</span>
+                    {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />}
+                  </div>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const baru = { ...S, loginBg: 'none' };
+                  await apiCall('api_savePengaturan', baru);
+                  setDb(prev => ({ ...prev, Pengaturan: baru }));
+                  setPublicInfo(p => ({ ...p, loginBg: 'none' }));
+                  setLoginBgError(false);
+                  showToast('Latar login diubah ke gradien polos');
+                } catch (err: any) {
+                  showToast(pesanErr(err), 4000);
+                }
+              }}
+              className={`rounded-xl overflow-hidden border-2 text-left transition-all cursor-pointer ${
+                S.loginBg === 'none'
+                  ? 'border-indigo-600 ring-2 ring-indigo-500/25 shadow-sm'
+                  : 'border-slate-200 hover:border-indigo-300'
+              }`}
+            >
+              <div className="w-full h-20 bg-gradient-to-br from-indigo-600 via-violet-600 to-sky-500" />
+              <div className="px-2.5 py-1.5 bg-white flex items-center justify-between gap-1">
+                <span className="text-[11px] font-semibold text-slate-800 truncate">Gradien Polos</span>
+                {S.loginBg === 'none' && <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />}
+              </div>
+            </button>
           </div>
         </div>
 
@@ -7190,7 +7541,7 @@ export default function App() {
             try {
               showToast('Menyimpan pengaturan…', 6000);
               await apiCall('api_savePengaturan', baru);
-              setDb({ ...db, Pengaturan: baru });
+              setDb(prev => ({ ...prev, Pengaturan: baru }));
               const em = baru.emailPemulihan || '';
               const emailHint = em.includes('@')
                 ? `${em.slice(0, Math.min(2, em.indexOf('@')))}***@${em.split('@')[1]}`
@@ -7225,6 +7576,7 @@ export default function App() {
               <label key={k} className="block text-xs font-semibold text-slate-700">
                 {label}
                 <input
+                  key={`${k}|${S[k] || ''}`}
                   name={k}
                   type={type}
                   defaultValue={S[k] || ''}
@@ -7240,6 +7592,7 @@ export default function App() {
               <label className="block text-xs font-semibold text-slate-700">
                 Batas Ketuntasan Minimal (KKM)
                 <input
+                  key={`kkm|${S.kkm || '75'}`}
                   name="kkm"
                   type="number"
                   defaultValue={S.kkm || '75'}
@@ -7257,6 +7610,7 @@ export default function App() {
                   <label key={k} className="block text-xs font-semibold text-slate-700">
                     {label}
                     <input
+                      key={`${k}|${S[k] || '20'}`}
                       name={k}
                       type="number"
                       defaultValue={S[k] || '20'}
@@ -7378,10 +7732,11 @@ export default function App() {
                   <GraduationCap className="w-4 h-4 text-sky-600" /> Daftar Kelas, Jurusan &amp; Mapel
                 </h2>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Atur nama kelas, jurusan, dan mata pelajaran yang dipelajari di setiap kelas.
+                  Atur nama kelas, jurusan, dan mata pelajaran yang dipelajari di setiap kelas (tekan Enter atau klik ikon centang untuk simpan).
                 </p>
               </div>
               <button
+                type="button"
                 onClick={async () => {
                   const defaultJur = jurusanList[0] || 'Umum';
                   const next = [
@@ -7401,262 +7756,67 @@ export default function App() {
                   new Set([...jurusanList, ...(kls.Jurusan ? [kls.Jurusan] : [])])
                 );
                 const clsSubjects = getClassMapelList(kls.ID);
-                const explicitConfigured = String(kls.Mapel || '').trim().length > 0;
 
                 const openModalAturMapelKelas = () => {
-                  const mapelById = new Map<string, string>(
-                    (db.Mapel || []).map((m: any) => [String(m.ID || ''), String(m.Nama || '').trim()])
-                  );
-                  const currentLowerSet = new Set(
-                    String(kls.Mapel || '')
-                      .split(',')
-                      .map(s => (mapelById.get(s.trim()) || s.trim()).toLowerCase())
-                      .filter(Boolean)
-                  );
-                  const selectedSet = new Set<string>(
-                    currentLowerSet.size > 0
-                      ? (db.Mapel || [])
-                          .filter((m: any) => currentLowerSet.has(String(m.Nama || '').toLowerCase()))
-                          .map((m: any) => m.Nama)
-                      : clsSubjects
-                  );
-
-                  const ModalBody = () => {
-                    const [checked, setChecked] = useState<string[]>(() => Array.from(selectedSet));
-                    const [newMapelName, setNewMapelName] = useState('');
-                    const allMapelNames: string[] = Array.from(
-                      new Set(
-                        [...(db.Mapel || []).map((m: any) => String(m.Nama || '').trim()), ...checked].filter(Boolean)
-                      )
-                    );
-
-                    const applyPresetJurusan = () => {
-                      const jur = String(kls.Jurusan || '').toUpperCase();
-                      const umum = ['Matematika', 'Bahasa Indonesia', 'Bahasa Inggris', 'Sejarah Indonesia', 'PJOK', 'Pendidikan Pancasila', 'Informatika'];
-                      let preset: string[] = [];
-                      if (jur.includes('MIPA') || jur.includes('IPA')) {
-                        preset = [...umum, 'Fisika', 'Kimia', 'Biologi'];
-                      } else if (jur.includes('IPS')) {
-                        preset = [...umum, 'Ekonomi', 'Sosiologi', 'Geografi'];
-                      } else if (jur.includes('BAHASA')) {
-                        preset = [...umum, 'Sastra Indonesia', 'Bahasa Arab', 'Bahasa Jepang'];
-                      } else {
-                        preset = [...umum];
-                      }
-                      const availableLower = new Set(allMapelNames.map(x => x.toLowerCase()));
-                      const matched = allMapelNames.filter(x =>
-                        preset.some(p => x.toLowerCase().includes(p.toLowerCase()))
-                      );
-                      setChecked(matched.length > 0 ? matched : Array.from(availableLower).map(l => allMapelNames.find(n => n.toLowerCase() === l)!));
-                    };
-
-                    const applyFromJadwal = () => {
-                      const jSubjects = new Set<string>();
-                      (db.Jadwal || [])
-                        .filter((j: any) => j.Kelas === kls.ID && (!j.Jenis || j.Jenis === 'Pelajaran'))
-                        .forEach((j: any) => {
-                          if (j.Mapel && !/^istirahat$/i.test(j.Mapel)) jSubjects.add(j.Mapel.trim());
-                        });
-                      if (jSubjects.size === 0) {
-                        showToast('Belum ada jadwal pelajaran di kelas ini');
-                        return;
-                      }
-                      setChecked(Array.from(jSubjects));
-                    };
-
-                    return (
-                      <div className="space-y-4">
-                        <p className="text-xs text-slate-600">
-                          Pilih mata pelajaran yang dipelajari di kelas <strong>{kls.Nama}</strong> ({kls.Jurusan || 'Umum'}).
-                          Menu <strong>Perangkat Ajar</strong>, <strong>Tugas</strong>, dan <strong>Portal Siswa</strong> akan otomatis menyesuaikan daftar ini.
-                        </p>
-
-                        <div className="flex flex-wrap gap-1.5">
-                          <button
-                            type="button"
-                            onClick={applyPresetJurusan}
-                            className="px-2.5 py-1 text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg cursor-pointer"
-                          >
-                            Sesuai Jurusan ({kls.Jurusan || 'Umum'})
-                          </button>
-                          <button
-                            type="button"
-                            onClick={applyFromJadwal}
-                            className="px-2.5 py-1 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg cursor-pointer"
-                          >
-                            Ikuti Jadwal Kelas
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setChecked(allMapelNames)}
-                            className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg cursor-pointer"
-                          >
-                            Pilih Semua
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setChecked([])}
-                            className="px-2.5 py-1 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer"
-                          >
-                            Kosongkan
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-60 overflow-y-auto p-2 border border-slate-200 rounded-xl bg-slate-50/50">
-                          {allMapelNames.map(mName => {
-                            const isOn = checked.some(x => x.toLowerCase() === mName.toLowerCase());
-                            return (
-                              <label
-                                key={mName}
-                                className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-colors ${
-                                  isOn
-                                    ? 'bg-white border-sky-400 text-sky-950 font-semibold shadow-2xs'
-                                    : 'bg-white/60 border-slate-200 text-slate-600'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isOn}
-                                  onChange={() => {
-                                    setChecked(prev =>
-                                      isOn
-                                        ? prev.filter(x => x.toLowerCase() !== mName.toLowerCase())
-                                        : [...prev, mName]
-                                    );
-                                  }}
-                                />
-                                <span className="truncate">{mName}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={newMapelName}
-                            onChange={e => setNewMapelName(e.target.value)}
-                            placeholder="Tambah mapel khusus baru (mis. Ekonomi)…"
-                            className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-xs"
-                          />
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const val = newMapelName.trim();
-                              if (!val) return;
-                              if (!(db.Mapel || []).some((x: any) => String(x.Nama || '').toLowerCase() === val.toLowerCase())) {
-                                const nextMapel = [...(db.Mapel || []), { ID: uid(), Nama: val }];
-                                await persistSheets({ ...db, Mapel: nextMapel }, 'Mapel');
-                              }
-                              setChecked(prev => (prev.includes(val) ? prev : [...prev, val]));
-                              setNewMapelName('');
-                            }}
-                            className="px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg cursor-pointer"
-                          >
-                            + Tambah
-                          </button>
-                        </div>
-
-                        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                          <button
-                            type="button"
-                            onClick={() => setModalContent(null)}
-                            className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
-                          >
-                            Batal
-                          </button>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const nextKelas = db.Kelas.map((x: any) =>
-                                x.ID === kls.ID ? { ...x, Mapel: checked.join(', ') } : x
-                              );
-                              setModalContent(null);
-                              await persistSheets({ ...db, Kelas: nextKelas }, 'Kelas');
-                            }}
-                            className="px-4 py-2 text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-lg cursor-pointer"
-                          >
-                            Simpan Mapel Kelas ({checked.length})
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  };
-
+                  let latestMapelList = [...(db.Mapel || [])];
                   setModalContent({
                     title: `Sesuaikan Mata Pelajaran — ${kls.Nama}`,
                     wide: true,
-                    render: () => <ModalBody />
+                    render: () => (
+                      <AturMapelKelasModal
+                        kls={kls}
+                        clsSubjects={clsSubjects}
+                        allDbMapels={latestMapelList}
+                        jadwalList={db.Jadwal || []}
+                        showToast={showToast}
+                        onClose={() => setModalContent(null)}
+                        onAddGlobalMapel={async val => {
+                          if (!latestMapelList.some((x: any) => String(x.Nama || '').toLowerCase() === val.toLowerCase())) {
+                            latestMapelList = [...latestMapelList, { ID: uid(), Nama: val }];
+                            await persistSheets({ ...db, Mapel: latestMapelList }, 'Mapel');
+                          }
+                        }}
+                        onSave={async selectedSubjects => {
+                          const mapelValue = selectedSubjects.length > 0 ? selectedSubjects.join(', ') : '__NONE__';
+                          const nextKelas = (db.Kelas || []).map((x: any) =>
+                            x.ID === kls.ID ? { ...x, Mapel: mapelValue } : x
+                          );
+                          setModalContent(null);
+                          await persistSheets({ ...db, Kelas: nextKelas }, 'Kelas');
+                        }}
+                      />
+                    )
                   });
                 };
 
                 return (
-                  <div
+                  <EditableKelasRow
                     key={kls.ID}
-                    className="p-3 rounded-xl border border-sky-100 bg-sky-50/30 space-y-2"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        defaultValue={kls.Nama}
-                        placeholder="Nama kelas (mis. X MIPA 1)"
-                        onBlur={async e => {
-                          const next = db.Kelas.map((x: any) =>
-                            x.ID === kls.ID ? { ...x, Nama: e.target.value.trim() || 'Kelas' } : x
-                          );
-                          await persistSheets({ ...db, Kelas: next }, 'Kelas');
-                        }}
-                        className="flex-1 min-w-[120px] px-2.5 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-lg"
-                      />
-                      <select
-                        value={kls.Jurusan || ''}
-                        onChange={async e => {
-                          const next = db.Kelas.map((x: any) =>
-                            x.ID === kls.ID ? { ...x, Jurusan: e.target.value } : x
-                          );
-                          await persistSheets({ ...db, Kelas: next }, 'Kelas');
-                        }}
-                        className="w-32 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 bg-white border border-slate-200 rounded-lg"
-                      >
-                        <option value="">Pilih Jurusan…</option>
-                        {pilihanJur.map(j => (
-                          <option key={j} value={j}>
-                            {j}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={openModalAturMapelKelas}
-                        className="px-2.5 py-1.5 text-xs font-semibold bg-white hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg inline-flex items-center gap-1 cursor-pointer shrink-0"
-                      >
-                        <BookOpen className="w-3.5 h-3.5" />
-                        <span>Atur Mapel ({clsSubjects.length})</span>
-                      </button>
-                      {(db.Kelas || []).length > 1 && (
-                        <button
-                          onClick={async () => {
-                            if (await askConfirm(`Hapus kelas "${kls.Nama}"?`)) {
-                              const next = db.Kelas.filter((x: any) => x.ID !== kls.ID);
-                              await persistSheets({ ...db, Kelas: next }, 'Kelas');
-                              if (K === kls.ID) setK(next[0]?.ID || '');
-                            }
-                          }}
-                          title="Hapus Kelas"
-                          className="p-1.5 text-slate-400 hover:text-rose-600 cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-slate-500 flex items-center gap-1.5 flex-wrap px-0.5">
-                      <span className="font-semibold text-slate-600">
-                        {explicitConfigured ? 'Mapel Khusus Kelas:' : 'Mapel Aktif (Jadwal/Sekolah):'}
-                      </span>
-                      <span className="truncate">
-                        {clsSubjects.length > 0 ? clsSubjects.join(', ') : 'Belum ada mata pelajaran'}
-                      </span>
-                    </div>
-                  </div>
+                    kls={kls}
+                    pilihanJur={pilihanJur}
+                    clsSubjects={clsSubjects}
+                    canDelete={(db.Kelas || []).length > 1}
+                    onRename={async cleanName => {
+                      const next = (db.Kelas || []).map((x: any) =>
+                        x.ID === kls.ID ? { ...x, Nama: cleanName } : x
+                      );
+                      await persistSheets({ ...db, Kelas: next }, 'Kelas');
+                    }}
+                    onChangeJurusan={async newJur => {
+                      const next = (db.Kelas || []).map((x: any) =>
+                        x.ID === kls.ID ? { ...x, Jurusan: newJur } : x
+                      );
+                      await persistSheets({ ...db, Kelas: next }, 'Kelas');
+                    }}
+                    onOpenAturMapel={openModalAturMapelKelas}
+                    onDelete={async () => {
+                      if (await askConfirm(`Hapus kelas "${kls.Nama}"?`)) {
+                        const next = (db.Kelas || []).filter((x: any) => x.ID !== kls.ID);
+                        await persistSheets({ ...db, Kelas: next }, 'Kelas');
+                        if (K === kls.ID) setK(next[0]?.ID || '');
+                      }
+                    }}
+                  />
                 );
               })}
             </div>
@@ -7665,9 +7825,9 @@ export default function App() {
           <div className="bg-white border border-violet-100 rounded-2xl p-6 space-y-4 shadow-sm">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <h2 className="text-base font-bold text-slate-900">Daftar Jurusan & Logo Jurusan</h2>
+                <h2 className="text-base font-bold text-slate-900">Daftar Jurusan &amp; Logo Jurusan</h2>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Tambahkan jurusan dan unggah logo masing-masing program keahlian.
+                  Tambahkan jurusan, ubah nama (otomatis memperbarui kelas terkait), dan unggah logo masing-masing.
                 </p>
               </div>
               <button
@@ -7679,99 +7839,51 @@ export default function App() {
               </button>
             </div>
             <div className="space-y-2">
-              {jurusanList.map((j, idx) => {
-                const jLogo = jurusanLogosMap[j] || '';
-                return (
-                  <div
-                    key={`${j}-${idx}`}
-                    className="p-2 rounded-xl bg-violet-50/40 border border-violet-200 flex items-center gap-2"
-                  >
-                    <label
-                      title={`Unggah logo jurusan ${j}`}
-                      className="w-10 h-10 rounded-lg border border-violet-200 bg-white flex items-center justify-center shrink-0 cursor-pointer hover:border-violet-400 overflow-hidden"
-                    >
-                      {jLogo ? (
-                        <img
-                          src={jLogo}
-                          alt={`Logo ${j}`}
-                          className="w-full h-full object-contain p-0.5"
-                        />
-                      ) : (
-                        <ImageIcon className="w-4 h-4 text-violet-400" />
-                      )}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={e => {
-                          const f = e.target.files?.[0];
-                          if (f) handleJurusanLogoUpload(j, f);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
-                    <input
-                      defaultValue={j}
-                      onBlur={e => {
-                        const val = e.target.value.trim();
-                        if (!val || val === j) return;
-                        const next = jurusanList.map((x, i) => (i === idx ? val : x));
-                        const nextLogos = { ...jurusanLogosMap };
-                        if (nextLogos[j]) {
-                          nextLogos[val] = nextLogos[j];
-                          delete nextLogos[j];
-                        }
-                        simpanDaftarJurusan(next, nextLogos);
-                      }}
-                      className="flex-1 min-w-0 px-2.5 py-1.5 text-xs font-semibold bg-white border border-violet-200 rounded-lg"
-                    />
-                    <label
-                      title="Unggah / Ganti Logo Jurusan"
-                      className="px-2.5 py-1.5 text-[11px] font-semibold bg-violet-600 hover:bg-violet-500 text-white rounded-lg cursor-pointer inline-flex items-center gap-1 shrink-0"
-                    >
-                      <Upload className="w-3 h-3" /> Logo
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={e => {
-                          const f = e.target.files?.[0];
-                          if (f) handleJurusanLogoUpload(j, f);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
-                    {jLogo && (
-                      <button
-                        type="button"
-                        title="Hapus logo jurusan"
-                        onClick={() => {
-                          const nextLogos = { ...jurusanLogosMap };
-                          delete nextLogos[j];
-                          simpanDaftarJurusan(jurusanList, nextLogos);
-                        }}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 cursor-pointer"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                    {jurusanList.length > 1 && (
-                      <button
-                        type="button"
-                        title="Hapus jurusan"
-                        onClick={() => {
-                          const nextLogos = { ...jurusanLogosMap };
-                          delete nextLogos[j];
-                          simpanDaftarJurusan(jurusanList.filter((_, i) => i !== idx), nextLogos);
-                        }}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+              {jurusanList.map((j, idx) => (
+                <EditableJurusanRow
+                  key={`${j}-${idx}`}
+                  jurusanName={j}
+                  jLogo={jurusanLogosMap[j] || ''}
+                  canDelete={jurusanList.length > 1}
+                  onRename={async val => {
+                    const next = jurusanList.map((x, i) => (i === idx ? val : x));
+                    const nextLogos = { ...jurusanLogosMap };
+                    if (nextLogos[j]) {
+                      nextLogos[val] = nextLogos[j];
+                      delete nextLogos[j];
+                    }
+                    await simpanDaftarJurusan(next, nextLogos);
+                    const hasKelasAffected = (db.Kelas || []).some((k: any) => k.Jurusan === j);
+                    if (hasKelasAffected) {
+                      const nextKelas = (db.Kelas || []).map((k: any) =>
+                        k.Jurusan === j ? { ...k, Jurusan: val } : k
+                      );
+                      await persistSheets({ ...db, Kelas: nextKelas }, 'Kelas');
+                    }
+                  }}
+                  onUploadLogo={f => handleJurusanLogoUpload(j, f)}
+                  onDeleteLogo={async () => {
+                    const nextLogos = { ...jurusanLogosMap };
+                    delete nextLogos[j];
+                    await simpanDaftarJurusan(jurusanList, nextLogos);
+                  }}
+                  onDelete={async () => {
+                    if (!(await askConfirm(`Hapus jurusan "${j}"?`))) return;
+                    const nextLogos = { ...jurusanLogosMap };
+                    delete nextLogos[j];
+                    const remaining = jurusanList.filter((_, i) => i !== idx);
+                    await simpanDaftarJurusan(remaining, nextLogos);
+                    const fallbackJur = remaining[0] || '';
+                    const hasKelasAffected = (db.Kelas || []).some((k: any) => k.Jurusan === j);
+                    if (hasKelasAffected) {
+                      const nextKelas = (db.Kelas || []).map((k: any) =>
+                        k.Jurusan === j ? { ...k, Jurusan: fallbackJur } : k
+                      );
+                      await persistSheets({ ...db, Kelas: nextKelas }, 'Kelas');
+                    }
+                  }}
+                />
+              ))}
             </div>
           </div>
         </div>
@@ -7784,10 +7896,11 @@ export default function App() {
                 <BookOpen className="w-4 h-4 text-emerald-600" /> Daftar Mata Pelajaran Sekolah
               </h2>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Tambahkan atau ubah mata pelajaran yang dipakai di jadwal, tugas, CBT, dan penugasan guru.
+                Tambahkan atau ubah nama mata pelajaran (otomatis memperbarui kelas, jadwal, tugas, materi &amp; perangkat ajar).
               </p>
             </div>
             <button
+              type="button"
               onClick={async () => {
                 const namaBaru = `Mata Pelajaran ${(db.Mapel || []).length + 1}`;
                 const next = [...(db.Mapel || []), { ID: uid(), Nama: namaBaru }];
@@ -7800,34 +7913,77 @@ export default function App() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
             {(db.Mapel || []).map((m: any) => (
-              <div key={m.ID} className="flex items-center gap-1.5">
-                <input
-                  defaultValue={m.Nama}
-                  onBlur={async e => {
-                    const val = e.target.value.trim();
-                    if (!val || val === m.Nama) return;
-                    const next = (db.Mapel || []).map((x: any) =>
-                      x.ID === m.ID ? { ...x, Nama: val } : x
-                    );
-                    await persistSheets({ ...db, Mapel: next }, 'Mapel');
-                  }}
-                  className="flex-1 px-3 py-1.5 text-xs font-semibold bg-emerald-50/40 border border-emerald-200 rounded-lg"
-                />
-                {(db.Mapel || []).length > 1 && (
-                  <button
-                    onClick={async () => {
-                      if (await askConfirm(`Hapus mata pelajaran "${m.Nama}"?`)) {
-                        const next = (db.Mapel || []).filter((x: any) => x.ID !== m.ID);
-                        await persistSheets({ ...db, Mapel: next }, 'Mapel');
-                      }
-                    }}
-                    title="Hapus Mata Pelajaran"
-                    className="p-1.5 text-slate-400 hover:text-rose-600 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
+              <EditableMapelRow
+                key={m.ID}
+                mapel={m}
+                canDelete={(db.Mapel || []).length > 1}
+                onRename={async val => {
+                  const oldName = String(m.Nama || '').trim();
+                  const oldLower = oldName.toLowerCase();
+                  const nextMapel = (db.Mapel || []).map((x: any) =>
+                    x.ID === m.ID ? { ...x, Nama: val } : x
+                  );
+                  const replaceNameInCsv = (csv: string) =>
+                    String(csv || '')
+                      .split(',')
+                      .map(s => {
+                        const t = s.trim();
+                        if (!t) return '';
+                        if (t.toLowerCase() === oldLower || t === m.ID) return val;
+                        return t;
+                      })
+                      .filter(Boolean)
+                      .join(', ');
+
+                  const nextKelas = (db.Kelas || []).map((k: any) => {
+                    const raw = String(k.Mapel || '').trim();
+                    if (!raw || raw === '__NONE__') return k;
+                    return { ...k, Mapel: replaceNameInCsv(raw) };
+                  });
+                  const mapelSwap = (row: any) =>
+                    String(row.Mapel || '').trim().toLowerCase() === oldLower
+                      ? { ...row, Mapel: val }
+                      : row;
+
+                  await persistSheets(
+                    {
+                      ...db,
+                      Mapel: nextMapel,
+                      Kelas: nextKelas,
+                      Jadwal: (db.Jadwal || []).map(mapelSwap),
+                      Tugas: (db.Tugas || []).map(mapelSwap),
+                      Modul: (db.Modul || []).map(mapelSwap),
+                      Materi: (db.Materi || []).map(mapelSwap),
+                      Pemantik: (db.Pemantik || []).map(mapelSwap),
+                      CBT: (db.CBT || []).map(mapelSwap)
+                    },
+                    'Mapel',
+                    'Kelas',
+                    'Jadwal',
+                    'Tugas',
+                    'Modul',
+                    'Materi',
+                    'Pemantik',
+                    'CBT'
+                  );
+                }}
+                onDelete={async () => {
+                  if (await askConfirm(`Hapus mata pelajaran "${m.Nama}"?`)) {
+                    const oldLower = String(m.Nama || '').trim().toLowerCase();
+                    const nextMapel = (db.Mapel || []).filter((x: any) => x.ID !== m.ID);
+                    const nextKelas = (db.Kelas || []).map((k: any) => {
+                      const raw = String(k.Mapel || '').trim();
+                      if (!raw || raw === '__NONE__') return k;
+                      const kept = raw
+                        .split(',')
+                        .map(s => s.trim())
+                        .filter(s => s && s.toLowerCase() !== oldLower && s !== m.ID);
+                      return { ...k, Mapel: kept.length > 0 ? kept.join(', ') : '__NONE__' };
+                    });
+                    await persistSheets({ ...db, Mapel: nextMapel, Kelas: nextKelas }, 'Mapel', 'Kelas');
+                  }
+                }}
+              />
             ))}
           </div>
         </div>

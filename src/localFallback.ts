@@ -18,6 +18,7 @@ interface LocalSession {
 const PENGATURAN_AWAL: Record<string, string> = {
   sekolah: 'Sistem Manajemen Kelas',
   logo: '',
+  loginBg: 'preset:classroom',
   jurusan: 'MIPA, IPS, Bahasa',
   jurusanLogos: '{}',
   waInfo: '',
@@ -454,6 +455,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
       adminAda: !!db.admin,
       sekolah: set.sekolah || 'Sistem Manajemen Kelas',
       logo: set.logo || '',
+      loginBg: set.loginBg || '',
       jurusan: set.jurusan || '',
       jurusanLogos: set.jurusanLogos || '{}',
       waInfo: set.waInfo || '',
@@ -465,11 +467,23 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
   }
 
   if (fn === 'api_updateLoginBranding') {
-    const [logo, jurusan, sekolah, jurusanLogos] = args;
+    const [logo, jurusan, sekolah, jurusanLogos, loginBg] = args;
     const cur = getPengaturanObj(db);
     const cleanJurusanList = Array.from(
       new Set(String(jurusan || '').split(',').map(x => x.trim()).filter(Boolean))
     );
+    let nextLoginBg = cur.loginBg || '';
+    if (loginBg !== undefined) {
+      const cleanBg = String(loginBg || '').trim();
+      if (
+        cleanBg === '' ||
+        cleanBg === 'none' ||
+        cleanBg.startsWith('preset:') ||
+        cleanBg.startsWith('data:image/')
+      ) {
+        nextLoginBg = cleanBg;
+      }
+    }
     let nextLogosStr = cur.jurusanLogos || '{}';
     if (jurusanLogos !== undefined) {
       const parsed = typeof jurusanLogos === 'string' ? JSON.parse(jurusanLogos || '{}') : jurusanLogos || {};
@@ -482,6 +496,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
     const baru: Record<string, string> = {
       ...cur,
       logo: String(logo || '').trim(),
+      loginBg: nextLoginBg,
       jurusan: cleanJurusanList.join(', '),
       jurusanLogos: nextLogosStr,
       ...(String(sekolah || '').trim() ? { sekolah: String(sekolah).trim() } : {})
@@ -491,6 +506,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
     return {
       sekolah: baru.sekolah || 'Sistem Manajemen Kelas',
       logo: baru.logo || '',
+      loginBg: baru.loginBg || '',
       jurusan: baru.jurusan || '',
       jurusanLogos: baru.jurusanLogos || '{}'
     };
@@ -859,22 +875,28 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
       cbtList: [],
       materi: (() => {
         const classMapelSet = new Set<string>();
-        String(kelas.Mapel || '')
-          .split(',')
-          .map(s => s.trim())
-          .filter(Boolean)
-          .forEach(tok => {
-            const resolved = mapelById.get(tok) || tok;
-            if (resolved) classMapelSet.add(resolved.toLowerCase());
+        const explicitRaw = String(kelas.Mapel || '').trim();
+        if (explicitRaw === '__NONE__') {
+          // Explicitly cleared all subjects for this class
+        } else if (explicitRaw) {
+          explicitRaw
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .forEach(tok => {
+              const resolved = mapelById.get(tok) || tok;
+              if (resolved) classMapelSet.add(resolved.toLowerCase());
+            });
+        } else {
+          (db.sheets.Jadwal || []).filter(j => j.Kelas === siswa.Kelas).forEach((j: any) => {
+            const clean = String(j.Mapel || '').trim().toLowerCase();
+            if (clean && clean !== 'istirahat') classMapelSet.add(clean);
           });
-        (db.sheets.Jadwal || []).filter(j => j.Kelas === siswa.Kelas).forEach((j: any) => {
-          const clean = String(j.Mapel || '').trim().toLowerCase();
-          if (clean && clean !== 'istirahat') classMapelSet.add(clean);
-        });
-        (db.sheets.Tugas || []).filter(t => t.Kelas === siswa.Kelas).forEach((t: any) => {
-          const clean = String(t.Mapel || '').trim().toLowerCase();
-          if (clean) classMapelSet.add(clean);
-        });
+          (db.sheets.Tugas || []).filter(t => t.Kelas === siswa.Kelas).forEach((t: any) => {
+            const clean = String(t.Mapel || '').trim().toLowerCase();
+            if (clean) classMapelSet.add(clean);
+          });
+        }
 
         const allMateri = db.sheets.Materi || [];
         const matchingMateri = allMateri.filter((m: any) => {
