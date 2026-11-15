@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Loader2, Paperclip, Plus, Sparkles, Trash2, Upload, Unlink } from 'lucide-react';
+import { Download, ExternalLink, Link2, Loader2, Paperclip, Plus, Sparkles, Trash2, Upload, Unlink } from 'lucide-react';
 import { MODUL_AWAL, STATUS_TP } from '../constants';
 import { downloadAjarFile, fetchJson, pesanErr, uploadAjarFile } from '../api';
 
@@ -16,6 +16,115 @@ export interface ModuleTpDraft {
   Tujuan: string;
   Materi: string;
   Status: string;
+}
+
+export interface SumberLinkItem {
+  label: string;
+  url: string;
+}
+
+export function normalizeHttpUrl(rawUrl: string): string {
+  const trimmed = String(rawUrl || '').trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^www\./i.test(trimmed) || /^[a-z0-9-]+(\.[a-z0-9-]+)+([/?#].*)?$/i.test(trimmed)) {
+    return 'https://' + trimmed;
+  }
+  return '';
+}
+
+function defaultLabelForUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./i, '');
+  } catch {
+    return 'Sumber Pelajaran';
+  }
+}
+
+export function extractUrlsFromText(text?: string): SumberLinkItem[] {
+  const raw = String(text || '');
+  const matches = raw.match(/(?:https?:\/\/|www\.)[^\s<>"')\]]+/gi) || [];
+  const seen = new Set<string>();
+  const out: SumberLinkItem[] = [];
+  matches.forEach(m => {
+    const url = normalizeHttpUrl(m.replace(/[.,;:!?]+$/, ''));
+    if (!url || !/^https?:\/\//i.test(url)) return;
+    const key = url.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ label: defaultLabelForUrl(url), url });
+  });
+  return out;
+}
+
+export function parseSumberLinks(raw?: string, fallbackUrl?: string): SumberLinkItem[] {
+  const items: SumberLinkItem[] = [];
+  const seen = new Set<string>();
+  const push = (label: string, rawUrl: string) => {
+    const url = normalizeHttpUrl(rawUrl);
+    if (!url || !/^https?:\/\//i.test(url)) return;
+    const key = url.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push({
+      label: String(label || '').trim() || defaultLabelForUrl(url),
+      url
+    });
+  };
+
+  const str = String(raw || '').trim();
+  if (str) {
+    let parsedJson: any = null;
+    if (str.startsWith('[')) {
+      try {
+        parsedJson = JSON.parse(str);
+      } catch {
+        parsedJson = null;
+      }
+    }
+    if (Array.isArray(parsedJson)) {
+      parsedJson.forEach((x: any) => {
+        if (typeof x === 'string') push('', x);
+        else if (x && typeof x === 'object') push(x.label || x.nama || x.title || '', x.url || x.link || x.href || '');
+      });
+    } else {
+      str
+        .split(/\r?\n|;/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .forEach(line => {
+          if (line.includes('|')) {
+            const [lbl, ...rest] = line.split('|');
+            push(lbl, rest.join('|'));
+          } else {
+            push('', line);
+          }
+        });
+    }
+  }
+
+  if (fallbackUrl) {
+    push('Tautan Utama', fallbackUrl);
+  }
+  return items;
+}
+
+export function serializeSumberLinks(items: SumberLinkItem[]): string {
+  const clean: SumberLinkItem[] = [];
+  const seen = new Set<string>();
+  (items || []).forEach(it => {
+    const url = normalizeHttpUrl(it.url);
+    if (!url || !/^https?:\/\//i.test(url)) return;
+    const key = url.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    clean.push({
+      label: String(it.label || '').trim() || defaultLabelForUrl(url),
+      url
+    });
+  });
+  return clean.length > 0 ? JSON.stringify(clean) : '';
 }
 
 function formatFileSize(bytes: number): string {
@@ -300,6 +409,8 @@ interface ModulModalFormProps {
     Asesmen: string;
     Media: string;
     Catatan: string;
+    PertanyaanPemantik: string;
+    LinkSumber: string;
     FileID: string;
     NamaFile: string;
     moduleTps: ModuleTpDraft[];
@@ -346,6 +457,12 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
   const [asesmen, setAsesmen] = useState<string>(initial ? initial.Asesmen || '' : '');
   const [media, setMedia] = useState<string>(initial ? initial.Media || '' : '');
   const [catatan, setCatatan] = useState<string>(initial ? initial.Catatan || '' : '');
+  const [pertanyaanPemantik, setPertanyaanPemantik] = useState<string>(
+    initial ? initial.PertanyaanPemantik || '' : ''
+  );
+  const [linkSumberRows, setLinkSumberRows] = useState<SumberLinkItem[]>(() =>
+    parseSumberLinks(initial?.LinkSumber)
+  );
   const [fileId, setFileId] = useState<string>(initial?.FileID || '');
   const [namaFile, setNamaFile] = useState<string>(initial?.NamaFile || '');
   const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
@@ -413,9 +530,17 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         return;
       }
       const list: any[] = json.data?.tps || [];
+      const extractedPemantik = String(json.data?.pertanyaanPemantik || '').trim();
+      if (extractedPemantik && !pertanyaanPemantik.trim()) {
+        setPertanyaanPemantik(extractedPemantik);
+      }
       if (!list.length) {
-        showToast(json.data?.note || 'Tidak ditemukan poin TP otomatis. Silakan tambah TP manual.', 4500);
-        if (moduleTps.length === 0) addBlankTp();
+        if (extractedPemantik) {
+          showToast('Pertanyaan pemantik berhasil diekstrak dari dokumen modul!');
+        } else {
+          showToast(json.data?.note || 'Tidak ditemukan poin TP otomatis. Silakan tambah TP manual.', 4500);
+          if (moduleTps.length === 0) addBlankTp();
+        }
         return;
       }
       setModuleTps(prev => [
@@ -427,7 +552,11 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
           Status: 'Belum'
         }))
       ]);
-      showToast(`Berhasil memisahkan ${list.length} TP dari berkas modul!`);
+      showToast(
+        extractedPemantik
+          ? `Berhasil memisahkan ${list.length} TP & Pertanyaan Pemantik dari modul!`
+          : `Berhasil memisahkan ${list.length} TP dari berkas modul!`
+      );
     } catch (err: any) {
       showToast('Gagal membaca TP dari file: ' + pesanErr(err), 4500);
     } finally {
@@ -470,6 +599,8 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         Asesmen: asesmen.trim(),
         Media: media.trim(),
         Catatan: catatan.trim(),
+        PertanyaanPemantik: pertanyaanPemantik.trim(),
+        LinkSumber: serializeSumberLinks(linkSumberRows),
         FileID: finalFileId,
         NamaFile: finalNamaFile,
         moduleTps: validTps.map((t, i) => ({
@@ -722,6 +853,75 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         )}
       </div>
 
+      {/* Pertanyaan Pemantik & Link Sumber Pelajaran on Modul Ajar */}
+      <div className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/40 space-y-3">
+        <label className="block text-xs font-semibold text-indigo-950">
+          Pertanyaan Pemantik (Otomatis Tampil di Slide Pemantik)
+          <textarea
+            rows={2}
+            value={pertanyaanPemantik}
+            onChange={e => setPertanyaanPemantik(e.target.value)}
+            placeholder="Contoh: Mengapa fenomena ini terjadi di sekitar kita? Bagaimana cara memecahkannya?"
+            className="mt-1 w-full p-2.5 border border-indigo-200 bg-white rounded-lg text-xs"
+          />
+        </label>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+              <Link2 className="w-3.5 h-3.5 text-indigo-600" /> Link Sumber Pelajaran ({linkSumberRows.length})
+            </span>
+            <button
+              type="button"
+              onClick={() => setLinkSumberRows(prev => [...prev, { label: '', url: '' }])}
+              className="px-2.5 py-1 text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer"
+            >
+              <Plus className="w-3 h-3" /> Tambah Link Sumber
+            </button>
+          </div>
+          {linkSumberRows.length === 0 ? (
+            <div className="text-[11px] text-slate-500">
+              Belum ada link sumber pelajaran. Klik <strong>+ Tambah Link Sumber</strong> untuk menambahkan tautan video, simulasi, LKPD digital, atau referensi materi.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {linkSumberRows.map((row, idx) => (
+                <div key={idx} className="flex flex-wrap items-center gap-2">
+                  <input
+                    value={row.label}
+                    onChange={e =>
+                      setLinkSumberRows(prev =>
+                        prev.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x))
+                      )
+                    }
+                    placeholder="Judul sumber (mis. Video / GeoGebra)"
+                    className="w-44 px-2.5 py-1.5 border border-slate-300 bg-white rounded-lg text-xs"
+                  />
+                  <input
+                    value={row.url}
+                    onChange={e =>
+                      setLinkSumberRows(prev =>
+                        prev.map((x, i) => (i === idx ? { ...x, url: e.target.value } : x))
+                      )
+                    }
+                    placeholder="https://..."
+                    className="flex-1 min-w-[180px] px-2.5 py-1.5 border border-slate-300 bg-white rounded-lg text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setLinkSumberRows(prev => prev.filter((_, i) => i !== idx))}
+                    className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                    title="Hapus link"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="border-t border-slate-100 pt-3 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-bold text-slate-700">Rincian Skenario Pembelajaran (Opsional)</span>
@@ -821,3 +1021,292 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
     </div>
   );
 };
+
+interface PemantikModalFormProps {
+  initial?: any;
+  defaultModulId?: string;
+  modList: any[];
+  mapelList: any[];
+  tpList?: any[];
+  onClose: () => void;
+  onSave: (payload: {
+    ModulID: string;
+    Mapel: string;
+    Judul: string;
+    Pertanyaan: string;
+    Slide: string;
+    Tautan: string;
+    SumberPelajaran: string;
+  }) => Promise<void>;
+  showToast: (msg: string, ms?: number) => void;
+}
+
+export const PemantikModalForm: React.FC<PemantikModalFormProps> = ({
+  initial,
+  defaultModulId = '',
+  modList,
+  mapelList,
+  tpList = [],
+  onClose,
+  onSave,
+  showToast
+}) => {
+  const initialMod =
+    modList.find((m: any) => m.ID === (initial?.ModulID || defaultModulId)) || null;
+
+  const [modulId, setModulId] = useState<string>(initial?.ModulID || defaultModulId || '');
+  const [mapel, setMapel] = useState<string>(
+    initial?.Mapel || initialMod?.Mapel || mapelList[0]?.Nama || 'Umum'
+  );
+  const [judul, setJudul] = useState<string>(
+    initial?.Judul || (initialMod ? `Pemantik: ${initialMod.Judul}` : '')
+  );
+  const [pertanyaan, setPertanyaan] = useState<string>(
+    initial?.Pertanyaan ||
+      initialMod?.PertanyaanPemantik ||
+      ''
+  );
+  const [links, setLinks] = useState<SumberLinkItem[]>(() => {
+    const existing = parseSumberLinks(initial?.SumberPelajaran, initial?.Tautan);
+    if (existing.length > 0) return existing;
+    if (initialMod) {
+      const modLinks = [
+        ...parseSumberLinks(initialMod.LinkSumber),
+        ...extractUrlsFromText(`${initialMod.Media || ''} ${initialMod.Pembuka || ''}`)
+      ];
+      if (modLinks.length > 0) return modLinks;
+    }
+    return [{ label: '', url: '' }];
+  });
+  const [slide, setSlide] = useState<string>(() => {
+    if (initial?.Slide) return initial.Slide;
+    if (initialMod) {
+      const parts: string[] = [];
+      if (initialMod.Pembuka) parts.push(`Apersepsi & Tujuan\n${initialMod.Pembuka}`);
+      if (initialMod.Inti) parts.push(`Eksplorasi Materi\n${initialMod.Inti}`);
+      return parts.join('\n---\n');
+    }
+    return '';
+  });
+  const [saving, setSaving] = useState(false);
+
+  const applyFromModul = (selectedModId: string) => {
+    setModulId(selectedModId);
+    const m = modList.find((x: any) => x.ID === selectedModId);
+    if (!m) return;
+    if (!mapel.trim() || mapel === 'Umum' || !initial) setMapel(m.Mapel || mapel);
+    if (!judul.trim() || !initial) setJudul(`Pemantik: ${m.Judul}`);
+    if (m.PertanyaanPemantik) {
+      setPertanyaan(m.PertanyaanPemantik);
+    } else if (!pertanyaan.trim() && m.Pembuka) {
+      setPertanyaan(m.Pembuka.split('\n')[0] || '');
+    }
+    const fromMod = [
+      ...parseSumberLinks(m.LinkSumber),
+      ...extractUrlsFromText(`${m.Media || ''} ${m.Pembuka || ''} ${m.Catatan || ''}`)
+    ];
+    if (fromMod.length > 0) {
+      setLinks(prev => {
+        const merged = [...prev.filter(x => x.url.trim()), ...fromMod];
+        const seen = new Set<string>();
+        return merged.filter(it => {
+          const k = normalizeHttpUrl(it.url).toLowerCase();
+          if (!k || seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      });
+    }
+    if (!slide.trim()) {
+      const modTps = (tpList || []).filter((t: any) => t.ModulID === m.ID);
+      const chunks: string[] = [];
+      if (modTps.length > 0) {
+        chunks.push(
+          `Tujuan Pembelajaran\n${modTps.map((t: any) => `• ${t.Kode}: ${t.Tujuan}`).join('\n')}`
+        );
+      }
+      if (m.Pembuka) chunks.push(`Apersepsi\n${m.Pembuka}`);
+      if (m.Inti) chunks.push(`Materi Inti\n${m.Inti}`);
+      if (chunks.length > 0) setSlide(chunks.join('\n---\n'));
+    }
+    showToast(`Data pemantik & sumber dari "${m.Judul}" dimuat`);
+  };
+
+  const handleSubmit = async () => {
+    if (!judul.trim()) {
+      showToast('Judul Slide Pemantik wajib diisi');
+      return;
+    }
+    const cleanLinks = links
+      .map(l => ({ label: l.label.trim(), url: normalizeHttpUrl(l.url) }))
+      .filter(l => /^https?:\/\//i.test(l.url));
+    const serializedLinks = serializeSumberLinks(cleanLinks);
+    const firstUrl = cleanLinks[0]?.url || '';
+
+    setSaving(true);
+    try {
+      await onSave({
+        ModulID: modulId,
+        Mapel: mapel.trim() || 'Umum',
+        Judul: judul.trim(),
+        Pertanyaan: pertanyaan.trim(),
+        Slide: slide.trim(),
+        Tautan: firstUrl,
+        SumberPelajaran: serializedLinks
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/50 space-y-2">
+        <label className="block text-xs font-bold text-indigo-950">
+          Ambil / Tautkan dari Perangkat Ajar (Modul Ajar)
+          <select
+            value={modulId}
+            onChange={e => applyFromModul(e.target.value)}
+            className="mt-1 w-full px-3 py-2 border border-indigo-200 bg-white rounded-lg text-xs font-semibold text-slate-800 cursor-pointer"
+          >
+            <option value="">-- Tidak tertaut modul tertentu (Mandiri) --</option>
+            {modList.map((m: any) => (
+              <option key={m.ID} value={m.ID}>
+                {m.Mapel || 'Umum'} — {m.Judul}
+                {m.PertanyaanPemantik ? ' (Ada Pertanyaan Pemantik)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="text-[11px] text-indigo-800/80">
+          Memilih Modul Ajar otomatis menyinkronkan Pertanyaan Pemantik, ringkasan slide, dan Link Sumber Pelajaran dari perangkat ajar tersebut.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <label className="sm:col-span-2 block text-xs font-semibold text-slate-700">
+          Judul Slide Pemantik
+          <input
+            value={judul}
+            onChange={e => setJudul(e.target.value)}
+            placeholder="Contoh: Mengapa Air Mancur Membentuk Parabola?"
+            className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+          />
+        </label>
+        <label className="block text-xs font-semibold text-slate-700">
+          Mata Pelajaran
+          <input
+            list="pemantik-mapel-list"
+            value={mapel}
+            onChange={e => setMapel(e.target.value)}
+            className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+          />
+          <datalist id="pemantik-mapel-list">
+            {mapelList.map((m: any) => (
+              <option key={m.ID} value={m.Nama} />
+            ))}
+          </datalist>
+        </label>
+      </div>
+
+      <label className="block text-xs font-semibold text-slate-700">
+        Pertanyaan Pemantik
+        <textarea
+          rows={3}
+          value={pertanyaan}
+          onChange={e => setPertanyaan(e.target.value)}
+          placeholder="Tulis pertanyaan pemantik untuk memancing rasa ingin tahu siswa (atau pilih Modul Ajar di atas untuk mengambil otomatis)..."
+          className="mt-1 w-full p-2.5 border border-slate-300 rounded-lg text-xs"
+        />
+      </label>
+
+      {/* Learning Resource Links Builder */}
+      <div className="p-3.5 rounded-xl border border-sky-200 bg-sky-50/40 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-bold text-sky-950 flex items-center gap-1.5">
+              <ExternalLink className="w-3.5 h-3.5 text-sky-600" /> Link Sumber Pelajaran
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Tambahkan link video YouTube, simulasi interaktif, artikel, atau materi ajar yang dapat diklik guru/siswa langsung dari slide.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setLinks(prev => [...prev, { label: '', url: '' }])}
+            className="px-2.5 py-1 text-[11px] font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer"
+          >
+            <Plus className="w-3 h-3" /> Tambah Link Sumber
+          </button>
+        </div>
+        <div className="space-y-2">
+          {links.map((row, idx) => (
+            <div key={idx} className="flex flex-wrap items-center gap-2">
+              <input
+                value={row.label}
+                onChange={e =>
+                  setLinks(prev =>
+                    prev.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x))
+                  )
+                }
+                placeholder="Nama Sumber (mis. Video Pembuka)"
+                className="w-44 px-2.5 py-1.5 border border-slate-300 bg-white rounded-lg text-xs"
+              />
+              <input
+                value={row.url}
+                onChange={e =>
+                  setLinks(prev =>
+                    prev.map((x, i) => (i === idx ? { ...x, url: e.target.value } : x))
+                  )
+                }
+                placeholder="https://youtube.com/... atau portal sumber belajar"
+                className="flex-1 min-w-[200px] px-2.5 py-1.5 border border-slate-300 bg-white rounded-lg text-xs"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setLinks(prev => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : [{ label: '', url: '' }]))
+                }
+                className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                title="Hapus baris link"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <label className="block text-xs font-semibold text-slate-700">
+        Isi Slide Materi (pisahkan antar slide dengan baris <code className="px-1 bg-slate-100 rounded">---</code>)
+        <textarea
+          rows={5}
+          value={slide}
+          onChange={e => setSlide(e.target.value)}
+          placeholder={'Slide 1: Judul Topik\nPenjelasan singkat...\n---\nSlide 2: Diskusi Kelompok\nPoin diskusi...'}
+          className="mt-1 w-full p-2.5 border border-slate-300 rounded-lg text-xs font-mono"
+        />
+      </label>
+
+      <div className="flex justify-end gap-2 pt-2">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={saving}
+          className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+        >
+          Batal
+        </button>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={saving}
+          className="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg cursor-pointer disabled:opacity-50"
+        >
+          {saving ? 'Menyimpan…' : 'Simpan Slide Pemantik'}
+        </button>
+      </div>
+    </div>
+  );
+};
+

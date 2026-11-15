@@ -61,7 +61,14 @@ import WaBlastModal from './components/WaBlastModal';
 import KalenderPendidikan from './components/KalenderPendidikan';
 import ResetDatabasePanel from './components/ResetDatabasePanel';
 import ImportTableModal, { ImportTableMode } from './components/ImportTableModal';
-import { TpModalForm, ModulModalForm } from './components/PerangkatAjarModals';
+import {
+  TpModalForm,
+  ModulModalForm,
+  PemantikModalForm,
+  SumberLinkItem,
+  parseSumberLinks,
+  extractUrlsFromText
+} from './components/PerangkatAjarModals';
 import {
   BookOpen,
   LayoutDashboard,
@@ -107,7 +114,9 @@ import {
   Mail,
   Paperclip,
   Eye,
-  EyeOff
+  EyeOff,
+  ExternalLink,
+  Link2
 } from 'lucide-react';
 
 const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
@@ -314,6 +323,7 @@ export default function App() {
   const [absNote, setAbsNote] = useState<Record<string, string>>({});
 
   const [tugSel, setTugSel] = useState('');
+  const [tugMapelFilter, setTugMapelFilter] = useState('ALL');
   const [denSel, setDenSel] = useState('');
   const [denPick, setDenPick] = useState('');
   const [denDirty, setDenDirty] = useState(false);
@@ -321,7 +331,17 @@ export default function App() {
   const [ajarSub, setAjarSub] = useState<'tp' | 'mod' | 'pem'>('tp');
   const [tpFilterModul, setTpFilterModul] = useState<string>('all');
   const [modView, setModView] = useState('');
-  const [presState, setPresState] = useState<{ slides: string[]; i: number } | null>(null);
+  const [presState, setPresState] = useState<{
+    slides: {
+      badge?: string;
+      title: string;
+      body: string;
+      links?: SumberLinkItem[];
+      fileId?: string;
+      fileName?: string;
+    }[];
+    i: number;
+  } | null>(null);
   const kaldikAutoCheckedRef = React.useRef(false);
 
   // Toast helper
@@ -4029,10 +4049,76 @@ export default function App() {
       });
     };
 
+    const getModulResourceLinks = (m: any): SumberLinkItem[] => {
+      if (!m) return [];
+      const primary = parseSumberLinks(m.LinkSumber);
+      const fromText = extractUrlsFromText(`${m.Media || ''} ${m.Pembuka || ''} ${m.Catatan || ''}`);
+      const seen = new Set(primary.map(x => x.url.toLowerCase()));
+      const merged = [...primary];
+      fromText.forEach(item => {
+        if (!seen.has(item.url.toLowerCase())) {
+          seen.add(item.url.toLowerCase());
+          merged.push(item);
+        }
+      });
+      return merged;
+    };
+
+    const mergeResourceLinks = (...lists: SumberLinkItem[][]): SumberLinkItem[] => {
+      const seen = new Set<string>();
+      const out: SumberLinkItem[] = [];
+      lists.forEach(list => {
+        (list || []).forEach(it => {
+          const k = String(it.url || '').trim().toLowerCase();
+          if (!k || seen.has(k)) return;
+          seen.add(k);
+          out.push(it);
+        });
+      });
+      return out;
+    };
+
+    const openModalPemantik = (editRow?: any, defaultModulId = '') => {
+      setModalContent({
+        title: editRow ? 'Edit Slide Pemantik & Link Sumber' : 'Buat Slide Pemantik Baru',
+        wide: true,
+        render: () => (
+          <PemantikModalForm
+            initial={editRow}
+            defaultModulId={defaultModulId}
+            modList={modList}
+            mapelList={db.Mapel || []}
+            tpList={tpList}
+            onClose={() => setModalContent(null)}
+            showToast={showToast}
+            onSave={async payload => {
+              const pemId = editRow?.ID || uid();
+              const nextPem = editRow
+                ? (db.Pemantik || []).map((x: any) =>
+                    x.ID === pemId ? { ...x, ...payload } : x
+                  )
+                : [
+                    ...(db.Pemantik || []),
+                    {
+                      ID: pemId,
+                      Kelas: K,
+                      ...payload
+                    }
+                  ];
+              setModalContent(null);
+              await persistSheets({ ...db, Pemantik: nextPem }, 'Pemantik');
+              showToast('Slide Pemantik & Link Sumber berhasil disimpan');
+            }}
+          />
+        )
+      });
+    };
+
     if (modView) {
       const m = modList.find((x: any) => x.ID === modView);
       if (m) {
         const tps = getModuleTps(m);
+        const modLinks = getModulResourceLinks(m);
         return (
           <div className="space-y-6">
             <div className="flex flex-wrap items-center gap-2 noprint">
@@ -4084,6 +4170,37 @@ export default function App() {
                   >
                     <Download className="w-3.5 h-3.5" /> Unduh File
                   </button>
+                </div>
+              )}
+              {m.PertanyaanPemantik && (
+                <div className="p-4 rounded-xl bg-indigo-50/70 border border-indigo-200 space-y-1">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-700">
+                    Pertanyaan Pemantik
+                  </h3>
+                  <p className="text-xs text-slate-800 whitespace-pre-line leading-relaxed">
+                    {m.PertanyaanPemantik}
+                  </p>
+                </div>
+              )}
+              {modLinks.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+                    Link Sumber Pelajaran ({modLinks.length})
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {modLinks.map((lk, idx) => (
+                      <a
+                        key={idx}
+                        href={lk.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                        <span>{lk.label}</span>
+                      </a>
+                    ))}
+                  </div>
                 </div>
               )}
               {tps.length > 0 && (
@@ -4585,52 +4702,432 @@ export default function App() {
         )}
 
         {ajarSub === 'pem' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {pemList.map((p: any) => {
-              const slides = String(p.Slide || '')
-                .split(/\n\s*-{3,}\s*\n?/)
-                .map(x => x.trim())
-                .filter(Boolean);
-              return (
-                <div
-                  key={p.ID}
-                  className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between gap-4"
-                >
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900">{p.Judul}</h3>
-                    {p.Pertanyaan && (
-                      <p className="text-xs text-slate-600 mt-1.5">
-                        <strong>Pertanyaan Pemantik:</strong> {p.Pertanyaan}
-                      </p>
-                    )}
-                    <div className="text-xs text-slate-400 mt-2">{slides.length} slide materi</div>
-                  </div>
-                  <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                    <button
-                      onClick={() => {
-                        const allSlides = [`# ${p.Judul}`];
-                        if (p.Pertanyaan) allSlides.push(`Pertanyaan Pemantik\n${p.Pertanyaan}`);
-                        slides.forEach(s => allSlides.push(s));
-                        setPresState({ slides: allSlides, i: 0 });
-                      }}
-                      className="px-3.5 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg flex items-center gap-1.5"
-                    >
-                      <Play className="w-3.5 h-3.5" /> Tampilkan Layar Penuh
-                    </button>
-                    {urlAman(p.Tautan) && (
-                      <a
-                        href={p.Tautan}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1.5 text-xs font-semibold bg-slate-100 text-slate-700 rounded-lg"
-                      >
-                        Buka Tautan ↗
-                      </a>
-                    )}
-                  </div>
+          <div className="space-y-5">
+            {/* Top Action Bar */}
+            <div className="bg-white border border-indigo-100 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+              <div className="text-xs text-slate-600">
+                <strong className="text-slate-900">{pemList.length}</strong> Slide Pemantik tersimpan ·{' '}
+                <strong className="text-indigo-700">{modList.length}</strong> Modul Perangkat Ajar tersedia sebagai sumber pertanyaan pemantik & tautan belajar.
+              </div>
+              <button
+                type="button"
+                onClick={() => openModalPemantik()}
+                className="px-3.5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" /> Buat Slide Pemantik & Link Sumber
+              </button>
+            </div>
+
+            {/* Pertanyaan Pemantik & Link Sumber Pelajaran dari Perangkat Ajar */}
+            <div className="bg-gradient-to-br from-indigo-50/70 via-white to-sky-50/60 border border-indigo-200 rounded-2xl p-5 space-y-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-bold text-indigo-950 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-indigo-600" />
+                    Pertanyaan Pemantik & Sumber Pelajaran dari Perangkat Ajar
+                  </h2>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Menarik otomatis pertanyaan pemantik, materi inti, dan link sumber pelajaran dari Modul Ajar kelas {kelasObj.Nama || ''}.
+                  </p>
                 </div>
-              );
-            })}
+              </div>
+
+              {modList.length === 0 ? (
+                <div className="p-5 rounded-xl border border-dashed border-indigo-200 bg-white text-center text-xs text-slate-500">
+                  Belum ada Modul Ajar di Perangkat Ajar kelas ini. Tambahkan modul pada tab <strong>Modul Ajar / RPP</strong> untuk menampilkan pertanyaan pemantik otomatis di sini.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+                  {modList.map((m: any) => {
+                    const modLinks = getModulResourceLinks(m);
+                    const modTps = getModuleTps(m);
+                    const linkedPem = pemList.find((px: any) => px.ModulID === m.ID);
+                    const effectiveQuestion =
+                      String(m.PertanyaanPemantik || '').trim() ||
+                      String(linkedPem?.Pertanyaan || '').trim();
+                    const apersepsiLine = String(m.Pembuka || '')
+                      .split('\n')
+                      .find(l => /apersepsi|\?/i.test(l));
+
+                    const openModulPresentation = () => {
+                      const combinedLinks = mergeResourceLinks(
+                        modLinks,
+                        linkedPem ? parseSumberLinks(linkedPem.SumberPelajaran, linkedPem.Tautan) : []
+                      );
+                      const slidesList: {
+                        badge?: string;
+                        title: string;
+                        body: string;
+                        links?: SumberLinkItem[];
+                        fileId?: string;
+                        fileName?: string;
+                      }[] = [
+                        {
+                          badge: `${m.Mapel || 'Umum'} · Perangkat Ajar`,
+                          title: m.Judul,
+                          body: [m.Alokasi ? `Alokasi: ${m.Alokasi}` : '', m.Media ? `Media: ${m.Media}` : '']
+                            .filter(Boolean)
+                            .join('\n'),
+                          links: combinedLinks,
+                          fileId: m.FileID || undefined,
+                          fileName: m.NamaFile || undefined
+                        }
+                      ];
+                      if (effectiveQuestion || apersepsiLine) {
+                        slidesList.push({
+                          badge: 'Pertanyaan Pemantik · Perangkat Ajar',
+                          title: 'Pertanyaan Pemantik',
+                          body: effectiveQuestion || apersepsiLine || '',
+                          links: combinedLinks
+                        });
+                      }
+                      if (modTps.length > 0) {
+                        slidesList.push({
+                          badge: 'Tujuan Pembelajaran',
+                          title: 'Target Pembelajaran Hari Ini',
+                          body: modTps.map((t: any) => `• ${t.Kode}: ${t.Tujuan}`).join('\n'),
+                          links: combinedLinks
+                        });
+                      }
+                      if (m.Inti) {
+                        slidesList.push({
+                          badge: 'Kegiatan Inti',
+                          title: 'Eksplorasi & Aktivitas Belajar',
+                          body: m.Inti,
+                          links: combinedLinks,
+                          fileId: m.FileID || undefined,
+                          fileName: m.NamaFile || undefined
+                        });
+                      }
+                      setPresState({ slides: slidesList, i: 0 });
+                    };
+
+                    return (
+                      <div
+                        key={m.ID}
+                        className="bg-white border border-indigo-100 rounded-xl p-4 flex flex-col justify-between gap-3 shadow-2xs"
+                      >
+                        <div className="space-y-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-100 text-indigo-800 rounded">
+                                  {m.Mapel || 'Umum'}
+                                </span>
+                                {m.Alokasi && (
+                                  <span className="text-[11px] text-slate-500">{m.Alokasi}</span>
+                                )}
+                              </div>
+                              <h3 className="text-sm font-bold text-slate-900 mt-1">{m.Judul}</h3>
+                            </div>
+                          </div>
+
+                          {/* Pertanyaan Pemantik from Perangkat Ajar */}
+                          <div className="p-3 rounded-lg bg-amber-50/70 border border-amber-200/80 space-y-1">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                              Pertanyaan Pemantik
+                            </div>
+                            {effectiveQuestion ? (
+                              <p className="text-xs text-slate-800 whitespace-pre-line leading-relaxed">
+                                {effectiveQuestion}
+                              </p>
+                            ) : (
+                              <p className="text-[11px] text-slate-500 italic">
+                                {apersepsiLine
+                                  ? `Apersepsi modul: ${apersepsiLine}`
+                                  : 'Belum ada pertanyaan pemantik pada modul ini.'}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Link Sumber Pelajaran & Lampiran */}
+                          <div className="space-y-1.5">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                              <Link2 className="w-3 h-3 text-sky-600" /> Link Sumber Pelajaran
+                            </div>
+                            {modLinks.length > 0 || m.FileID ? (
+                              <div className="flex flex-wrap gap-1.5">
+                                {modLinks.map((lk, idx) => (
+                                  <a
+                                    key={idx}
+                                    href={lk.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg"
+                                  >
+                                    <ExternalLink className="w-3 h-3 shrink-0" />
+                                    <span className="truncate max-w-[200px]">{lk.label}</span>
+                                  </a>
+                                ))}
+                                {m.FileID && (
+                                  <button
+                                    type="button"
+                                    onClick={() => downloadAjarFile(m.FileID, m.NamaFile)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-fuchsia-50 hover:bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-200 rounded-lg cursor-pointer"
+                                  >
+                                    <Paperclip className="w-3 h-3 shrink-0" />
+                                    <span className="truncate max-w-[180px]">{m.NamaFile || 'File Modul'}</span>
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-slate-400">
+                                Belum ada link sumber pelajaran.{' '}
+                                <button
+                                  type="button"
+                                  onClick={() => openModalModul(m)}
+                                  className="text-sky-700 font-semibold hover:underline cursor-pointer"
+                                >
+                                  + Tambah Link di Modul
+                                </button>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={openModulPresentation}
+                            className="px-3 py-1.5 text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Play className="w-3 h-3" /> Tampilkan Slide
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openModalPemantik(linkedPem, m.ID)}
+                            className="px-2.5 py-1.5 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus className="w-3 h-3" /> {linkedPem ? 'Kelola Slide Terkait' : 'Jadikan Slide Pemantik'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openModalModul(m)}
+                            className="px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg ml-auto cursor-pointer"
+                          >
+                            Edit Modul
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Daftar Slide Pemantik Interaktif */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-sm font-bold text-slate-900">
+                  Daftar Slide Pemantik Tersimpan ({pemList.length})
+                </h2>
+              </div>
+
+              {pemList.length === 0 ? (
+                <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-8 text-center space-y-2.5">
+                  <p className="text-xs text-slate-500">
+                    Belum ada Slide Pemantik khusus di kelas ini. Klik <strong>Buat Slide Pemantik & Link Sumber</strong> atau gunakan tombol <strong>Jadikan Slide Pemantik</strong> dari Perangkat Ajar di atas.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => openModalPemantik()}
+                    className="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Buat Slide Pemantik Pertama
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {pemList.map((p: any) => {
+                    const slides = String(p.Slide || '')
+                      .split(/\n\s*-{3,}\s*\n?/)
+                      .map(x => x.trim())
+                      .filter(Boolean);
+                    const linkedMod = p.ModulID ? modMap.get(p.ModulID) : null;
+                    const modPemantikQuestion = String(linkedMod?.PertanyaanPemantik || '').trim();
+                    const ownQuestion = String(p.Pertanyaan || '').trim();
+                    const combinedLinks = mergeResourceLinks(
+                      parseSumberLinks(p.SumberPelajaran, p.Tautan),
+                      linkedMod ? getModulResourceLinks(linkedMod) : []
+                    );
+                    const displayMapel = p.Mapel || linkedMod?.Mapel || '';
+
+                    return (
+                      <div
+                        key={p.ID}
+                        className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between gap-4 shadow-2xs"
+                      >
+                        <div className="space-y-3">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                              {displayMapel && (
+                                <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded">
+                                  {displayMapel}
+                                </span>
+                              )}
+                              {linkedMod && (
+                                <span className="px-2 py-0.5 text-[10px] font-semibold bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200 rounded truncate max-w-[230px]">
+                                  Modul: {linkedMod.Judul}
+                                </span>
+                              )}
+                            </div>
+                            <h3 className="text-base font-bold text-slate-900">{p.Judul}</h3>
+                          </div>
+
+                          {(ownQuestion || modPemantikQuestion) && (
+                            <div className="p-3 rounded-lg bg-amber-50/70 border border-amber-200 space-y-1.5">
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                                Pertanyaan Pemantik
+                              </div>
+                              {ownQuestion && (
+                                <p className="text-xs text-slate-800 whitespace-pre-line leading-relaxed">
+                                  {ownQuestion}
+                                </p>
+                              )}
+                              {modPemantikQuestion && modPemantikQuestion !== ownQuestion && (
+                                <div className="pt-1.5 border-t border-amber-200/70">
+                                  <div className="text-[10px] font-semibold text-indigo-700">
+                                    Dari Perangkat Ajar ({linkedMod?.Judul}):
+                                  </div>
+                                  <p className="text-xs text-slate-700 whitespace-pre-line leading-relaxed mt-0.5">
+                                    {modPemantikQuestion}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Link Sumber Pelajaran Section */}
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                                <Link2 className="w-3 h-3 text-sky-600" /> Link Sumber Pelajaran ({combinedLinks.length})
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => openModalPemantik(p)}
+                                className="text-[11px] font-semibold text-sky-700 hover:underline cursor-pointer"
+                              >
+                                + Tambah / Edit Link
+                              </button>
+                            </div>
+                            {combinedLinks.length > 0 || linkedMod?.FileID ? (
+                              <div className="flex flex-wrap gap-1.5">
+                                {combinedLinks.map((lk, idx) => (
+                                  <a
+                                    key={idx}
+                                    href={lk.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg"
+                                  >
+                                    <ExternalLink className="w-3 h-3 shrink-0" />
+                                    <span className="truncate max-w-[210px]">{lk.label}</span>
+                                  </a>
+                                ))}
+                                {linkedMod?.FileID && (
+                                  <button
+                                    type="button"
+                                    onClick={() => downloadAjarFile(linkedMod.FileID, linkedMod.NamaFile)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-fuchsia-50 hover:bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-200 rounded-lg cursor-pointer"
+                                  >
+                                    <Paperclip className="w-3 h-3 shrink-0" />
+                                    <span className="truncate max-w-[180px]">
+                                      {linkedMod.NamaFile || 'Lampiran Modul'}
+                                    </span>
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-slate-400">
+                                Belum ada link sumber pelajaran.
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="text-xs text-slate-400">{slides.length} slide materi</div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const allSlides: {
+                                badge?: string;
+                                title: string;
+                                body: string;
+                                links?: SumberLinkItem[];
+                                fileId?: string;
+                                fileName?: string;
+                              }[] = [
+                                {
+                                  badge: displayMapel
+                                    ? `${displayMapel}${linkedMod ? ` · ${linkedMod.Judul}` : ''}`
+                                    : 'Slide Pemantik',
+                                  title: p.Judul,
+                                  body: '',
+                                  links: combinedLinks,
+                                  fileId: linkedMod?.FileID || undefined,
+                                  fileName: linkedMod?.NamaFile || undefined
+                                }
+                              ];
+                              const allQuestions = [
+                                ownQuestion,
+                                modPemantikQuestion && modPemantikQuestion !== ownQuestion
+                                  ? `[Perangkat Ajar] ${modPemantikQuestion}`
+                                  : ''
+                              ]
+                                .filter(Boolean)
+                                .join('\n\n');
+                              if (allQuestions) {
+                                allSlides.push({
+                                  badge: 'Pertanyaan Pemantik',
+                                  title: 'Pertanyaan Pemantik',
+                                  body: allQuestions,
+                                  links: combinedLinks
+                                });
+                              }
+                              slides.forEach((s, idx) => {
+                                const lines = s.split('\n');
+                                allSlides.push({
+                                  badge: `Materi ${idx + 1}`,
+                                  title: lines[0] || p.Judul,
+                                  body: lines.slice(1).join('\n'),
+                                  links: combinedLinks
+                                });
+                              });
+                              setPresState({ slides: allSlides, i: 0 });
+                            }}
+                            className="px-3.5 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Play className="w-3.5 h-3.5" /> Tampilkan Layar Penuh
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openModalPemantik(p)}
+                            className="px-3 py-1.5 text-xs font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Edit3 className="w-3 h-3" /> Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const ok = await askConfirm(`Hapus slide pemantik "${p.Judul}"?`);
+                              if (!ok) return;
+                              const nextPem = (db.Pemantik || []).filter((x: any) => x.ID !== p.ID);
+                              await persistSheets({ ...db, Pemantik: nextPem }, 'Pemantik');
+                            }}
+                            className="px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg ml-auto cursor-pointer"
+                          >
+                            Hapus
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -4639,19 +5136,104 @@ export default function App() {
 
   // 9. TUGAS & PENGUMPULAN
   function renderTug() {
-    const activeId =
-      tugSel && tugasK.some((t: any) => t.ID === tugSel) ? tugSel : tugasK[0]?.ID || '';
-    const curTug = tugasK.find((t: any) => t.ID === activeId);
+    // Compute all subjects that belong to the active class K
+    const mapelById = new Map<string, string>(
+      (db.Mapel || []).map((m: any) => [String(m.ID || ''), String(m.Nama || '').trim()])
+    );
+    const subjectTeacherMap = new Map<string, Set<string>>();
+    const classSubjectSet = new Map<string, string>(); // lower -> display name
 
-    const openTambahTugas = (editRow?: any) => {
+    const registerSubject = (rawName: string, teacherName?: string) => {
+      const clean = String(rawName || '').trim();
+      if (!clean || /^istirahat$/i.test(clean)) return;
+      const key = clean.toLowerCase();
+      if (!classSubjectSet.has(key)) classSubjectSet.set(key, clean);
+      const displayName = classSubjectSet.get(key)!;
+      if (teacherName && teacherName.trim()) {
+        if (!subjectTeacherMap.has(displayName)) subjectTeacherMap.set(displayName, new Set());
+        subjectTeacherMap.get(displayName)!.add(teacherName.trim());
+      }
+    };
+
+    // 1. Explicitly listed on Kelas.Mapel (if any)
+    String(kelasObj.Mapel || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .forEach(tok => registerSubject(mapelById.get(tok) || tok));
+
+    // 2. Subjects scheduled in db.Jadwal for class K
+    (db.Jadwal || [])
+      .filter((j: any) => j.Kelas === K && (!j.Jenis || j.Jenis === 'Pelajaran'))
+      .forEach((j: any) => registerSubject(j.Mapel, j.Guru));
+
+    // 3. Subjects taught by teachers assigned to class K
+    (db.Pengguna || []).forEach((u: any) => {
+      const kelasTaught = new Set([
+        ...String(u.Kelas || '').split(','),
+        ...String(u.KelasWali || '').split(','),
+        ...String(u.KelasMengajar || '').split(',')
+      ].map(s => s.trim()).filter(Boolean));
+      if (!kelasTaught.has(K)) return;
+      String(u.Mapel || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+        .forEach(tok => registerSubject(mapelById.get(tok) || tok, u.Nama));
+    });
+
+    // 4. Subjects already present in Tugas, Modul, or CBT of class K
+    tugasK.forEach((t: any) => registerSubject(t.Mapel));
+    (db.Modul || []).filter((m: any) => m.Kelas === K).forEach((m: any) => registerSubject(m.Mapel));
+    (db.CBT || []).filter((c: any) => c.Kelas === K).forEach((c: any) => registerSubject(c.Mapel));
+
+    // 5. Fallback to school-wide master subjects if the class has none configured yet
+    if (classSubjectSet.size === 0) {
+      (db.Mapel || []).forEach((m: any) => registerSubject(m.Nama));
+    }
+
+    const classMapelList = Array.from(classSubjectSet.values()).sort((a, b) =>
+      a.localeCompare(b, 'id')
+    );
+
+    const activeMapelFilter =
+      tugMapelFilter !== 'ALL' &&
+      classMapelList.some(m => m.toLowerCase() === tugMapelFilter.toLowerCase())
+        ? classMapelList.find(m => m.toLowerCase() === tugMapelFilter.toLowerCase()) || 'ALL'
+        : 'ALL';
+
+    const filteredTugasK =
+      activeMapelFilter === 'ALL'
+        ? tugasK
+        : tugasK.filter(
+            (t: any) => String(t.Mapel || '').trim().toLowerCase() === activeMapelFilter.toLowerCase()
+          );
+
+    const activeId =
+      tugSel && filteredTugasK.some((t: any) => t.ID === tugSel)
+        ? tugSel
+        : filteredTugasK[0]?.ID || '';
+    const curTug = filteredTugasK.find((t: any) => t.ID === activeId);
+
+    const openTambahTugas = (editRow?: any, defaultMapel?: string) => {
       let judul = editRow?.Judul || '';
-      let mapel = editRow?.Mapel || (db.Mapel?.[0]?.Nama || 'Umum');
+      let mapel =
+        editRow?.Mapel ||
+        defaultMapel ||
+        (activeMapelFilter !== 'ALL' ? activeMapelFilter : '') ||
+        classMapelList[0] ||
+        db.Mapel?.[0]?.Nama ||
+        'Umum';
       let deskripsi = editRow?.Deskripsi || '';
       let jenis = editRow?.Jenis || 'Tugas';
       let tenggat = editRow?.Tenggat || ymd(new Date());
       let fileId = editRow?.FileID || '';
       let namaFile = editRow?.NamaFile || '';
       let pendingFile: { namaFile: string; base64Data: string } | null = null;
+
+      const modalSubjectOptions = Array.from(
+        new Set([...classMapelList, ...(db.Mapel || []).map((m: any) => String(m.Nama || '').trim()).filter(Boolean)])
+      );
 
       setModalContent({
         title: editRow ? 'Edit Tugas & Lampiran' : 'Tambah Tugas / Asesmen Formatif',
@@ -4668,7 +5250,7 @@ export default function App() {
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block text-xs font-semibold text-slate-700">
-                Mata Pelajaran
+                Mata Pelajaran (Kelas {kelasObj.Nama || ''})
                 <input
                   list="tugas-mapel-list"
                   defaultValue={mapel}
@@ -4676,8 +5258,8 @@ export default function App() {
                   className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                 />
                 <datalist id="tugas-mapel-list">
-                  {(db.Mapel || []).map((m: any) => (
-                    <option key={m.ID} value={m.Nama} />
+                  {modalSubjectOptions.map(m => (
+                    <option key={m} value={m} />
                   ))}
                 </datalist>
               </label>
@@ -4786,6 +5368,7 @@ export default function App() {
                     ? (db.Tugas || []).map((t: any) => (t.ID === editRow.ID ? record : t))
                     : [...(db.Tugas || []), record];
                   setTugSel(idBaru);
+                  if (record.Mapel) setTugMapelFilter(record.Mapel);
                   setModalContent(null);
                   await persistSheets({ ...db, Tugas: next }, 'Tugas');
                 }}
@@ -4805,21 +5388,23 @@ export default function App() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Tugas & Pengumpulan</h1>
             <p className="text-xs text-cyan-50 mt-1">
-              Unggah berkas tugas per mata pelajaran, pantau pengumpulan siswa, dan nilai hasil unggahan siswa.
+              Unggah berkas tugas per mata pelajaran kelas <strong>{kelasObj.Nama || ''}</strong>, pantau pengumpulan siswa, dan nilai hasil unggahan siswa.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={activeId}
-              onChange={e => setTugSel(e.target.value)}
-              className="px-3 py-2 text-xs font-semibold text-slate-800 bg-white border border-white/40 rounded-xl"
-            >
-              {tugasK.map((t: any) => (
-                <option key={t.ID} value={t.ID}>
-                  {t.Judul}{t.Mapel ? ` · ${t.Mapel}` : ''} ({t.Jenis})
-                </option>
-              ))}
-            </select>
+            {filteredTugasK.length > 0 && (
+              <select
+                value={activeId}
+                onChange={e => setTugSel(e.target.value)}
+                className="px-3 py-2 text-xs font-semibold text-slate-800 bg-white border border-white/40 rounded-xl max-w-[260px]"
+              >
+                {filteredTugasK.map((t: any) => (
+                  <option key={t.ID} value={t.ID}>
+                    {t.Judul}{t.Mapel ? ` · ${t.Mapel}` : ''} ({t.Jenis})
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               onClick={() => openTambahTugas()}
               className="px-3.5 py-2 text-xs font-semibold bg-white text-teal-700 hover:bg-teal-50 rounded-xl shadow-sm whitespace-nowrap cursor-pointer"
@@ -4827,6 +5412,104 @@ export default function App() {
               + Tambah Tugas
             </button>
           </div>
+        </div>
+
+        {/* All Subjects for Active Class */}
+        <div className="bg-white border border-teal-100 rounded-2xl p-5 space-y-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-teal-600" />
+                Mata Pelajaran Kelas {kelasObj.Nama || ''} ({classMapelList.length} Mapel)
+              </h2>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Klik mata pelajaran untuk melihat atau membuat tugas sesuai jadwal dan guru kelas ini.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTugMapelFilter('ALL')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-xl border transition-colors cursor-pointer ${
+                activeMapelFilter === 'ALL'
+                  ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
+                  : 'bg-slate-50 hover:bg-teal-50 text-slate-700 border-slate-200'
+              }`}
+            >
+              Semua Mapel ({tugasK.length} Tugas)
+            </button>
+          </div>
+
+          {classMapelList.length === 0 ? (
+            <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-xs text-slate-500 text-center">
+              Belum ada mata pelajaran terdeteksi untuk kelas ini. Atur jadwal kelas atau daftar mata pelajaran di menu Pengaturan.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {classMapelList.map(m => {
+                const tasksForMapel = tugasK.filter(
+                  (t: any) => String(t.Mapel || '').trim().toLowerCase() === m.toLowerCase()
+                );
+                const isSelected = activeMapelFilter.toLowerCase() === m.toLowerCase();
+                const teachers = Array.from(subjectTeacherMap.get(m) || []);
+                return (
+                  <div
+                    key={m}
+                    onClick={() => {
+                      setTugMapelFilter(m);
+                      if (tasksForMapel[0]?.ID) setTugSel(tasksForMapel[0].ID);
+                      else setTugSel('');
+                    }}
+                    className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-2 ${
+                      isSelected
+                        ? 'bg-teal-50 border-teal-500 ring-1 ring-teal-400 shadow-xs'
+                        : 'bg-slate-50/60 hover:bg-teal-50/50 border-slate-200 hover:border-teal-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-900 truncate" title={m}>
+                          {m}
+                        </div>
+                        {teachers.length > 0 && (
+                          <div className="text-[11px] text-slate-500 truncate mt-0.5" title={teachers.join(', ')}>
+                            {teachers.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 text-[10px] font-bold rounded-md shrink-0 tabular-nums ${
+                          tasksForMapel.length > 0
+                            ? 'bg-teal-600 text-white'
+                            : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {tasksForMapel.length} Tugas
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70">
+                      <span className="text-[11px] text-slate-500 truncate">
+                        {tasksForMapel.length > 0
+                          ? `Terdekat: ${tasksForMapel[0].Tenggat || '-'}`
+                          : 'Belum ada tugas'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          setTugMapelFilter(m);
+                          openTambahTugas(undefined, m);
+                        }}
+                        className="px-2 py-0.5 text-[11px] font-semibold bg-white hover:bg-teal-600 hover:text-white text-teal-700 border border-teal-200 rounded-md transition-colors shrink-0 cursor-pointer"
+                      >
+                        + Tugas
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {curTug ? (
@@ -4991,8 +5674,21 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-xs text-slate-500">
-            Belum ada tugas di kelas ini. Klik "+ Tambah Tugas" untuk memulai.
+          <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-3">
+            <div className="text-xs text-slate-500">
+              {activeMapelFilter !== 'ALL'
+                ? `Belum ada tugas untuk mata pelajaran "${activeMapelFilter}" di kelas ${kelasObj.Nama || ''}.`
+                : `Belum ada tugas di kelas ${kelasObj.Nama || ''}. Klik "+ Tambah Tugas" untuk memulai.`}
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                openTambahTugas(undefined, activeMapelFilter !== 'ALL' ? activeMapelFilter : undefined)
+              }
+              className="px-4 py-2 text-xs font-semibold bg-teal-600 hover:bg-teal-500 text-white rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              + Buat Tugas {activeMapelFilter !== 'ALL' ? activeMapelFilter : ''}
+            </button>
           </div>
         )}
       </div>
@@ -6755,17 +7451,56 @@ export default function App() {
 
       {/* Fullscreen Slide Presentation */}
       {presState && (
-        <div className="fixed inset-0 z-50 bg-gradient-to-br from-indigo-950 via-violet-900 to-fuchsia-950 text-white flex flex-col justify-between p-8">
+        <div className="fixed inset-0 z-50 bg-gradient-to-br from-indigo-950 via-violet-900 to-fuchsia-950 text-white flex flex-col justify-between p-6 md:p-10">
           <div className="flex-1 flex flex-col items-center justify-center text-center max-w-4xl mx-auto">
             {(() => {
-              const s = presState.slides[presState.i].replace(/^# /, '');
-              const lines = s.split('\n');
+              const cur = presState.slides[presState.i];
               return (
                 <>
-                  <h1 className="text-3xl md:text-5xl font-bold mb-6 text-amber-300">{lines[0]}</h1>
-                  <div className="text-lg md:text-2xl text-indigo-100 whitespace-pre-line leading-relaxed">
-                    {lines.slice(1).join('\n')}
-                  </div>
+                  {cur.badge && (
+                    <span className="px-3.5 py-1 mb-4 rounded-full bg-white/15 border border-white/20 text-xs font-bold uppercase tracking-wider text-amber-200">
+                      {cur.badge}
+                    </span>
+                  )}
+                  <h1 className="text-3xl md:text-5xl font-bold mb-6 text-amber-300 leading-tight">
+                    {cur.title}
+                  </h1>
+                  {cur.body && (
+                    <div className="text-lg md:text-2xl text-indigo-100 whitespace-pre-line leading-relaxed max-w-3xl">
+                      {cur.body}
+                    </div>
+                  )}
+                  {((cur.links && cur.links.length > 0) || cur.fileId) && (
+                    <div className="mt-8 pt-6 border-t border-white/15 w-full max-w-2xl">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-indigo-200 mb-3">
+                        Link Sumber Pelajaran & Lampiran
+                      </div>
+                      <div className="flex flex-wrap items-center justify-center gap-2.5">
+                        {(cur.links || []).map((lk, idx) => (
+                          <a
+                            key={idx}
+                            href={lk.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 text-xs md:text-sm font-semibold text-white transition-colors"
+                          >
+                            <ExternalLink className="w-4 h-4 shrink-0 text-amber-300" />
+                            <span>{lk.label}</span>
+                          </a>
+                        ))}
+                        {cur.fileId && (
+                          <button
+                            type="button"
+                            onClick={() => downloadAjarFile(cur.fileId!, cur.fileName || 'Modul')}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-400/20 hover:bg-amber-400/30 border border-amber-300/40 text-xs md:text-sm font-semibold text-amber-100 cursor-pointer"
+                          >
+                            <Download className="w-4 h-4 shrink-0" />
+                            <span>{cur.fileName || 'Unduh Modul'}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </>
               );
             })()}
@@ -6773,7 +7508,7 @@ export default function App() {
           <div className="flex items-center justify-center gap-4 pt-6">
             <button
               onClick={() => setPresState(p => (p ? { ...p, i: Math.max(0, p.i - 1) } : null))}
-              className="px-4 py-2 bg-white/15 hover:bg-white/25 rounded-xl text-xs font-semibold"
+              className="px-4 py-2 bg-white/15 hover:bg-white/25 rounded-xl text-xs font-semibold cursor-pointer"
             >
               ◀ Sebelumnya
             </button>
@@ -6786,13 +7521,13 @@ export default function App() {
                   p ? { ...p, i: Math.min(p.slides.length - 1, p.i + 1) } : null
                 )
               }
-              className="px-4 py-2 bg-white/15 hover:bg-white/25 rounded-xl text-xs font-semibold"
+              className="px-4 py-2 bg-white/15 hover:bg-white/25 rounded-xl text-xs font-semibold cursor-pointer"
             >
               Berikutnya ▶
             </button>
             <button
               onClick={() => setPresState(null)}
-              className="px-4 py-2 bg-gradient-to-r from-rose-500 to-pink-600 hover:brightness-110 rounded-xl text-xs font-semibold"
+              className="px-4 py-2 bg-gradient-to-r from-rose-500 to-pink-600 hover:brightness-110 rounded-xl text-xs font-semibold cursor-pointer"
             >
               Tutup (Esc)
             </button>

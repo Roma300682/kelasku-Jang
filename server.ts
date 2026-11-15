@@ -133,8 +133,8 @@ const SKEMA: Record<string, string[]> = {
   JadwalAtur: ['Kelas', 'Sistem', 'Mulai', 'Durasi', 'Jumlah', 'Istirahat'],
   Akademik: ['ID', 'Mulai', 'Selesai', 'Kegiatan', 'Jenis', 'Sumber'],
   TP: ['ID', 'Kelas', 'ModulID', 'Kode', 'Tujuan', 'Materi', 'Status', 'FileID', 'NamaFile'],
-  Modul: ['ID', 'Kelas', 'Judul', 'Mapel', 'Alokasi', 'TPIDs', 'Pembuka', 'Inti', 'Penutup', 'Asesmen', 'Media', 'Catatan', 'FileID', 'NamaFile'],
-  Pemantik: ['ID', 'Kelas', 'Judul', 'Tautan', 'Pertanyaan', 'Slide'],
+  Modul: ['ID', 'Kelas', 'Judul', 'Mapel', 'Alokasi', 'TPIDs', 'Pembuka', 'Inti', 'Penutup', 'Asesmen', 'Media', 'Catatan', 'FileID', 'NamaFile', 'PertanyaanPemantik', 'LinkSumber'],
+  Pemantik: ['ID', 'Kelas', 'ModulID', 'Mapel', 'Judul', 'Tautan', 'Pertanyaan', 'Slide', 'SumberPelajaran'],
   Mapel: ['ID', 'Nama'],
   BerkasCloud: ['ID', 'Kelas', 'NamaFile', 'TipeMime', 'Ukuran', 'TanggalUnggah', 'Pengunggah', 'StatusCloud', 'PathSimpan', 'AnalisisJSON'],
   CBT: ['ID', 'Kelas', 'Judul', 'Mapel', 'Durasi', 'Status', 'Acak', 'SumberMateri', 'NamaFileMateri', 'SoalJSON', 'TanggalBuat'],
@@ -441,7 +441,12 @@ function createSeedDatabase(): DatabaseFile {
       Penutup: 'Rangkuman bersama tentang titik puncak dan sumbu simetri.\nRefleksi singkat (exit ticket 3 menit).\nInformasi tugas proyek pertemuan berikutnya.',
       Asesmen: 'Formatif: Observasi diskusi & Exit Ticket.\nSumatif: Proyek pemodelan jembatan parabola.',
       Media: 'LKPD Fungsi Kuadrat, GeoGebra Interaktif, Proyektor',
-      Catatan: '85% siswa antusias saat simulasi visual kurva.'
+      Catatan: '85% siswa antusias saat simulasi visual kurva.',
+      PertanyaanPemantik: '1. Mengapa lintasan lemparan bola basket dan pancuran air mancur selalu membentuk lengkungan parabola?\n2. Bagaimana perubahan nilai koefisien a, b, dan c memengaruhi ketinggian puncak lintasan?',
+      LinkSumber: JSON.stringify([
+        { label: 'Simulasi Grafik GeoGebra', url: 'https://www.geogebra.org/graphing' },
+        { label: 'Rumah Belajar Kemdikbud', url: 'https://belajar.kemdikbud.go.id' }
+      ])
     }
   ];
 
@@ -449,10 +454,16 @@ function createSeedDatabase(): DatabaseFile {
     {
       ID: 'pem_1',
       Kelas: 'kls_10a',
+      ModulID: 'mod_1',
+      Mapel: 'Matematika',
       Judul: 'Mengapa Lintasan Air Mancur Berbentuk Parabola?',
-      Tautan: 'https://www.geogebra.org',
+      Tautan: 'https://www.geogebra.org/graphing',
       Pertanyaan: 'Jika kecepatan air mancur tetap, pada sudut kemiringan berapa air mencapai titik tertinggi dan jarak terjauh?',
-      Slide: 'Lintasan Parabola di Sekitar Kita\nPerhatikan bentuk lengkungan jembatan gantung, lemparan bola basket, dan pancuran air taman.\n---\nHubungan dengan Persamaan Kuadrat\nSetiap titik ketinggian y pada jarak mendatar x mengikuti fungsi kuadrat f(x) = ax² + bx + c dengan nilai a negatif.\n---\nTantangan Diskusi Kelompok\n1. Apa yang terjadi jika nilai a diperbesar?\n2. Bagaimana cara menemukan titik puncak tertinggi tanpa menggambar seluruh tabel?'
+      Slide: 'Lintasan Parabola di Sekitar Kita\nPerhatikan bentuk lengkungan jembatan gantung, lemparan bola basket, dan pancuran air taman.\n---\nHubungan dengan Persamaan Kuadrat\nSetiap titik ketinggian y pada jarak mendatar x mengikuti fungsi kuadrat f(x) = ax² + bx + c dengan nilai a negatif.\n---\nTantangan Diskusi Kelompok\n1. Apa yang terjadi jika nilai a diperbesar?\n2. Bagaimana cara menemukan titik puncak tertinggi tanpa menggambar seluruh tabel?',
+      SumberPelajaran: JSON.stringify([
+        { label: 'Simulasi Grafik GeoGebra', url: 'https://www.geogebra.org/graphing' },
+        { label: 'Khan Academy: Quadratic Functions', url: 'https://www.khanacademy.org/math/algebra/x2f8bb11595b61c86:quadratic-functions-equations' }
+      ])
     }
   ];
 
@@ -3510,17 +3521,21 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
             });
           }
           parts.push({
-            text: `Ekstrak dan pisahkan seluruh Tujuan Pembelajaran (TP) yang ada pada dokumen Modul Ajar "${judulModul || fname}" (${mapel || 'Umum'}) menjadi daftar item TP terpisah. Jika dokumen memiliki beberapa TP/indikator tujuan, pisahkan masing-masing sebagai 1 item.`
+            text: `Ekstrak dan pisahkan seluruh Tujuan Pembelajaran (TP) yang ada pada dokumen Modul Ajar "${judulModul || fname}" (${mapel || 'Umum'}) menjadi daftar item TP terpisah. Selain itu, ekstrak juga Pertanyaan Pemantik yang ada pada dokumen modul ajar jika tersedia.`
           });
 
           const resp = await generateContentFastWithFallback(aiClient, {
             modeCepat: true,
             contents: { parts },
             systemInstruction:
-              'Anda asisten kurikulum sekolah Indonesia. Ekstrak dan pisahkan daftar Tujuan Pembelajaran (TP) secara akurat dari dokumen modul ajar menjadi item-item terpisah.',
+              'Anda asisten kurikulum sekolah Indonesia. Ekstrak dan pisahkan daftar Tujuan Pembelajaran (TP) serta Pertanyaan Pemantik dari dokumen modul ajar.',
             responseSchema: {
               type: Type.OBJECT,
               properties: {
+                pertanyaanPemantik: {
+                  type: Type.STRING,
+                  description: 'Daftar pertanyaan pemantik dari modul ajar (pisahkan tiap pertanyaan dengan baris baru jika lebih dari satu, atau kosong jika tidak ada).'
+                },
                 tps: {
                   type: Type.ARRAY,
                   items: {
@@ -3537,7 +3552,7 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
               required: ['tps']
             }
           });
-          const parsed = parseJsonSafe<{ tps?: any[] }>(resp.text, {});
+          const parsed = parseJsonSafe<{ tps?: any[]; pertanyaanPemantik?: string }>(resp.text, {});
           const items = (Array.isArray(parsed.tps) ? parsed.tps : [])
             .map((x: any, idx: number) => ({
               kode: String(x.kode || `TP ${idx + 1}`).trim(),
@@ -3545,8 +3560,9 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
               materi: String(x.materi || judulModul || '').trim()
             }))
             .filter(x => x.tujuan.length > 0);
-          if (items.length > 0) {
-            res.json({ ok: true, data: { tps: items, source: 'ai' } });
+          const pertanyaanPemantik = String(parsed.pertanyaanPemantik || '').trim();
+          if (items.length > 0 || pertanyaanPemantik) {
+            res.json({ ok: true, data: { tps: items, pertanyaanPemantik, source: 'ai' } });
             return;
           }
         } catch (aiErr) {

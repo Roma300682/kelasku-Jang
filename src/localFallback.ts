@@ -295,17 +295,28 @@ async function createSeedLocalDb(): Promise<LocalDb> {
           Penutup: 'Rangkuman titik puncak dan refleksi.',
           Asesmen: 'Observasi diskusi & Exit Ticket.',
           Media: 'LKPD, GeoGebra',
-          Catatan: ''
+          Catatan: '',
+          PertanyaanPemantik: '1. Mengapa lintasan lemparan bola basket dan pancuran air mancur selalu membentuk lengkungan parabola?\n2. Bagaimana perubahan nilai koefisien a, b, dan c memengaruhi ketinggian puncak lintasan?',
+          LinkSumber: JSON.stringify([
+            { label: 'Simulasi Grafik GeoGebra', url: 'https://www.geogebra.org/graphing' },
+            { label: 'Rumah Belajar Kemdikbud', url: 'https://belajar.kemdikbud.go.id' }
+          ])
         }
       ],
       Pemantik: [
         {
           ID: 'pem_1',
           Kelas: 'kls_10a',
+          ModulID: 'mod_1',
+          Mapel: 'Matematika',
           Judul: 'Mengapa Lintasan Air Mancur Berbentuk Parabola?',
-          Tautan: 'https://www.geogebra.org',
+          Tautan: 'https://www.geogebra.org/graphing',
           Pertanyaan: 'Pada sudut berapa air mencapai titik tertinggi?',
-          Slide: 'Lintasan Parabola di Sekitar Kita\n---\nHubungan dengan Persamaan Kuadrat'
+          Slide: 'Lintasan Parabola di Sekitar Kita\n---\nHubungan dengan Persamaan Kuadrat',
+          SumberPelajaran: JSON.stringify([
+            { label: 'Simulasi Grafik GeoGebra', url: 'https://www.geogebra.org/graphing' },
+            { label: 'Khan Academy: Quadratic Functions', url: 'https://www.khanacademy.org/math/algebra/x2f8bb11595b61c86:quadratic-functions-equations' }
+          ])
         }
       ],
       Mapel: mapelList,

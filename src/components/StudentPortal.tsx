@@ -62,7 +62,8 @@ export default function StudentPortal({
   const [submittingExam, setSubmittingExam] = useState(false);
   const [resultModal, setResultModal] = useState<any | null>(null);
 
-  // Task File Upload State
+  // Task File Upload & Subject Filter State
+  const [tugasMapelFilter, setTugasMapelFilter] = useState<string>('ALL');
   const [uploadTugasModal, setUploadTugasModal] = useState<any | null>(null);
   const [tugasFile, setTugasFile] = useState<{ namaFile: string; base64Data: string; size: number } | null>(null);
   const [tugasCatatan, setTugasCatatan] = useState('');
@@ -812,97 +813,182 @@ export default function StudentPortal({
         </div>
 
         {/* Assignments */}
-        <div className="bg-white border border-amber-100 rounded-2xl p-6 space-y-4 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="text-base font-bold text-slate-900">Daftar Tugas & Asesmen</h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Unduh berkas soal dari guru (jika tersedia) dan unggah hasil pekerjaanmu sebelum tenggat.
-              </p>
+        {/* Tasks & Submissions */}
+        {(() => {
+          const allTasks = Array.isArray(p.tugas) ? p.tugas : [];
+          const subjMap = new Map<string, string>();
+          const regSubj = (raw: string) => {
+            const c = String(raw || '').trim();
+            if (!c || /^istirahat$/i.test(c)) return;
+            if (!subjMap.has(c.toLowerCase())) subjMap.set(c.toLowerCase(), c);
+          };
+          String(p.mapel || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .forEach(regSubj);
+          (p.jadwal || []).forEach((j: any) => {
+            if (!j.Jenis || j.Jenis === 'Pelajaran') regSubj(j.Mapel);
+          });
+          allTasks.forEach((t: any) => regSubj(t.Mapel));
+          (p.cbtList || []).forEach((c: any) => regSubj(c.Mapel));
+          const classSubjects = Array.from(subjMap.values()).sort((a, b) => a.localeCompare(b, 'id'));
+          const activeFilter =
+            tugasMapelFilter !== 'ALL' &&
+            classSubjects.some(s => s.toLowerCase() === tugasMapelFilter.toLowerCase())
+              ? classSubjects.find(s => s.toLowerCase() === tugasMapelFilter.toLowerCase()) || 'ALL'
+              : 'ALL';
+          const visibleTasks =
+            activeFilter === 'ALL'
+              ? allTasks
+              : allTasks.filter(
+                  (t: any) => String(t.Mapel || '').trim().toLowerCase() === activeFilter.toLowerCase()
+                );
+
+          return (
+            <div className="bg-white border border-amber-100 rounded-2xl p-6 space-y-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">Daftar Tugas & Asesmen</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Unduh berkas soal dari guru (jika tersedia) dan unggah hasil pekerjaanmu sebelum tenggat.
+                  </p>
+                </div>
+                <span className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
+                  {classSubjects.length} Mata Pelajaran · {visibleTasks.length} Tugas
+                </span>
+              </div>
+
+              {classSubjects.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setTugasMapelFilter('ALL')}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg border cursor-pointer transition-colors ${
+                      activeFilter === 'ALL'
+                        ? 'bg-amber-600 text-white border-amber-600'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-amber-50'
+                    }`}
+                  >
+                    Semua Mapel ({allTasks.length})
+                  </button>
+                  {classSubjects.map(subj => {
+                    const count = allTasks.filter(
+                      (t: any) => String(t.Mapel || '').trim().toLowerCase() === subj.toLowerCase()
+                    ).length;
+                    const active = activeFilter.toLowerCase() === subj.toLowerCase();
+                    return (
+                      <button
+                        key={subj}
+                        type="button"
+                        onClick={() => setTugasMapelFilter(active ? 'ALL' : subj)}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg border cursor-pointer transition-colors ${
+                          active
+                            ? 'bg-amber-600 text-white border-amber-600'
+                            : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-50'
+                        }`}
+                      >
+                        {subj} <span className="opacity-75">({count})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="overflow-x-auto border border-amber-100 rounded-xl">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-amber-50/70 border-b border-amber-100 text-amber-900">
+                    <tr>
+                      <th className="py-2.5 px-3">Judul Tugas & Mapel</th>
+                      <th className="py-2.5 px-3">Lampiran Guru</th>
+                      <th className="py-2.5 px-3">Tenggat</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Upload Jawaban</th>
+                      <th className="py-2.5 px-3 text-right">Nilai</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {visibleTasks.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-6 text-center text-slate-400">
+                          {activeFilter === 'ALL'
+                            ? 'Belum ada tugas untuk kelas ini.'
+                            : `Belum ada tugas untuk mata pelajaran ${activeFilter}.`}
+                        </td>
+                      </tr>
+                    ) : (
+                      visibleTasks.map((t: any, i: number) => (
+                        <tr key={t.ID || i} className="hover:bg-amber-50/30">
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-semibold text-slate-900">{t.Judul}</span>
+                              {t.Mapel && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded">
+                                  {t.Mapel}
+                                </span>
+                              )}
+                              <span className="text-[10px] text-slate-500">({t.Jenis})</span>
+                            </div>
+                            {t.Deskripsi && (
+                              <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-2">{t.Deskripsi}</div>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            {t.FileID ? (
+                              <a
+                                href={`/api/tugas/file/${t.FileID}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg whitespace-nowrap"
+                              >
+                                <Download className="w-3 h-3" /> {t.NamaFile || 'Unduh Soal'}
+                              </a>
+                            ) : (
+                              <span className="text-slate-400">-</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 tabular-nums text-slate-600 whitespace-nowrap">{t.Tenggat || '-'}</td>
+                          <td className={`py-2.5 px-3 font-semibold whitespace-nowrap ${t.Status === 'Tepat Waktu' ? 'text-emerald-700' : t.Status === 'Terlambat' ? 'text-amber-700' : 'text-rose-600'}`}>
+                            <div>{t.Status}</div>
+                            {t.TanggalKumpul && (
+                              <div className="text-[10px] font-normal text-slate-400 tabular-nums">{t.TanggalKumpul}</div>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {t.FileSiswaID && (
+                                <a
+                                  href={`/api/tugas/file/${t.FileSiswaID}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg max-w-[150px] truncate"
+                                  title={t.NamaFileSiswa}
+                                >
+                                  <Paperclip className="w-3 h-3 shrink-0" />
+                                  <span className="truncate">{t.NamaFileSiswa}</span>
+                                </a>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => openUploadTugas(t)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-amber-500 hover:bg-amber-600 text-white rounded-lg whitespace-nowrap cursor-pointer shadow-2xs"
+                              >
+                                <Upload className="w-3 h-3" /> {t.FileSiswaID ? 'Ganti File' : 'Upload Tugas'}
+                              </button>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-right tabular-nums font-bold text-indigo-700">
+                            {t.Nilai || '-'}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-          <div className="overflow-x-auto border border-amber-100 rounded-xl">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead className="bg-amber-50/70 border-b border-amber-100 text-amber-900">
-                <tr>
-                  <th className="py-2.5 px-3">Judul Tugas & Mapel</th>
-                  <th className="py-2.5 px-3">Lampiran Guru</th>
-                  <th className="py-2.5 px-3">Tenggat</th>
-                  <th className="py-2.5 px-3">Status</th>
-                  <th className="py-2.5 px-3">Upload Jawaban</th>
-                  <th className="py-2.5 px-3 text-right">Nilai</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {(p.tugas || []).map((t: any, i: number) => (
-                  <tr key={t.ID || i} className="hover:bg-amber-50/30">
-                    <td className="py-2.5 px-3">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-semibold text-slate-900">{t.Judul}</span>
-                        {t.Mapel && (
-                          <span className="px-1.5 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded">
-                            {t.Mapel}
-                          </span>
-                        )}
-                        <span className="text-[10px] text-slate-500">({t.Jenis})</span>
-                      </div>
-                      {t.Deskripsi && (
-                        <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-2">{t.Deskripsi}</div>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3">
-                      {t.FileID ? (
-                        <a
-                          href={`/api/tugas/file/${t.FileID}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg whitespace-nowrap"
-                        >
-                          <Download className="w-3 h-3" /> {t.NamaFile || 'Unduh Soal'}
-                        </a>
-                      ) : (
-                        <span className="text-slate-400">-</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 tabular-nums text-slate-600 whitespace-nowrap">{t.Tenggat || '-'}</td>
-                    <td className={`py-2.5 px-3 font-semibold whitespace-nowrap ${t.Status === 'Tepat Waktu' ? 'text-emerald-700' : t.Status === 'Terlambat' ? 'text-amber-700' : 'text-rose-600'}`}>
-                      <div>{t.Status}</div>
-                      {t.TanggalKumpul && (
-                        <div className="text-[10px] font-normal text-slate-400 tabular-nums">{t.TanggalKumpul}</div>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {t.FileSiswaID && (
-                          <a
-                            href={`/api/tugas/file/${t.FileSiswaID}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg max-w-[150px] truncate"
-                            title={t.NamaFileSiswa}
-                          >
-                            <Paperclip className="w-3 h-3 shrink-0" />
-                            <span className="truncate">{t.NamaFileSiswa}</span>
-                          </a>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => openUploadTugas(t)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-amber-500 hover:bg-amber-600 text-white rounded-lg whitespace-nowrap cursor-pointer shadow-2xs"
-                        >
-                          <Upload className="w-3 h-3" /> {t.FileSiswaID ? 'Ganti File' : 'Upload Tugas'}
-                        </button>
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-3 text-right tabular-nums font-bold text-indigo-700">
-                      {t.Nilai || '-'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* Schedule & Duty Roster */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
