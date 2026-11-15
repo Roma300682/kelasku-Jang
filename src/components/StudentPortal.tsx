@@ -20,6 +20,8 @@ import {
   Flag,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Send,
   Eye,
   EyeOff,
@@ -68,6 +70,9 @@ export default function StudentPortal({
 
   // Task File Upload & Subject Filter State
   const [tugasMapelFilter, setTugasMapelFilter] = useState<string>('ALL');
+  const [materiMapelFilter, setMateriMapelFilter] = useState<string>('ALL');
+  const [expandedMateriId, setExpandedMateriId] = useState<string | null>(null);
+  const [chatOpen, setChatOpen] = useState<boolean>(false);
   const [uploadTugasModal, setUploadTugasModal] = useState<any | null>(null);
   const [tugasFile, setTugasFile] = useState<{ namaFile: string; base64Data: string; size: number } | null>(null);
   const [tugasCatatan, setTugasCatatan] = useState('');
@@ -464,6 +469,17 @@ export default function StudentPortal({
                 </div>
               </div>
             </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setChatOpen(true)}
+                className="px-4 py-2 text-xs font-bold bg-white text-indigo-700 hover:bg-indigo-50 rounded-xl shadow-sm transition-colors flex items-center gap-2 cursor-pointer whitespace-nowrap"
+              >
+                <MessageCircle className="w-4 h-4 text-indigo-600" />
+                <span>Chat Kelas &amp; Tanya Guru</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -815,6 +831,242 @@ export default function StudentPortal({
             </div>
           </div>
         </div>
+
+        {/* Materi & Sumber Pembelajaran Section */}
+        {(() => {
+          const allMateri = Array.isArray(p.materi) ? p.materi : [];
+          const matSubjMap = new Map<string, string>();
+          allMateri.forEach((m: any) => {
+            const c = String(m.Mapel || 'Umum').trim();
+            if (c && !matSubjMap.has(c.toLowerCase())) matSubjMap.set(c.toLowerCase(), c);
+          });
+          const matSubjects = Array.from(matSubjMap.values()).sort((a, b) => a.localeCompare(b, 'id'));
+          const activeMatFilter =
+            materiMapelFilter !== 'ALL' &&
+            matSubjects.some(s => s.toLowerCase() === materiMapelFilter.toLowerCase())
+              ? matSubjects.find(s => s.toLowerCase() === materiMapelFilter.toLowerCase()) || 'ALL'
+              : 'ALL';
+          const visibleMateri =
+            activeMatFilter === 'ALL'
+              ? allMateri
+              : allMateri.filter(
+                  (m: any) => String(m.Mapel || 'Umum').trim().toLowerCase() === activeMatFilter.toLowerCase()
+                );
+
+          return (
+            <section className="bg-white border border-fuchsia-100 rounded-2xl p-6 space-y-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-fuchsia-600" />
+                    Materi &amp; Sumber Pembelajaran
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Pelajari ringkasan modul ajar, tujuan pembelajaran, tautan referensi, serta unduh file materi dari guru.
+                  </p>
+                </div>
+                <span className="text-xs font-semibold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 px-2.5 py-1 rounded-lg tabular-nums">
+                  {visibleMateri.length} Modul Materi
+                </span>
+              </div>
+
+              {matSubjects.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setMateriMapelFilter('ALL')}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg border cursor-pointer transition-colors whitespace-nowrap ${
+                      activeMatFilter === 'ALL'
+                        ? 'bg-fuchsia-600 text-white border-fuchsia-600'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-fuchsia-50'
+                    }`}
+                  >
+                    Semua Mapel ({allMateri.length})
+                  </button>
+                  {matSubjects.map(subj => {
+                    const count = allMateri.filter(
+                      (m: any) => String(m.Mapel || 'Umum').trim().toLowerCase() === subj.toLowerCase()
+                    ).length;
+                    const active = activeMatFilter.toLowerCase() === subj.toLowerCase();
+                    return (
+                      <button
+                        key={subj}
+                        type="button"
+                        onClick={() => setMateriMapelFilter(active ? 'ALL' : subj)}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg border cursor-pointer transition-colors whitespace-nowrap ${
+                          active
+                            ? 'bg-fuchsia-600 text-white border-fuchsia-600'
+                            : 'bg-white text-slate-700 border-fuchsia-200 hover:bg-fuchsia-50'
+                        }`}
+                      >
+                        {subj} <span className="opacity-75">({count})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {visibleMateri.length === 0 ? (
+                <div className="p-6 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500">
+                  Belum ada materi pembelajaran atau modul ajar yang dibagikan untuk kelas ini.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {visibleMateri.map((m: any) => {
+                    const isExpanded = expandedMateriId === m.ID;
+                    const resLinks = parseSumberLinks(m.LinkSumber);
+                    const modTps = Array.isArray(m.tps) ? m.tps : [];
+                    return (
+                      <div
+                        key={m.ID}
+                        className="p-4 rounded-xl border border-fuchsia-100 bg-gradient-to-br from-fuchsia-50/30 via-white to-indigo-50/20 flex flex-col justify-between gap-3"
+                      >
+                        <div className="space-y-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                                <span className="font-bold text-fuchsia-700 uppercase tracking-wide">
+                                  {m.Mapel || 'Umum'}
+                                </span>
+                                {m.Alokasi && (
+                                  <>
+                                    <span>·</span>
+                                    <span>{m.Alokasi}</span>
+                                  </>
+                                )}
+                              </div>
+                              <h3 className="text-sm font-bold text-slate-900 mt-0.5">{m.Judul}</h3>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedMateriId(isExpanded ? null : m.ID)}
+                              className="p-1.5 text-xs font-semibold text-slate-500 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg cursor-pointer shrink-0"
+                              title={isExpanded ? 'Tutup detail' : 'Lihat detail materi'}
+                            >
+                              {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            </button>
+                          </div>
+
+                          {m.PertanyaanPemantik && (
+                            <div className="p-2.5 rounded-lg bg-amber-50/70 border border-amber-200/80 text-xs text-slate-800">
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1 mb-0.5">
+                                <Sparkles className="w-3 h-3 text-amber-600" /> Pertanyaan Pemantik
+                              </div>
+                              <p className="whitespace-pre-line leading-relaxed">{m.PertanyaanPemantik}</p>
+                            </div>
+                          )}
+
+                          {modTps.length > 0 && (
+                            <div className="space-y-1">
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                Tujuan Pembelajaran ({modTps.length})
+                              </div>
+                              <ul className="space-y-1 text-xs text-slate-700">
+                                {(isExpanded ? modTps : modTps.slice(0, 2)).map((tp: any) => (
+                                  <li key={tp.ID} className="flex items-start justify-between gap-2 bg-white px-2.5 py-1.5 rounded-lg border border-slate-100">
+                                    <div className="min-w-0">
+                                      <span className="font-bold text-fuchsia-700 mr-1.5">{tp.Kode}:</span>
+                                      <span>{tp.Tujuan}</span>
+                                    </div>
+                                    {tp.FileID && (
+                                      <button
+                                        type="button"
+                                        onClick={() => downloadAjarFile(tp.FileID, tp.NamaFile)}
+                                        className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded cursor-pointer"
+                                        title={`Unduh lampiran ${tp.Kode}`}
+                                      >
+                                        <Download className="w-3 h-3" /> Unduh
+                                      </button>
+                                    )}
+                                  </li>
+                                ))}
+                                {!isExpanded && modTps.length > 2 && (
+                                  <li className="text-[11px] text-indigo-600 font-semibold pl-1">
+                                    +{modTps.length - 2} tujuan pembelajaran lainnya…
+                                  </li>
+                                )}
+                              </ul>
+                            </div>
+                          )}
+
+                          {isExpanded && (
+                            <div className="space-y-2 pt-2 border-t border-slate-100 text-xs text-slate-700">
+                              {m.Pembuka && (
+                                <div>
+                                  <div className="font-bold text-slate-800 text-[11px]">Kegiatan Pembuka:</div>
+                                  <p className="whitespace-pre-line mt-0.5 text-slate-600">{m.Pembuka}</p>
+                                </div>
+                              )}
+                              {m.Inti && (
+                                <div>
+                                  <div className="font-bold text-slate-800 text-[11px]">Materi / Kegiatan Inti:</div>
+                                  <p className="whitespace-pre-line mt-0.5 text-slate-600">{m.Inti}</p>
+                                </div>
+                              )}
+                              {m.Penutup && (
+                                <div>
+                                  <div className="font-bold text-slate-800 text-[11px]">Penutup &amp; Rangkuman:</div>
+                                  <p className="whitespace-pre-line mt-0.5 text-slate-600">{m.Penutup}</p>
+                                </div>
+                              )}
+                              {m.Media && (
+                                <div className="text-[11px] text-slate-600">
+                                  <strong className="text-slate-800">Media &amp; Sumber:</strong> {m.Media}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {resLinks.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              {resLinks.map((lk, idx) => (
+                                <a
+                                  key={idx}
+                                  href={lk.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg"
+                                >
+                                  <ExternalLink className="w-3 h-3 shrink-0" />
+                                  <span className="truncate max-w-[190px]">{lk.label}</span>
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-fuchsia-100/80">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedMateriId(isExpanded ? null : m.ID)}
+                            className="text-xs font-semibold text-indigo-700 hover:underline cursor-pointer"
+                          >
+                            {isExpanded ? 'Sembunyikan Detail' : 'Baca Selengkapnya'}
+                          </button>
+
+                          {m.FileID ? (
+                            <button
+                              type="button"
+                              onClick={() => downloadAjarFile(m.FileID, m.NamaFile)}
+                              className="px-3.5 py-1.5 text-xs font-bold bg-gradient-to-r from-fuchsia-600 to-indigo-600 hover:brightness-110 text-white rounded-xl inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span className="truncate max-w-[180px]">
+                                Unduh {m.NamaFile || 'Materi'}
+                              </span>
+                            </button>
+                          ) : (
+                            <span className="text-[11px] text-slate-400">Materi teks / link tersedia</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          );
+        })()}
 
         {/* Assignments */}
         {/* Tasks & Submissions */}
@@ -1689,6 +1941,22 @@ export default function StudentPortal({
           </div>
         </div>
       )}
+
+      {/* Class Chat & Teacher Consultation Drawer */}
+      <ClassChatDrawer
+        isOpen={chatOpen}
+        onClose={() => setChatOpen(false)}
+        kelasId={p.kelasId || ''}
+        kelasNama={p.kelas || ''}
+        currentUser={{
+          id: p.siswa?.ID || p.siswa?.NIS || '',
+          nama: p.siswa?.Nama || 'Siswa',
+          peran: 'siswa',
+          nis: p.siswa?.NIS
+        }}
+        teacherList={p.teachers || []}
+        showToast={showToast}
+      />
     </div>
   );
 }

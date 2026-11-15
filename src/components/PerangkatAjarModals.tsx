@@ -1153,6 +1153,8 @@ interface PemantikModalFormProps {
   modList: any[];
   mapelList: any[];
   tpList?: any[];
+  kelasList?: any[];
+  currentKelasId?: string;
   onClose: () => void;
   onSave: (payload: {
     ModulID: string;
@@ -1162,6 +1164,7 @@ interface PemantikModalFormProps {
     Slide: string;
     Tautan: string;
     SumberPelajaran: string;
+    Kelas?: string;
   }) => Promise<void>;
   showToast: (msg: string, ms?: number) => void;
 }
@@ -1172,6 +1175,8 @@ export const PemantikModalForm: React.FC<PemantikModalFormProps> = ({
   modList,
   mapelList,
   tpList = [],
+  kelasList = [],
+  currentKelasId = '',
   onClose,
   onSave,
   showToast
@@ -1268,6 +1273,9 @@ export const PemantikModalForm: React.FC<PemantikModalFormProps> = ({
     const serializedLinks = serializeSumberLinks(cleanLinks);
     const firstUrl = cleanLinks[0]?.url || '';
 
+    const linkedMod = modList.find((m: any) => m.ID === modulId);
+    const finalKelas = initial?.Kelas || linkedMod?.Kelas || '__ALL__';
+
     setSaving(true);
     try {
       await onSave({
@@ -1277,7 +1285,8 @@ export const PemantikModalForm: React.FC<PemantikModalFormProps> = ({
         Pertanyaan: pertanyaan.trim(),
         Slide: slide.trim(),
         Tautan: firstUrl,
-        SumberPelajaran: serializedLinks
+        SumberPelajaran: serializedLinks,
+        Kelas: finalKelas
       });
     } finally {
       setSaving(false);

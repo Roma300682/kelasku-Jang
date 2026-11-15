@@ -928,6 +928,13 @@ function tugasIzin_(izin: string[]) {
   return { milik, semua };
 }
 
+function rowMatchesIzin(rowKelas: string, izin: string[]): boolean {
+  const k = String(rowKelas || '').trim();
+  if (!k || k === '__ALL__' || k === 'all') return true;
+  const parts = k.split(',').map(s => s.trim()).filter(Boolean);
+  return parts.some(p => izin.includes(p));
+}
+
 function bacaIzin_(nama: string, izin: string[] | null) {
   const rows = baca_(nama);
   if (!izin) return rows;
@@ -935,6 +942,9 @@ function bacaIzin_(nama: string, izin: string[] | null) {
   if (nama === 'Pengumpulan') {
     const t = tugasIzin_(izin);
     return rows.filter(r => t.milik[r.TugasID]);
+  }
+  if (nama === 'Modul' || nama === 'TP' || nama === 'Pemantik') {
+    return rows.filter(r => rowMatchesIzin(r.Kelas, izin));
   }
   if (SKEMA[nama].includes('Kelas')) return rows.filter(r => izin.includes(r.Kelas));
   return rows;
@@ -947,6 +957,9 @@ function gabungIzin_(nama: string, rows: Record<string, any>[], izin: string[]) 
     return lama.filter(r => t.semua[r.TugasID] && !t.milik[r.TugasID]).concat(rows.filter(r => t.milik[r.TugasID]));
   }
   if (!SKEMA[nama].includes('Kelas')) throw new Error('Akses ditolak.');
+  if (nama === 'Modul' || nama === 'TP' || nama === 'Pemantik') {
+    return lama.filter(r => !rowMatchesIzin(r.Kelas, izin)).concat(rows.filter(r => rowMatchesIzin(r.Kelas, izin)));
+  }
   return lama.filter(r => !izin.includes(r.Kelas)).concat(rows.filter(r => izin.includes(r.Kelas)));
 }
 
@@ -1391,6 +1404,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
     });
     out.pinHashes = pinHashes;
     out.peran = st.peran;
+    out.userId = st.user ? st.user.ID : 'admin';
     out.kelasWali = st.izin ? st.wali : null;
     out.namaPengguna = st.nama || '';
     out.GuruList = baca_('Pengguna').map(u => {
@@ -1698,8 +1712,36 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
         jurusanLogo = logoMap[kelas.Jurusan];
       }
     } catch (_) {}
+    const mapelNamaById = new Map<string, string>(baca_('Mapel').map(m => [m.ID, m.Nama]));
+    const teachers = baca_('Pengguna')
+      .map(u => {
+        const p = perluas_(u);
+        const teachesClass = p.wali.includes(siswa.Kelas) || p.mengajar.includes(siswa.Kelas);
+        if (!teachesClass) return null;
+        const mNames = String(u.Mapel || '')
+          .split(',')
+          .map(id => mapelNamaById.get(id.trim()) || id.trim())
+          .filter(Boolean)
+          .join(', ');
+        return {
+          id: u.ID,
+          nama: u.Nama,
+          peran: p.wali.includes(siswa.Kelas) ? 'wali' : 'guru',
+          mapel: mNames || (p.wali.includes(siswa.Kelas) ? 'Wali Kelas' : 'Guru')
+        };
+      })
+      .filter(Boolean);
+    if (teachers.length === 0) {
+      teachers.push({
+        id: 'admin',
+        nama: waliKelas_(siswa.Kelas) || set.wali || set.guru || 'Guru / Admin Sekolah',
+        peran: 'wali',
+        mapel: 'Wali Kelas'
+      });
+    }
     return {
-      siswa: { Nama: siswa.Nama, NIS: siswa.NIS },
+      siswa: { ID: siswa.ID, Nama: siswa.Nama, NIS: siswa.NIS },
+      kelasId: siswa.Kelas || '',
       kelas: kelas.Nama || '',
       jurusan: kelas.Jurusan || '',
       jurusanLogo,
@@ -1710,6 +1752,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       semester: set.semester,
       wali: waliKelas_(siswa.Kelas) || set.wali,
       guru: set.guru,
+      teachers,
       denah,
       piket,
       struktur,
@@ -1802,9 +1845,12 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
         const classMapelSet = new Set<string>();
         String(kelas.Mapel || '')
           .split(',')
-          .map(s => s.trim().toLowerCase())
+          .map(s => s.trim())
           .filter(Boolean)
-          .forEach(s => classMapelSet.add(s));
+          .forEach(tok => {
+            const resolved = mapelNamaById.get(tok) || tok;
+            if (resolved) classMapelSet.add(resolved.toLowerCase());
+          });
         jadwal.forEach((j: any) => {
           const clean = String(j.Mapel || '').trim().toLowerCase();
           if (clean && clean !== 'istirahat') classMapelSet.add(clean);
@@ -1813,16 +1859,30 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
           const clean = String(t.Mapel || '').trim().toLowerCase();
           if (clean) classMapelSet.add(clean);
         });
+        baca_('Pengguna').forEach(u => {
+          const p = perluas_(u);
+          if (!p.wali.includes(siswa.Kelas) && !p.mengajar.includes(siswa.Kelas)) return;
+          String(u.Mapel || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .forEach(tok => {
+              const resolved = mapelNamaById.get(tok) || tok;
+              if (resolved) classMapelSet.add(resolved.toLowerCase());
+            });
+        });
 
         const allModules = baca_('Modul');
         const allTps = baca_('TP');
         const matchingModules = allModules.filter((m: any) => {
           const kRaw = String(m.Kelas || '').trim();
-          if (kRaw === '__ALL__' || kRaw === 'all' || !kRaw) return true;
+          const mMapel = String(m.Mapel || '').trim().toLowerCase();
+          if (kRaw === '__ALL__' || kRaw === 'all' || !kRaw) {
+            if (!mMapel || mMapel === 'umum' || classMapelSet.size === 0) return true;
+            return classMapelSet.has(mMapel);
+          }
           const ids = kRaw.split(',').map(s => s.trim()).filter(Boolean);
-          if (ids.includes(siswa.Kelas)) return true;
-          if (m.Mapel && classMapelSet.has(m.Mapel.trim().toLowerCase())) return true;
-          return false;
+          return ids.includes(siswa.Kelas);
         });
 
         const tpToMod = new Map<string, string>();
@@ -3739,7 +3799,6 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
       const cur = baca_('Pesan');
       cur.push(newMsg);
       tulis_('Pesan', cur);
-      await saveStateToDisk();
 
       broadcastChatMessage(newMsg);
 
@@ -3854,10 +3913,10 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
               Tipe: String(data.tipe || 'teks').trim(),
               Lampiran: String(data.lampiran || '').trim()
             };
+            await ensureDbLoaded();
             const cur = baca_('Pesan');
             cur.push(newMsg);
             tulis_('Pesan', cur);
-            await saveStateToDisk();
 
             broadcastChatMessage(newMsg);
           }

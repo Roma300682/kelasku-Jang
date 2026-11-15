@@ -538,6 +538,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
     });
     out.pinHashes = pinHashes;
     out.peran = s.role === 'admin' ? 'admin' : staf?.Peran || 'guru';
+    out.userId = staf ? staf.ID : 'admin';
     out.kelasWali = staf ? String(staf.KelasWali || '').split(',').filter(Boolean) : null;
     out.namaPengguna = s.nama || '';
     out.GuruList = (db.sheets.Pengguna || []).map(u => ({
@@ -721,8 +722,37 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
     const atur = (db.sheets.DenahAtur || []).find(a => a.Kelas === siswa.Kelas) || { Baris: '4', Kolom: '4', Grup: '2' };
     const pg = (db.sheets.Pengumpulan || []).filter(p => p.SiswaID === siswa.ID);
 
+    const mapelById = new Map((db.sheets.Mapel || []).map(m => [m.ID, m.Nama]));
+    const teachers = (db.sheets.Pengguna || [])
+      .filter(u => {
+        const kw = String(u.KelasWali || '').split(',').filter(Boolean);
+        const km = String(u.KelasMengajar || '').split(',').filter(Boolean);
+        return kw.includes(siswa.Kelas) || km.includes(siswa.Kelas);
+      })
+      .map(u => {
+        const kw = String(u.KelasWali || '').split(',').filter(Boolean);
+        return {
+          id: u.ID,
+          nama: u.Nama,
+          peran: kw.includes(siswa.Kelas) ? 'wali' : 'guru',
+          mapel: String(u.Mapel || '')
+            .split(',')
+            .map(id => mapelById.get(id.trim()) || id.trim())
+            .filter(Boolean)
+            .join(', ')
+        };
+      });
+    if (teachers.length === 0) {
+      teachers.push({
+        id: 'admin',
+        nama: set.wali || set.guru || 'Guru / Admin Sekolah',
+        peran: 'wali',
+        mapel: 'Wali Kelas'
+      });
+    }
     return {
-      siswa: { Nama: siswa.Nama, NIS: siswa.NIS },
+      siswa: { ID: siswa.ID, Nama: siswa.Nama, NIS: siswa.NIS },
+      kelasId: siswa.Kelas || '',
       kelas: kelas.Nama || '',
       jurusan: kelas.Jurusan || '',
       jurusanLogo: '',
@@ -733,6 +763,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
       semester: set.semester,
       wali: set.wali,
       guru: set.guru,
+      teachers,
       denah: {
         Baris: atur.Baris,
         Kolom: atur.Kolom,
@@ -793,9 +824,12 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
         const classMapelSet = new Set<string>();
         String(kelas.Mapel || '')
           .split(',')
-          .map(s => s.trim().toLowerCase())
+          .map(s => s.trim())
           .filter(Boolean)
-          .forEach(s => classMapelSet.add(s));
+          .forEach(tok => {
+            const resolved = mapelById.get(tok) || tok;
+            if (resolved) classMapelSet.add(resolved.toLowerCase());
+          });
         (db.sheets.Jadwal || []).filter(j => j.Kelas === siswa.Kelas).forEach((j: any) => {
           const clean = String(j.Mapel || '').trim().toLowerCase();
           if (clean && clean !== 'istirahat') classMapelSet.add(clean);
@@ -809,11 +843,13 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
         const allTps = db.sheets.TP || [];
         const matchingModules = allModules.filter((m: any) => {
           const kRaw = String(m.Kelas || '').trim();
-          if (kRaw === '__ALL__' || kRaw === 'all' || !kRaw) return true;
+          const mMapel = String(m.Mapel || '').trim().toLowerCase();
+          if (kRaw === '__ALL__' || kRaw === 'all' || !kRaw) {
+            if (!mMapel || mMapel === 'umum' || classMapelSet.size === 0) return true;
+            return classMapelSet.has(mMapel);
+          }
           const ids = kRaw.split(',').map(s => s.trim()).filter(Boolean);
-          if (ids.includes(siswa.Kelas)) return true;
-          if (m.Mapel && classMapelSet.has(m.Mapel.trim().toLowerCase())) return true;
-          return false;
+          return ids.includes(siswa.Kelas);
         });
 
         const tpToMod = new Map<string, string>();
