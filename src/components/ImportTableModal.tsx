@@ -55,6 +55,25 @@ function normalizeHari(raw: string): string {
   return found || '';
 }
 
+function normalizeTanggalLahir(raw: string): string {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const dmy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmy) {
+    return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  }
+  return s.slice(0, 20);
+}
+
+function normalizeJenisKelamin(raw: string): string {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return '';
+  if (s === 'l' || s.startsWith('laki') || s === 'pria' || s === 'm' || s === 'lk') return 'Laki-laki';
+  if (s === 'p' || s.startsWith('peremp') || s === 'wanita' || s === 'f' || s === 'pr') return 'Perempuan';
+  return '';
+}
+
 export default function ImportTableModal({
   mode,
   kelasId,
@@ -83,6 +102,9 @@ export default function ImportTableModal({
     const hasHeader =
       firstMap.nama !== undefined ||
       firstMap.nis !== undefined ||
+      firstMap.tempatLahir !== undefined ||
+      firstMap.tanggalLahir !== undefined ||
+      firstMap.jenisKelamin !== undefined ||
       firstMap.noSiswa !== undefined ||
       firstMap.noOrtu !== undefined ||
       firstMap.alamat !== undefined ||
@@ -97,8 +119,29 @@ export default function ImportTableModal({
     const col = hasHeader
       ? firstMap
       : looksNumbered
-      ? { no: 0, nama: 1, nis: 2, noSiswa: 3, noOrtu: 4, alamat: 5, kesehatan: 6 }
-      : { nama: 0, nis: 1, noSiswa: 2, noOrtu: 3, alamat: 4, kesehatan: 5 };
+      ? {
+          no: 0,
+          nis: 1,
+          nama: 2,
+          tempatLahir: 3,
+          tanggalLahir: 4,
+          jenisKelamin: 5,
+          alamat: 6,
+          noSiswa: 7,
+          noOrtu: 8,
+          kesehatan: 9
+        }
+      : {
+          nis: 0,
+          nama: 1,
+          tempatLahir: 2,
+          tanggalLahir: 3,
+          jenisKelamin: 4,
+          alamat: 5,
+          noSiswa: 6,
+          noOrtu: 7,
+          kesehatan: 8
+        };
 
     const seenNisBatch = new Set<string>();
     const allSiswa = db.Siswa || [];
@@ -107,6 +150,9 @@ export default function ImportTableModal({
       .map((r, idx) => {
         const nama = String((col.nama !== undefined ? r[col.nama] : r[0]) || '').trim();
         const nis = String((col.nis !== undefined ? r[col.nis] : '') || '').trim();
+        const tempatLahir = String((col.tempatLahir !== undefined ? r[col.tempatLahir] : '') || '').trim();
+        const tanggalLahir = normalizeTanggalLahir(col.tanggalLahir !== undefined ? r[col.tanggalLahir] || '' : '');
+        const jenisKelamin = normalizeJenisKelamin(col.jenisKelamin !== undefined ? r[col.jenisKelamin] || '' : '');
         const noSiswa = String((col.noSiswa !== undefined ? r[col.noSiswa] : '') || '').trim();
         const noOrtu = String((col.noOrtu !== undefined ? r[col.noOrtu] : '') || '').trim();
         const alamat = String((col.alamat !== undefined ? r[col.alamat] : '') || '').trim();
@@ -142,6 +188,9 @@ export default function ImportTableModal({
           existingId,
           nama,
           nis,
+          tempatLahir,
+          tanggalLahir,
+          jenisKelamin,
           noSiswa,
           noOrtu,
           alamat,
@@ -323,9 +372,9 @@ export default function ImportTableModal({
     const safeKelas = (kelasNama || 'Kelas').replace(/[^a-zA-Z0-9_-]/g, '_');
     if (mode === 'siswa') {
       downloadCsv(`Template_Siswa_${safeKelas}.csv`, [
-        ['No', 'Nama Lengkap', 'NIS', 'No. WA Siswa', 'No. WA Orang Tua', 'Alamat', 'Kesehatan'],
-        ['1', 'Andi Pratama', '102601', '081234567801', '081398765001', 'Jl. Melati No. 5', 'Normal'],
-        ['2', 'Siti Rahma', '102602', '081234567802', '081398765002', 'Jl. Kenanga No. 12', 'Asma ringan']
+        ['No', 'NIS', 'Nama Lengkap', 'Tempat Lahir', 'Tanggal Lahir', 'Jenis Kelamin', 'Alamat', 'No. HP Siswa', 'No. HP Orang Tua', 'Kesehatan'],
+        ['1', '102601', 'Andi Pratama', 'Bandung', '2010-03-14', 'Laki-laki', 'Jl. Melati No. 5', '081234567801', '081398765001', 'Normal'],
+        ['2', '102602', 'Siti Rahma', 'Bogor', '2010-05-22', 'Perempuan', 'Jl. Kenanga No. 12', '081234567802', '081398765002', 'Asma ringan']
       ]);
       showToast('Template CSV Siswa berhasil diunduh');
       return;
@@ -400,6 +449,9 @@ export default function ImportTableModal({
               Kelas: kelasId,
               Nama: item.nama,
               NIS: item.nis,
+              TempatLahir: item.tempatLahir,
+              TanggalLahir: item.tanggalLahir,
+              JenisKelamin: item.jenisKelamin,
               NoSiswa: item.noSiswa,
               NoOrtu: item.noOrtu,
               Alamat: item.alamat,
@@ -413,6 +465,9 @@ export default function ImportTableModal({
                 ...nextSiswa[idx],
                 Nama: item.nama,
                 NIS: item.nis,
+                TempatLahir: item.tempatLahir || nextSiswa[idx].TempatLahir || '',
+                TanggalLahir: item.tanggalLahir || nextSiswa[idx].TanggalLahir || '',
+                JenisKelamin: item.jenisKelamin || nextSiswa[idx].JenisKelamin || '',
                 NoSiswa: item.noSiswa || nextSiswa[idx].NoSiswa || '',
                 NoOrtu: item.noOrtu || nextSiswa[idx].NoOrtu || '',
                 Alamat: item.alamat || nextSiswa[idx].Alamat || '',
@@ -500,9 +555,9 @@ export default function ImportTableModal({
 
   const formatHintMap: Record<ImportTableMode, { cols: string[]; placeholder: string }> = {
     siswa: {
-      cols: ['Nama Lengkap', 'NIS', 'No. WA Siswa', 'No. WA Orang Tua', 'Alamat', 'Kesehatan'],
+      cols: ['NIS', 'Nama Lengkap', 'Tempat Lahir', 'Tanggal Lahir', 'Jenis Kelamin', 'Alamat', 'No. HP Siswa', 'No. HP Orang Tua', 'Kesehatan'],
       placeholder:
-        'Nama Lengkap;NIS;No. WA Siswa;No. WA Orang Tua;Alamat;Kesehatan\nAndi Pratama;102601;081234567801;081398765001;Jl. Melati No. 5;Normal'
+        'NIS;Nama Lengkap;Tempat Lahir;Tanggal Lahir;Jenis Kelamin;Alamat;No. HP Siswa;No. HP Orang Tua;Kesehatan\n102601;Andi Pratama;Bandung;2010-03-14;Laki-laki;Jl. Melati No. 5;081234567801;081398765001;Normal'
     },
     nilai: {
       cols: ['No', 'NIS', 'Nama Siswa', 'Sikap', 'Tugas', 'Proyek', 'UTS', 'UAS'],
@@ -631,11 +686,13 @@ export default function ImportTableModal({
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
                       <tr>
                         <th className="py-2 px-3">#</th>
-                        <th className="py-2 px-3">Nama Lengkap</th>
                         <th className="py-2 px-3">NIS</th>
-                        <th className="py-2 px-3">No. WA Siswa</th>
-                        <th className="py-2 px-3">No. WA Orang Tua</th>
+                        <th className="py-2 px-3">Nama Lengkap</th>
+                        <th className="py-2 px-3">Tempat, Tgl Lahir</th>
+                        <th className="py-2 px-3">JK</th>
                         <th className="py-2 px-3">Alamat</th>
+                        <th className="py-2 px-3">No. HP Siswa</th>
+                        <th className="py-2 px-3">No. HP Orang Tua</th>
                         <th className="py-2 px-3">Kesehatan</th>
                         <th className="py-2 px-3">Status</th>
                       </tr>
@@ -644,11 +701,15 @@ export default function ImportTableModal({
                       {parsedSiswa.map(row => (
                         <tr key={row.rowNum} className="hover:bg-slate-50">
                           <td className="py-1.5 px-3 text-slate-400 tabular-nums">{row.rowNum}</td>
-                          <td className="py-1.5 px-3 font-semibold text-slate-900">{row.nama}</td>
                           <td className="py-1.5 px-3 font-mono text-indigo-700">{row.nis || '-'}</td>
+                          <td className="py-1.5 px-3 font-semibold text-slate-900">{row.nama}</td>
+                          <td className="py-1.5 px-3 text-slate-600 whitespace-nowrap">
+                            {[row.tempatLahir, row.tanggalLahir].filter(Boolean).join(', ') || '-'}
+                          </td>
+                          <td className="py-1.5 px-3 text-slate-600 whitespace-nowrap">{row.jenisKelamin || '-'}</td>
+                          <td className="py-1.5 px-3 text-slate-600">{row.alamat || '-'}</td>
                           <td className="py-1.5 px-3 font-mono text-slate-600">{row.noSiswa || '-'}</td>
                           <td className="py-1.5 px-3 font-mono text-slate-600">{row.noOrtu || '-'}</td>
-                          <td className="py-1.5 px-3 text-slate-600">{row.alamat || '-'}</td>
                           <td className="py-1.5 px-3 text-slate-600">{row.kesehatan}</td>
                           <td className="py-1.5 px-3 whitespace-nowrap">
                             {row.status === 'baru' && (

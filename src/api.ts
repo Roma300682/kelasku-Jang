@@ -296,8 +296,19 @@ export function petaKolom(kepala: string[]): Record<string, number> {
     if (!n) return;
     if (n === 'no' || n === 'nomor' || n === 'urut') p.no = i;
     else if (n === 'nis' || n === 'nisn' || n === 'nisnisn') p.nis = i;
-    else if (n === 'nosiswa' || n === 'nowasiswa' || n === 'wasiswa' || n === 'hpsiswa' || n === 'telpsiswa' || n === 'teleponsiswa') p.noSiswa = i;
-    else if (n === 'noortu' || n === 'nowaortu' || n === 'nowaorangtua' || n === 'waortu' || n === 'waorangtua' || n === 'kontakortu' || n === 'kontakorangtua' || n === 'hportu' || n === 'nohportu') p.noOrtu = i;
+    else if (n === 'tempatlahir' || n === 'tmplahir' || n === 'kotalahir') p.tempatLahir = i;
+    else if (n === 'tanggallahir' || n === 'tgllahir' || n === 'lahir') p.tanggalLahir = i;
+    else if (n === 'jeniskelamin' || n === 'jk' || n === 'kelamin' || n === 'gender') p.jenisKelamin = i;
+    else if (
+      n === 'nosiswa' || n === 'nowasiswa' || n === 'wasiswa' ||
+      n === 'hpsiswa' || n === 'nohpsiswa' || n === 'nohapesiswa' || n === 'hapesewa' ||
+      n === 'telpsiswa' || n === 'teleponsiswa'
+    ) p.noSiswa = i;
+    else if (
+      n === 'noortu' || n === 'nowaortu' || n === 'nowaorangtua' ||
+      n === 'waortu' || n === 'waorangtua' || n === 'kontakortu' || n === 'kontakorangtua' ||
+      n === 'hportu' || n === 'nohportu' || n === 'nohporangtua' || n === 'nohapeortu' || n === 'nohapeorangtua'
+    ) p.noOrtu = i;
     else if (n === 'nama' || n === 'namalengkap' || n === 'namasiswa' || n === 'siswanama') p.nama = i;
     else if (n.includes('alamat')) p.alamat = i;
     else if (n.includes('kesehatan') || n.includes('sehat') || n.includes('riwayat')) p.kesehatan = i;

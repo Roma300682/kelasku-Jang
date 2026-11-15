@@ -133,7 +133,12 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
-  Link2
+  Link2,
+  User,
+  MapPin,
+  Phone,
+  HeartPulse,
+  Calendar
 } from 'lucide-react';
 
 const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
@@ -494,6 +499,62 @@ export default function App() {
     setAbsNote(note);
   }, [K, absDate, db.Absensi]);
 
+  // Silent cross-tab & window-focus sync so Student Portal profile changes appear in Admin immediately
+  const lastSilentSyncRef = React.useRef(0);
+  const silentSyncNow = useCallback(async () => {
+    if (!token) return;
+    const now = Date.now();
+    if (now - lastSilentSyncRef.current < 1500) return;
+    lastSilentSyncRef.current = now;
+    try {
+      if (role === 'siswa') {
+        const pData = await callRaw('api_loadSiswa', token);
+        setPortal(pData);
+      } else {
+        const baru = await callRaw('api_load', token, true);
+        setDb(baru);
+        setPeran(baru.peran || 'admin');
+      }
+    } catch (_) {}
+  }, [token, role]);
+
+  useEffect(() => {
+    if (!token) return;
+    let bc: BroadcastChannel | null = null;
+    const trigger = () => {
+      void silentSyncNow();
+    };
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        bc = new BroadcastChannel('kelasku_sync');
+        bc.onmessage = trigger;
+      }
+    } catch (_) {}
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'mk_sync_ping') trigger();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') trigger();
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', trigger);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      try {
+        bc?.close();
+      } catch (_) {}
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', trigger);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [token, silentSyncNow]);
+
+  useEffect(() => {
+    if (token && role !== 'siswa' && tab === 'sis') {
+      void silentSyncNow();
+    }
+  }, [tab, token, role, silentSyncNow]);
+
   // Keyboard navigation for slide presentation
   useEffect(() => {
     if (!presState) return;
@@ -770,6 +831,16 @@ export default function App() {
       showToast('Menyimpan perubahan…', 6000);
       for (const n of sheetNames) {
         await apiCall('api_saveSheet', n, nextDb[n]);
+      }
+      if (sheetNames.includes('Siswa') || sheetNames.includes('Kelas')) {
+        try {
+          if (typeof BroadcastChannel !== 'undefined') {
+            const bc = new BroadcastChannel('kelasku_sync');
+            bc.postMessage({ type: 'siswa', ts: Date.now() });
+            bc.close();
+          }
+          localStorage.setItem('mk_sync_ping', JSON.stringify({ type: 'siswa', ts: Date.now() }));
+        } catch (_) {}
       }
       showToast('Perubahan tersimpan');
       return true;
@@ -2755,38 +2826,219 @@ export default function App() {
   }
 
   // 3. SISWA
+  function openModalProfilSiswa(s: any) {
+    const klsNama = (db.Kelas || []).find((x: any) => x.ID === s.Kelas)?.Nama || kelasObj.Nama || '-';
+    const klsJur = (db.Kelas || []).find((x: any) => x.ID === s.Kelas)?.Jurusan || kelasObj.Jurusan || '';
+    const hasPin = (db.punyaPIN || []).includes(s.ID);
+    const noSw = s.NoSiswa || s.KontakOrtu || '';
+    const noOrtu = s.NoOrtu || '';
+    const ttlStr = [s.TempatLahir || '', s.TanggalLahir ? tglIndo(s.TanggalLahir) : '']
+      .filter(Boolean)
+      .join(', ');
+
+    setModalContent({
+      title: `Profil Biodata Siswa — ${s.Nama || ''}`,
+      wide: true,
+      render: () => (
+        <div className="space-y-4">
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 via-orange-50 to-indigo-50 border border-amber-200/80 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div
+                className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${avatarColorFor(s.Nama || 'S')} text-white text-lg font-bold flex items-center justify-center shrink-0 shadow-sm`}
+              >
+                {String(s.Nama || 'S').slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-base font-bold text-slate-900 truncate">{s.Nama || '-'}</h4>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 mt-0.5">
+                  <span className="font-mono font-semibold text-indigo-700">NIS: {s.NIS || '-'}</span>
+                  <span>·</span>
+                  <span>
+                    Kelas {klsNama}
+                    {klsJur ? ` (${klsJur})` : ''}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <span
+              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border ${
+                hasPin
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-amber-50 text-amber-700 border-amber-200'
+              }`}
+            >
+              {hasPin ? 'PIN Portal Aktif' : 'Belum Ada PIN'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+              <div className="text-[11px] font-semibold text-slate-500">NIS / NISN</div>
+              <div className="font-mono font-bold text-indigo-700 mt-0.5">{s.NIS || '-'}</div>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+              <div className="text-[11px] font-semibold text-slate-500">Nama Lengkap</div>
+              <div className="font-bold text-slate-900 mt-0.5">{s.Nama || '-'}</div>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+              <div className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                <Calendar className="w-3 h-3 text-indigo-500" /> Tempat &amp; Tanggal Lahir
+              </div>
+              <div className="font-semibold text-slate-800 mt-0.5">{ttlStr || '-'}</div>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+              <div className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                <User className="w-3 h-3 text-amber-600" /> Jenis Kelamin
+              </div>
+              <div className="font-semibold text-slate-800 mt-0.5">{s.JenisKelamin || '-'}</div>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 sm:col-span-2">
+              <div className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                <MapPin className="w-3 h-3 text-rose-500" /> Alamat Tempat Tinggal
+              </div>
+              <div className="font-medium text-slate-800 mt-0.5">{s.Alamat || '-'}</div>
+            </div>
+            <div className="p-3 rounded-xl bg-sky-50/70 border border-sky-200/80 flex items-center justify-between gap-2">
+              <div>
+                <div className="text-[11px] font-semibold text-sky-700 flex items-center gap-1">
+                  <Phone className="w-3 h-3" /> No. HP Siswa
+                </div>
+                <div className="font-mono font-bold text-slate-900 mt-0.5">{noSw || '-'}</div>
+              </div>
+              {noSw && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModalContent(null);
+                    setWaBlastState({ open: true, studentId: s.ID, targetType: 'siswa' });
+                  }}
+                  className="px-2.5 py-1 text-[11px] font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <MessageCircle className="w-3 h-3" /> WA
+                </button>
+              )}
+            </div>
+            <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200/80 flex items-center justify-between gap-2">
+              <div>
+                <div className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1">
+                  <Phone className="w-3 h-3" /> No. HP Orang Tua
+                </div>
+                <div className="font-mono font-bold text-slate-900 mt-0.5">{noOrtu || '-'}</div>
+              </div>
+              {noOrtu && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModalContent(null);
+                    setWaBlastState({ open: true, studentId: s.ID, targetType: 'ortu' });
+                  }}
+                  className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <MessageCircle className="w-3 h-3" /> WA
+                </button>
+              )}
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 sm:col-span-2">
+              <div className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                <HeartPulse className="w-3 h-3 text-rose-500" /> Catatan Kesehatan
+              </div>
+              <div className="font-medium text-slate-800 mt-0.5">{s.Kesehatan || 'Normal'}</div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setModalContent(null)}
+              className="px-4 py-2 text-xs font-semibold bg-slate-100 text-slate-700 rounded-xl cursor-pointer"
+            >
+              Tutup
+            </button>
+            <button
+              type="button"
+              onClick={() => openModalSiswa(s.ID)}
+              className="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <Edit3 className="w-3.5 h-3.5" /> Edit Biodata Siswa
+            </button>
+          </div>
+        </div>
+      )
+    });
+  }
+
   function openModalSiswa(id?: string) {
     const s = (db.Siswa || []).find((x: any) => x.ID === id) || {};
     let nama = s.Nama || '';
     let nis = s.NIS || '';
+    let tempatLahir = s.TempatLahir || '';
+    let tanggalLahir = s.TanggalLahir || '';
+    let jenisKelamin = s.JenisKelamin || '';
     let noSiswa = s.NoSiswa || s.KontakOrtu || '';
     let noOrtu = s.NoOrtu || '';
     let alm = s.Alamat || '';
     let kes = s.Kesehatan || '';
 
     setModalContent({
-      title: id ? 'Edit Data Siswa' : 'Tambah Siswa Baru',
+      title: id ? 'Edit Data & Profil Siswa' : 'Tambah Siswa Baru',
+      wide: true,
       render: () => (
         <div className="space-y-3">
-          <label className="block text-xs font-semibold text-slate-700">
-            Nama Lengkap
-            <input
-              defaultValue={nama}
-              onChange={e => (nama = e.target.value)}
-              className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-            />
-          </label>
-          <label className="block text-xs font-semibold text-slate-700">
-            NIS / NISN (Nama pengguna login siswa)
-            <input
-              defaultValue={nis}
-              onChange={e => (nis = e.target.value)}
-              className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono"
-            />
-          </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block text-xs font-semibold text-slate-700">
-              No. WA Siswa
+              NIS / NISN (Username Portal Siswa)
+              <input
+                defaultValue={nis}
+                placeholder="102601"
+                onChange={e => (nis = e.target.value)}
+                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono"
+              />
+            </label>
+            <label className="block text-xs font-semibold text-slate-700">
+              Nama Lengkap
+              <input
+                defaultValue={nama}
+                placeholder="Nama lengkap siswa"
+                onChange={e => (nama = e.target.value)}
+                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+              />
+            </label>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <label className="block text-xs font-semibold text-slate-700">
+              Tempat Lahir
+              <input
+                defaultValue={tempatLahir}
+                placeholder="Bandung"
+                onChange={e => (tempatLahir = e.target.value)}
+                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+              />
+            </label>
+            <label className="block text-xs font-semibold text-slate-700">
+              Tanggal Lahir
+              <input
+                type="date"
+                defaultValue={tanggalLahir}
+                onChange={e => (tanggalLahir = e.target.value)}
+                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+              />
+            </label>
+            <label className="block text-xs font-semibold text-slate-700">
+              Jenis Kelamin
+              <select
+                defaultValue={jenisKelamin}
+                onChange={e => (jenisKelamin = e.target.value)}
+                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+              >
+                <option value="">-- Pilih --</option>
+                <option value="Laki-laki">Laki-laki</option>
+                <option value="Perempuan">Perempuan</option>
+              </select>
+            </label>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block text-xs font-semibold text-slate-700">
+              No. HP / WA Siswa
               <input
                 defaultValue={noSiswa}
                 placeholder="0812..."
@@ -2795,7 +3047,7 @@ export default function App() {
               />
             </label>
             <label className="block text-xs font-semibold text-slate-700">
-              No. WA Orang Tua
+              No. HP / WA Orang Tua
               <input
                 defaultValue={noOrtu}
                 placeholder="0813..."
@@ -2808,6 +3060,7 @@ export default function App() {
             Alamat Tempat Tinggal
             <input
               defaultValue={alm}
+              placeholder="Jl. Nama Jalan No. ..."
               onChange={e => (alm = e.target.value)}
               className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
             />
@@ -2816,6 +3069,7 @@ export default function App() {
             Catatan Kesehatan
             <input
               defaultValue={kes}
+              placeholder="Normal / riwayat khusus"
               onChange={e => (kes = e.target.value)}
               className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
             />
@@ -2847,6 +3101,9 @@ export default function App() {
                     ...nextSiswa[idx],
                     Nama: nama.trim(),
                     NIS: nisClean,
+                    TempatLahir: tempatLahir.trim(),
+                    TanggalLahir: tanggalLahir.trim(),
+                    JenisKelamin: jenisKelamin,
                     NoSiswa: noSiswa.trim(),
                     NoOrtu: noOrtu.trim(),
                     Alamat: alm.trim(),
@@ -2858,6 +3115,9 @@ export default function App() {
                     Kelas: K,
                     Nama: nama.trim(),
                     NIS: nisClean,
+                    TempatLahir: tempatLahir.trim(),
+                    TanggalLahir: tanggalLahir.trim(),
+                    JenisKelamin: jenisKelamin,
                     NoSiswa: noSiswa.trim(),
                     NoOrtu: noOrtu.trim(),
                     Alamat: alm.trim(),
@@ -3217,14 +3477,28 @@ export default function App() {
                     ? `"${s.replace(/"/g, '""')}"`
                     : s;
                 };
-                const header = ['No', 'Nama Lengkap', 'NIS', 'No. WA Siswa', 'No. WA Orang Tua', 'Alamat', 'Kesehatan'];
+                const header = [
+                  'No',
+                  'NIS',
+                  'Nama Lengkap',
+                  'Tempat Lahir',
+                  'Tanggal Lahir',
+                  'Jenis Kelamin',
+                  'Alamat',
+                  'No. HP Siswa',
+                  'No. HP Orang Tua',
+                  'Kesehatan'
+                ];
                 const rows = siswaK.map((s: any, idx: number) => [
                   String(idx + 1),
-                  String(s.Nama || ''),
                   String(s.NIS || ''),
+                  String(s.Nama || ''),
+                  String(s.TempatLahir || ''),
+                  String(s.TanggalLahir || ''),
+                  String(s.JenisKelamin || ''),
+                  String(s.Alamat || ''),
                   String(s.NoSiswa || s.KontakOrtu || ''),
                   String(s.NoOrtu || ''),
-                  String(s.Alamat || ''),
                   String(s.Kesehatan || 'Normal')
                 ]);
                 const csv = '\uFEFF' + [header, ...rows].map(r => r.map(esc).join(';')).join('\r\n');
@@ -3264,26 +3538,44 @@ export default function App() {
           </div>
         </div>
 
+        <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>
+              Biodata yang diisi atau diperbarui siswa di Portal Siswa otomatis tersinkron ke tabel Admin ini.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={muatUlang}
+            className="px-2.5 py-1 text-[11px] font-semibold bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg inline-flex items-center gap-1 cursor-pointer"
+          >
+            <RefreshCw className="w-3 h-3" /> Segarkan Data
+          </button>
+        </div>
+
         <div className="bg-white border border-amber-100 rounded-2xl overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead className="bg-gradient-to-r from-amber-50 to-orange-50/70 border-b border-amber-100 text-amber-950">
                 <tr>
-                  <th className="py-3 px-4 w-10">#</th>
-                  <th className="py-3 px-4">Nama Lengkap</th>
-                  <th className="py-3 px-4">NIS</th>
-                  <th className="py-3 px-4">No. WA Siswa</th>
-                  <th className="py-3 px-4">No. WA Orang Tua</th>
-                  <th className="py-3 px-4">Alamat</th>
-                  <th className="py-3 px-4">Kesehatan</th>
-                  <th className="py-3 px-4">Status PIN Portal</th>
-                  <th className="py-3 px-4 text-right">Aksi</th>
+                  <th className="py-3 px-3.5 w-9">#</th>
+                  <th className="py-3 px-3.5">NIS</th>
+                  <th className="py-3 px-3.5">Nama Lengkap</th>
+                  <th className="py-3 px-3.5">Tempat, Tgl Lahir</th>
+                  <th className="py-3 px-3.5">JK</th>
+                  <th className="py-3 px-3.5">Alamat</th>
+                  <th className="py-3 px-3.5">No. HP Siswa</th>
+                  <th className="py-3 px-3.5">No. HP Orang Tua</th>
+                  <th className="py-3 px-3.5">Kesehatan</th>
+                  <th className="py-3 px-3.5">Status PIN</th>
+                  <th className="py-3 px-3.5 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {siswaK.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-12 px-4 text-center text-xs text-slate-500">
+                    <td colSpan={11} className="py-12 px-4 text-center text-xs text-slate-500">
                       <div className="space-y-2">
                         <p>Belum ada siswa terdaftar di kelas {kelasObj.Nama || 'ini'}.</p>
                         <button
@@ -3301,21 +3593,54 @@ export default function App() {
                     const hasPin = (db.punyaPIN || []).includes(s.ID);
                     const noSw = s.NoSiswa || s.KontakOrtu || '';
                     const noOrtu = s.NoOrtu || '';
+                    const ttlText = [
+                      s.TempatLahir || '',
+                      s.TanggalLahir ? tglIndo(s.TanggalLahir) : ''
+                    ]
+                      .filter(Boolean)
+                      .join(', ');
                     return (
                       <tr key={s.ID} className="hover:bg-amber-50/30">
-                        <td className="py-2.5 px-4 tabular-nums text-slate-400">{i + 1}</td>
-                        <td className="py-2.5 px-4">
-                          <div className="flex items-center gap-2.5">
+                        <td className="py-2.5 px-3.5 tabular-nums text-slate-400">{i + 1}</td>
+                        <td className="py-2.5 px-3.5 font-mono tabular-nums text-indigo-700 font-semibold whitespace-nowrap">
+                          {s.NIS || '-'}
+                        </td>
+                        <td className="py-2.5 px-3.5">
+                          <button
+                            type="button"
+                            onClick={() => openModalProfilSiswa(s)}
+                            className="flex items-center gap-2.5 text-left group cursor-pointer"
+                          >
                             <div className={`w-7 h-7 rounded-lg bg-gradient-to-br ${avatarColorFor(s.Nama)} text-white text-xs font-bold flex items-center justify-center shrink-0`}>
                               {s.Nama.slice(0, 1).toUpperCase()}
                             </div>
-                            <span className="font-semibold text-slate-900">{s.Nama}</span>
-                          </div>
+                            <span className="font-semibold text-slate-900 group-hover:text-indigo-700 group-hover:underline">
+                              {s.Nama}
+                            </span>
+                          </button>
                         </td>
-                        <td className="py-2.5 px-4 font-mono tabular-nums text-indigo-700 font-medium">
-                          {s.NIS || '-'}
+                        <td className="py-2.5 px-3.5 text-slate-600 whitespace-nowrap">
+                          {ttlText || '-'}
                         </td>
-                        <td className="py-2.5 px-4 tabular-nums text-slate-600">
+                        <td className="py-2.5 px-3.5 whitespace-nowrap">
+                          {s.JenisKelamin ? (
+                            <span
+                              className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${
+                                s.JenisKelamin === 'Perempuan'
+                                  ? 'bg-pink-50 text-pink-700 border border-pink-200'
+                                  : 'bg-sky-50 text-sky-700 border border-sky-200'
+                              }`}
+                            >
+                              {s.JenisKelamin === 'Laki-laki' ? 'L' : 'P'}
+                            </span>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3.5 text-slate-600 max-w-[180px] truncate" title={s.Alamat || ''}>
+                          {s.Alamat || '-'}
+                        </td>
+                        <td className="py-2.5 px-3.5 tabular-nums text-slate-600 whitespace-nowrap">
                           {noSw ? (
                             <div className="flex items-center gap-1.5">
                               <span className="font-mono text-[11px]">{noSw}</span>
@@ -3323,7 +3648,7 @@ export default function App() {
                                 type="button"
                                 onClick={() => setWaBlastState({ open: true, studentId: s.ID, targetType: 'siswa' })}
                                 title="Kirim WhatsApp ke Siswa"
-                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-md whitespace-nowrap cursor-pointer"
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-md whitespace-nowrap cursor-pointer"
                               >
                                 <MessageCircle className="w-3 h-3" /> WA
                               </button>
@@ -3332,7 +3657,7 @@ export default function App() {
                             '-'
                           )}
                         </td>
-                        <td className="py-2.5 px-4 tabular-nums text-slate-600">
+                        <td className="py-2.5 px-3.5 tabular-nums text-slate-600 whitespace-nowrap">
                           {noOrtu ? (
                             <div className="flex items-center gap-1.5">
                               <span className="font-mono text-[11px]">{noOrtu}</span>
@@ -3340,7 +3665,7 @@ export default function App() {
                                 type="button"
                                 onClick={() => setWaBlastState({ open: true, studentId: s.ID, targetType: 'ortu' })}
                                 title="Kirim WhatsApp ke Orang Tua"
-                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-md whitespace-nowrap cursor-pointer"
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-md whitespace-nowrap cursor-pointer"
                               >
                                 <MessageCircle className="w-3 h-3" /> WA
                               </button>
@@ -3349,28 +3674,35 @@ export default function App() {
                             '-'
                           )}
                         </td>
-                        <td className="py-2.5 px-4 text-slate-600">{s.Alamat || '-'}</td>
-                        <td className="py-2.5 px-4 text-slate-600">{s.Kesehatan || '-'}</td>
-                        <td className="py-2.5 px-4 whitespace-nowrap">
+                        <td className="py-2.5 px-3.5 text-slate-600 whitespace-nowrap">{s.Kesehatan || 'Normal'}</td>
+                        <td className="py-2.5 px-3.5 whitespace-nowrap">
                           <span
                             className={`font-semibold ${
                               hasPin ? 'text-emerald-700' : 'text-amber-700'
                             }`}
                           >
-                            {hasPin ? 'PIN Aktif' : 'Belum ada PIN'}
+                            {hasPin ? 'Aktif' : 'Belum'}
                           </span>
-                          <span className="mx-1.5 text-slate-300">·</span>
+                          <span className="mx-1 text-slate-300">·</span>
                           <button
                             onClick={() => handleAturPin(s.ID)}
-                            className="text-indigo-600 hover:underline font-semibold"
+                            className="text-indigo-600 hover:underline font-semibold cursor-pointer"
                           >
-                            Reset PIN
+                            Reset
                           </button>
                         </td>
-                        <td className="py-2.5 px-4 text-right whitespace-nowrap space-x-2">
+                        <td className="py-2.5 px-3.5 text-right whitespace-nowrap space-x-2">
                           <button
+                            type="button"
+                            onClick={() => openModalProfilSiswa(s)}
+                            className="text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+                          >
+                            Profil
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => openModalSiswa(s.ID)}
-                            className="text-sky-600 hover:text-sky-800 font-semibold"
+                            className="text-sky-600 hover:text-sky-800 font-semibold cursor-pointer"
                           >
                             Edit
                           </button>

@@ -159,30 +159,30 @@ async function createSeedLocalDb(): Promise<LocalDb> {
   ];
 
   const siswaList = [
-    { ID: 'sis_01', Kelas: 'kls_10a', Nama: 'Adinda Putri Maharani', NIS: '102601', NoSiswa: '081234567801', NoOrtu: '081398765001', Alamat: 'Jl. Merdeka No. 12', Kesehatan: 'Normal' },
-    { ID: 'sis_02', Kelas: 'kls_10a', Nama: 'Bagas Pratama Wijaya', NIS: '102602', NoSiswa: '081234567802', NoOrtu: '081398765002', Alamat: 'Jl. Sudirman No. 45', Kesehatan: 'Alergi debu' },
-    { ID: 'sis_03', Kelas: 'kls_10a', Nama: 'Citra Kirana Lestari', NIS: '102603', NoSiswa: '081234567803', NoOrtu: '081398765003', Alamat: 'Jl. Diponegoro No. 8', Kesehatan: 'Normal' },
-    { ID: 'sis_04', Kelas: 'kls_10a', Nama: 'Dimas Aditya Saputra', NIS: '102604', NoSiswa: '081234567804', NoOrtu: '081398765004', Alamat: 'Jl. Gatot Subroto No. 19', Kesehatan: 'Minus mata (-1.5)' },
-    { ID: 'sis_05', Kelas: 'kls_10a', Nama: 'Eka Fitriani Rahmawati', NIS: '102605', NoSiswa: '081234567805', NoOrtu: '081398765005', Alamat: 'Jl. Ahmad Yani No. 33', Kesehatan: 'Normal' },
-    { ID: 'sis_06', Kelas: 'kls_10a', Nama: 'Fajar Nugroho Hidayat', NIS: '102606', NoSiswa: '081234567806', NoOrtu: '081398765006', Alamat: 'Jl. Kartini No. 7', Kesehatan: 'Asma ringan' },
-    { ID: 'sis_07', Kelas: 'kls_10a', Nama: 'Gita Nadia Permata', NIS: '102607', NoSiswa: '081234567807', NoOrtu: '081398765007', Alamat: 'Jl. Imam Bonjol No. 21', Kesehatan: 'Normal' },
-    { ID: 'sis_08', Kelas: 'kls_10a', Nama: 'Hafiz Ramadhan Putra', NIS: '102608', NoSiswa: '081234567808', NoOrtu: '081398765008', Alamat: 'Jl. Pahlawan No. 54', Kesehatan: 'Normal' },
-    { ID: 'sis_09', Kelas: 'kls_10a', Nama: 'Indah Kusuma Wardani', NIS: '102609', NoSiswa: '081234567809', NoOrtu: '081398765009', Alamat: 'Jl. Veteran No. 14', Kesehatan: 'Normal' },
-    { ID: 'sis_10', Kelas: 'kls_10a', Nama: 'Joko Susilo Wibowo', NIS: '102610', NoSiswa: '081234567810', NoOrtu: '081398765010', Alamat: 'Jl. Pemuda No. 28', Kesehatan: 'Normal' },
-    { ID: 'sis_11', Kelas: 'kls_10a', Nama: 'Kartika Sari Dewi', NIS: '102611', NoSiswa: '081234567811', NoOrtu: '081398765011', Alamat: 'Jl. Cendrawasih No. 9', Kesehatan: 'Normal' },
-    { ID: 'sis_12', Kelas: 'kls_10a', Nama: 'Luthfi Hakim Maulana', NIS: '102612', NoSiswa: '081234567812', NoOrtu: '081398765012', Alamat: 'Jl. Melati No. 3', Kesehatan: 'Normal' },
-    { ID: 'sis_13', Kelas: 'kls_10b', Nama: 'Muhammad Rizky Pratama', NIS: '102613', NoSiswa: '081234567813', NoOrtu: '081398765013', Alamat: 'Jl. Kenanga No. 11', Kesehatan: 'Normal' },
-    { ID: 'sis_14', Kelas: 'kls_10b', Nama: 'Nabila Azzahra Putri', NIS: '102614', NoSiswa: '081234567814', NoOrtu: '081398765014', Alamat: 'Jl. Anggrek No. 20', Kesehatan: 'Normal' },
-    { ID: 'sis_15', Kelas: 'kls_10b', Nama: 'Oka Mahendra Kusuma', NIS: '102615', NoSiswa: '081234567815', NoOrtu: '081398765015', Alamat: 'Jl. Dahlia No. 6', Kesehatan: 'Normal' },
-    { ID: 'sis_16', Kelas: 'kls_10b', Nama: 'Putri Salsabila Ramadhani', NIS: '102616', NoSiswa: '081234567816', NoOrtu: '081398765016', Alamat: 'Jl. Flamboyan No. 18', Kesehatan: 'Normal' },
-    { ID: 'sis_17', Kelas: 'kls_10b', Nama: 'Qori Firmansyah', NIS: '102617', NoSiswa: '081234567817', NoOrtu: '081398765017', Alamat: 'Jl. Teratai No. 4', Kesehatan: 'Normal' },
-    { ID: 'sis_18', Kelas: 'kls_10b', Nama: 'Rania Safitri Handayani', NIS: '102618', NoSiswa: '081234567818', NoOrtu: '081398765018', Alamat: 'Jl. Kamboja No. 15', Kesehatan: 'Normal' },
-    { ID: 'sis_19', Kelas: 'kls_11a', Nama: 'Raka Danuarta', NIS: '112601', NoSiswa: '081234567819', NoOrtu: '081398765019', Alamat: 'Jl. Mawar No. 5', Kesehatan: 'Normal' },
-    { ID: 'sis_20', Kelas: 'kls_11a', Nama: 'Salsa Bila Khairunnisa', NIS: '112602', NoSiswa: '081234567820', NoOrtu: '081398765020', Alamat: 'Jl. Tulip No. 9', Kesehatan: 'Normal' },
-    { ID: 'sis_21', Kelas: 'kls_11a', Nama: 'Taufik Hidayatulloh', NIS: '112603', NoSiswa: '081234567821', NoOrtu: '081398765021', Alamat: 'Jl. Kutilang No. 22', Kesehatan: 'Normal' },
-    { ID: 'sis_22', Kelas: 'kls_11a', Nama: 'Ulfa Nurjanah', NIS: '112604', NoSiswa: '081234567822', NoOrtu: '081398765022', Alamat: 'Jl. Merpati No. 13', Kesehatan: 'Minus mata (-1.0)' },
-    { ID: 'sis_23', Kelas: 'kls_11a', Nama: 'Vino Alfarizi', NIS: '112605', NoSiswa: '081234567823', NoOrtu: '081398765023', Alamat: 'Jl. Rajawali No. 7', Kesehatan: 'Normal' },
-    { ID: 'sis_24', Kelas: 'kls_11a', Nama: 'Wulan Dari Puspita', NIS: '112606', NoSiswa: '081234567824', NoOrtu: '081398765024', Alamat: 'Jl. Elang No. 31', Kesehatan: 'Normal' }
+    { ID: 'sis_01', Kelas: 'kls_10a', Nama: 'Adinda Putri Maharani', NIS: '102601', TempatLahir: 'Bandung', TanggalLahir: '2010-03-14', JenisKelamin: 'Perempuan', NoSiswa: '081234567801', NoOrtu: '081398765001', Alamat: 'Jl. Merdeka No. 12', Kesehatan: 'Normal' },
+    { ID: 'sis_02', Kelas: 'kls_10a', Nama: 'Bagas Pratama Wijaya', NIS: '102602', TempatLahir: 'Bekasi', TanggalLahir: '2010-05-21', JenisKelamin: 'Laki-laki', NoSiswa: '081234567802', NoOrtu: '081398765002', Alamat: 'Jl. Sudirman No. 45', Kesehatan: 'Alergi debu' },
+    { ID: 'sis_03', Kelas: 'kls_10a', Nama: 'Citra Kirana Lestari', NIS: '102603', TempatLahir: 'Bogor', TanggalLahir: '2010-01-09', JenisKelamin: 'Perempuan', NoSiswa: '081234567803', NoOrtu: '081398765003', Alamat: 'Jl. Diponegoro No. 8', Kesehatan: 'Normal' },
+    { ID: 'sis_04', Kelas: 'kls_10a', Nama: 'Dimas Aditya Saputra', NIS: '102604', TempatLahir: 'Cimahi', TanggalLahir: '2010-07-18', JenisKelamin: 'Laki-laki', NoSiswa: '081234567804', NoOrtu: '081398765004', Alamat: 'Jl. Gatot Subroto No. 19', Kesehatan: 'Minus mata (-1.5)' },
+    { ID: 'sis_05', Kelas: 'kls_10a', Nama: 'Eka Fitriani Rahmawati', NIS: '102605', TempatLahir: 'Depok', TanggalLahir: '2010-09-03', JenisKelamin: 'Perempuan', NoSiswa: '081234567805', NoOrtu: '081398765005', Alamat: 'Jl. Ahmad Yani No. 33', Kesehatan: 'Normal' },
+    { ID: 'sis_06', Kelas: 'kls_10a', Nama: 'Fajar Nugroho Hidayat', NIS: '102606', TempatLahir: 'Garut', TanggalLahir: '2010-02-27', JenisKelamin: 'Laki-laki', NoSiswa: '081234567806', NoOrtu: '081398765006', Alamat: 'Jl. Kartini No. 7', Kesehatan: 'Asma ringan' },
+    { ID: 'sis_07', Kelas: 'kls_10a', Nama: 'Gita Nadia Permata', NIS: '102607', TempatLahir: 'Bandung', TanggalLahir: '2010-08-11', JenisKelamin: 'Perempuan', NoSiswa: '081234567807', NoOrtu: '081398765007', Alamat: 'Jl. Imam Bonjol No. 21', Kesehatan: 'Normal' },
+    { ID: 'sis_08', Kelas: 'kls_10a', Nama: 'Hafiz Ramadhan Putra', NIS: '102608', TempatLahir: 'Sukabumi', TanggalLahir: '2010-04-05', JenisKelamin: 'Laki-laki', NoSiswa: '081234567808', NoOrtu: '081398765008', Alamat: 'Jl. Pahlawan No. 54', Kesehatan: 'Normal' },
+    { ID: 'sis_09', Kelas: 'kls_10a', Nama: 'Indah Kusuma Wardani', NIS: '102609', TempatLahir: 'Tasikmalaya', TanggalLahir: '2010-06-30', JenisKelamin: 'Perempuan', NoSiswa: '081234567809', NoOrtu: '081398765009', Alamat: 'Jl. Veteran No. 14', Kesehatan: 'Normal' },
+    { ID: 'sis_10', Kelas: 'kls_10a', Nama: 'Joko Susilo Wibowo', NIS: '102610', TempatLahir: 'Cirebon', TanggalLahir: '2010-10-12', JenisKelamin: 'Laki-laki', NoSiswa: '081234567810', NoOrtu: '081398765010', Alamat: 'Jl. Pemuda No. 28', Kesehatan: 'Normal' },
+    { ID: 'sis_11', Kelas: 'kls_10a', Nama: 'Kartika Sari Dewi', NIS: '102611', TempatLahir: 'Bandung', TanggalLahir: '2010-11-22', JenisKelamin: 'Perempuan', NoSiswa: '081234567811', NoOrtu: '081398765011', Alamat: 'Jl. Cendrawasih No. 9', Kesehatan: 'Normal' },
+    { ID: 'sis_12', Kelas: 'kls_10a', Nama: 'Luthfi Hakim Maulana', NIS: '102612', TempatLahir: 'Sumedang', TanggalLahir: '2010-12-04', JenisKelamin: 'Laki-laki', NoSiswa: '081234567812', NoOrtu: '081398765012', Alamat: 'Jl. Melati No. 3', Kesehatan: 'Normal' },
+    { ID: 'sis_13', Kelas: 'kls_10b', Nama: 'Muhammad Rizky Pratama', NIS: '102613', TempatLahir: 'Bandung', TanggalLahir: '2010-03-25', JenisKelamin: 'Laki-laki', NoSiswa: '081234567813', NoOrtu: '081398765013', Alamat: 'Jl. Kenanga No. 11', Kesehatan: 'Normal' },
+    { ID: 'sis_14', Kelas: 'kls_10b', Nama: 'Nabila Azzahra Putri', NIS: '102614', TempatLahir: 'Bogor', TanggalLahir: '2010-05-16', JenisKelamin: 'Perempuan', NoSiswa: '081234567814', NoOrtu: '081398765014', Alamat: 'Jl. Anggrek No. 20', Kesehatan: 'Normal' },
+    { ID: 'sis_15', Kelas: 'kls_10b', Nama: 'Oka Mahendra Kusuma', NIS: '102615', TempatLahir: 'Karawang', TanggalLahir: '2010-07-02', JenisKelamin: 'Laki-laki', NoSiswa: '081234567815', NoOrtu: '081398765015', Alamat: 'Jl. Dahlia No. 6', Kesehatan: 'Normal' },
+    { ID: 'sis_16', Kelas: 'kls_10b', Nama: 'Putri Salsabila Ramadhani', NIS: '102616', TempatLahir: 'Purwakarta', TanggalLahir: '2010-08-19', JenisKelamin: 'Perempuan', NoSiswa: '081234567816', NoOrtu: '081398765016', Alamat: 'Jl. Flamboyan No. 18', Kesehatan: 'Normal' },
+    { ID: 'sis_17', Kelas: 'kls_10b', Nama: 'Qori Firmansyah', NIS: '102617', TempatLahir: 'Subang', TanggalLahir: '2010-01-28', JenisKelamin: 'Laki-laki', NoSiswa: '081234567817', NoOrtu: '081398765017', Alamat: 'Jl. Teratai No. 4', Kesehatan: 'Normal' },
+    { ID: 'sis_18', Kelas: 'kls_10b', Nama: 'Rania Safitri Handayani', NIS: '102618', TempatLahir: 'Bekasi', TanggalLahir: '2010-09-14', JenisKelamin: 'Perempuan', NoSiswa: '081234567818', NoOrtu: '081398765018', Alamat: 'Jl. Kamboja No. 15', Kesehatan: 'Normal' },
+    { ID: 'sis_19', Kelas: 'kls_11a', Nama: 'Raka Danuarta', NIS: '112601', TempatLahir: 'Bandung', TanggalLahir: '2009-02-11', JenisKelamin: 'Laki-laki', NoSiswa: '081234567819', NoOrtu: '081398765019', Alamat: 'Jl. Mawar No. 5', Kesehatan: 'Normal' },
+    { ID: 'sis_20', Kelas: 'kls_11a', Nama: 'Salsa Bila Khairunnisa', NIS: '112602', TempatLahir: 'Cimahi', TanggalLahir: '2009-04-23', JenisKelamin: 'Perempuan', NoSiswa: '081234567820', NoOrtu: '081398765020', Alamat: 'Jl. Tulip No. 9', Kesehatan: 'Normal' },
+    { ID: 'sis_21', Kelas: 'kls_11a', Nama: 'Taufik Hidayatulloh', NIS: '112603', TempatLahir: 'Garut', TanggalLahir: '2009-06-08', JenisKelamin: 'Laki-laki', NoSiswa: '081234567821', NoOrtu: '081398765021', Alamat: 'Jl. Kutilang No. 22', Kesehatan: 'Normal' },
+    { ID: 'sis_22', Kelas: 'kls_11a', Nama: 'Ulfa Nurjanah', NIS: '112604', TempatLahir: 'Depok', TanggalLahir: '2009-10-17', JenisKelamin: 'Perempuan', NoSiswa: '081234567822', NoOrtu: '081398765022', Alamat: 'Jl. Merpati No. 13', Kesehatan: 'Minus mata (-1.0)' },
+    { ID: 'sis_23', Kelas: 'kls_11a', Nama: 'Vino Alfarizi', NIS: '112605', TempatLahir: 'Sukabumi', TanggalLahir: '2009-07-29', JenisKelamin: 'Laki-laki', NoSiswa: '081234567823', NoOrtu: '081398765023', Alamat: 'Jl. Rajawali No. 7', Kesehatan: 'Normal' },
+    { ID: 'sis_24', Kelas: 'kls_11a', Nama: 'Wulan Dari Puspita', NIS: '112606', TempatLahir: 'Cianjur', TanggalLahir: '2009-11-05', JenisKelamin: 'Perempuan', NoSiswa: '081234567824', NoOrtu: '081398765024', Alamat: 'Jl. Elang No. 31', Kesehatan: 'Normal' }
   ];
 
   const akunList = await Promise.all(
@@ -1147,7 +1147,18 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
       }
     } catch (_) {}
     return {
-      siswa: { ID: siswa.ID, Nama: siswa.Nama, NIS: siswa.NIS },
+      siswa: {
+        ID: siswa.ID,
+        Nama: siswa.Nama,
+        NIS: siswa.NIS,
+        TempatLahir: siswa.TempatLahir || '',
+        TanggalLahir: siswa.TanggalLahir || '',
+        JenisKelamin: siswa.JenisKelamin || '',
+        Alamat: siswa.Alamat || '',
+        NoSiswa: siswa.NoSiswa || siswa.KontakOrtu || '',
+        NoOrtu: siswa.NoOrtu || '',
+        Kesehatan: siswa.Kesehatan || ''
+      },
       kelasId: siswa.Kelas || '',
       kelas: kelas.Nama || '',
       jurusan: kelas.Jurusan || '',
@@ -1306,6 +1317,43 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
     a.Hash = await sha256Base64(sesi.sid, pinBaru);
     saveDb(db);
     return true;
+  }
+
+  if (fn === 'api_updateProfilSiswa') {
+    const [token, payload] = args;
+    const sesi = getSesi(token, 'siswa');
+    const list = db.sheets.Siswa || [];
+    const idx = list.findIndex(x => x.ID === sesi.sid);
+    if (idx < 0) throw new Error('Data siswa tidak ditemukan.');
+    const cur = list[idx];
+    const namaClean = String(payload?.Nama ?? cur.Nama ?? '').trim().slice(0, 120);
+    const jkRaw = String(payload?.JenisKelamin ?? cur.JenisKelamin ?? '').trim();
+    const jkNorm =
+      jkRaw === 'L' || jkRaw.toLowerCase() === 'laki-laki'
+        ? 'Laki-laki'
+        : jkRaw === 'P' || jkRaw.toLowerCase() === 'perempuan'
+        ? 'Perempuan'
+        : '';
+    list[idx] = {
+      ...cur,
+      Nama: namaClean || cur.Nama,
+      TempatLahir: String(payload?.TempatLahir ?? cur.TempatLahir ?? '').trim().slice(0, 80),
+      TanggalLahir: String(payload?.TanggalLahir ?? cur.TanggalLahir ?? '').trim().slice(0, 20),
+      JenisKelamin: jkNorm,
+      Alamat: String(payload?.Alamat ?? cur.Alamat ?? '').trim().slice(0, 250),
+      NoSiswa: String(payload?.NoSiswa ?? cur.NoSiswa ?? '').trim().slice(0, 30),
+      NoOrtu: String(payload?.NoOrtu ?? cur.NoOrtu ?? '').trim().slice(0, 30),
+      Kesehatan: String(payload?.Kesehatan ?? cur.Kesehatan ?? '').trim().slice(0, 120)
+    };
+    if (namaClean) {
+      const map = getSessions();
+      if (map[token]) {
+        map[token].nama = namaClean;
+        saveSessions(map);
+      }
+    }
+    saveDb(db);
+    return list[idx];
   }
 
   if (fn === 'api_resetDemo') {

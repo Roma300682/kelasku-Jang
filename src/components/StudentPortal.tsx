@@ -38,7 +38,12 @@ import {
   Upload,
   Download,
   Paperclip,
-  ExternalLink
+  ExternalLink,
+  User,
+  MapPin,
+  Phone,
+  Edit3,
+  HeartPulse
 } from 'lucide-react';
 
 interface StudentPortalProps {
@@ -97,6 +102,20 @@ export default function StudentPortal({
   } | null>(null);
   const [sekErr, setSekErr] = useState('');
   const [sekLoading, setSekLoading] = useState(false);
+
+  // Student Profile Biodata Modal State
+  const [profilModalOpen, setProfilModalOpen] = useState(false);
+  const [savingProfil, setSavingProfil] = useState(false);
+  const [profilForm, setProfilForm] = useState({
+    Nama: '',
+    TempatLahir: '',
+    TanggalLahir: '',
+    JenisKelamin: '',
+    Alamat: '',
+    NoSiswa: '',
+    NoOrtu: '',
+    Kesehatan: ''
+  });
 
   React.useEffect(() => {
     if (p?.sekretaris) {
@@ -521,6 +540,114 @@ export default function StudentPortal({
             </div>
           </div>
         </div>
+
+        {/* Profil Biodata Siswa Section */}
+        <section className="bg-white border border-indigo-100 rounded-2xl p-6 space-y-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <User className="w-4 h-4 text-indigo-600" /> Profil Biodata Siswa
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Identitas pribadi &amp; kontak orang tua yang tersinkron langsung dengan akun Admin &amp; Wali Kelas.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Tersinkron ke Admin
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setProfilForm({
+                    Nama: p.siswa?.Nama || '',
+                    TempatLahir: p.siswa?.TempatLahir || '',
+                    TanggalLahir: p.siswa?.TanggalLahir || '',
+                    JenisKelamin: p.siswa?.JenisKelamin || '',
+                    Alamat: p.siswa?.Alamat || '',
+                    NoSiswa: p.siswa?.NoSiswa || '',
+                    NoOrtu: p.siswa?.NoOrtu || '',
+                    Kesehatan: p.siswa?.Kesehatan || ''
+                  });
+                  setProfilModalOpen(true);
+                }}
+                className="px-3.5 py-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Edit / Lengkapi Profil</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
+              <div className="text-[11px] font-semibold text-slate-500">NIS</div>
+              <div className="font-mono font-bold text-indigo-700 text-sm mt-0.5 tabular-nums">
+                {p.siswa?.NIS || '-'}
+              </div>
+            </div>
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
+              <div className="text-[11px] font-semibold text-slate-500">Nama Lengkap</div>
+              <div className="font-bold text-slate-900 text-sm mt-0.5 truncate" title={p.siswa?.Nama || ''}>
+                {p.siswa?.Nama || '-'}
+              </div>
+            </div>
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
+              <div className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                <Calendar className="w-3 h-3 text-indigo-500" /> Tempat &amp; Tanggal Lahir
+              </div>
+              <div className="font-semibold text-slate-800 mt-0.5">
+                {p.siswa?.TempatLahir || p.siswa?.TanggalLahir
+                  ? [
+                      p.siswa?.TempatLahir || '',
+                      p.siswa?.TanggalLahir ? tglIndo(p.siswa.TanggalLahir) : ''
+                    ]
+                      .filter(Boolean)
+                      .join(', ')
+                  : <span className="text-slate-400 italic">Belum diisi</span>}
+              </div>
+            </div>
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
+              <div className="text-[11px] font-semibold text-slate-500">Jenis Kelamin</div>
+              <div className="font-semibold text-slate-800 mt-0.5">
+                {p.siswa?.JenisKelamin || <span className="text-slate-400 italic">Belum diisi</span>}
+              </div>
+            </div>
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 sm:col-span-2">
+              <div className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                <MapPin className="w-3 h-3 text-rose-500" /> Alamat Tempat Tinggal
+              </div>
+              <div className="font-medium text-slate-800 mt-0.5">
+                {p.siswa?.Alamat || <span className="text-slate-400 italic">Belum diisi</span>}
+              </div>
+            </div>
+            <div className="p-3.5 rounded-xl bg-sky-50/60 border border-sky-200/80">
+              <div className="text-[11px] font-semibold text-sky-700 flex items-center gap-1">
+                <Phone className="w-3 h-3" /> No. HP Siswa
+              </div>
+              <div className="font-mono font-bold text-slate-900 mt-0.5 tabular-nums">
+                {p.siswa?.NoSiswa || <span className="text-slate-400 font-sans font-normal italic">Belum diisi</span>}
+              </div>
+            </div>
+            <div className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-200/80">
+              <div className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1">
+                <Phone className="w-3 h-3" /> No. HP Orang Tua / Wali
+              </div>
+              <div className="font-mono font-bold text-slate-900 mt-0.5 tabular-nums">
+                {p.siswa?.NoOrtu || <span className="text-slate-400 font-sans font-normal italic">Belum diisi</span>}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-500">
+            <div className="inline-flex items-center gap-1.5">
+              <HeartPulse className="w-3.5 h-3.5 text-rose-500" />
+              <span>Catatan Kesehatan:</span>
+              <strong className="text-slate-700">{p.siswa?.Kesehatan || 'Normal'}</strong>
+            </div>
+            <span>Kelas {p.kelas}{p.jurusan ? ` · ${p.jurusan}` : ''}</span>
+          </div>
+        </section>
 
         {/* CBT Online Section */}
         <section className="bg-white border border-cyan-100 rounded-2xl p-6 space-y-4 shadow-sm">
@@ -2065,6 +2192,191 @@ export default function StudentPortal({
           </div>
         );
       })()}
+
+      {/* EDIT PROFIL BIODATA MODAL */}
+      {profilModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => !savingProfil && setProfilModalOpen(false)}
+        >
+          <form
+            onClick={e => e.stopPropagation()}
+            onSubmit={async e => {
+              e.preventDefault();
+              if (!profilForm.Nama.trim()) {
+                showToast('Nama lengkap wajib diisi', 3000);
+                return;
+              }
+              setSavingProfil(true);
+              try {
+                await apiCall('api_updateProfilSiswa', {
+                  Nama: profilForm.Nama.trim(),
+                  TempatLahir: profilForm.TempatLahir.trim(),
+                  TanggalLahir: profilForm.TanggalLahir.trim(),
+                  JenisKelamin: profilForm.JenisKelamin,
+                  Alamat: profilForm.Alamat.trim(),
+                  NoSiswa: profilForm.NoSiswa.trim(),
+                  NoOrtu: profilForm.NoOrtu.trim(),
+                  Kesehatan: profilForm.Kesehatan.trim()
+                });
+                try {
+                  if (typeof BroadcastChannel !== 'undefined') {
+                    const bc = new BroadcastChannel('kelasku_sync');
+                    bc.postMessage({ type: 'siswa', ts: Date.now() });
+                    bc.close();
+                  }
+                  localStorage.setItem('mk_sync_ping', JSON.stringify({ type: 'siswa', ts: Date.now() }));
+                } catch (_) {}
+                setProfilModalOpen(false);
+                await onRefresh();
+                showToast('Profil tersimpan & langsung tersinkron ke akun Admin', 3500);
+              } catch (err: any) {
+                showToast(err?.message || 'Gagal memperbarui profil', 4000);
+              } finally {
+                setSavingProfil(false);
+              }
+            }}
+            className="bg-white rounded-2xl border border-indigo-100 w-full max-w-xl max-h-[92vh] overflow-y-auto shadow-2xl"
+          >
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <User className="w-4 h-4 text-indigo-600" /> Edit &amp; Lengkapi Profil Siswa
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Perubahan biodata Anda otomatis tersinkron ke data induk di akun Admin &amp; Wali Kelas.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={savingProfil}
+                onClick={() => setProfilModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-3.5">
+              <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div>
+                  <span className="text-slate-500">NIS (Username Portal): </span>
+                  <strong className="font-mono text-indigo-800">{p.siswa?.NIS || '-'}</strong>
+                </div>
+                <span className="text-[11px] text-indigo-700 font-semibold">Kelas {p.kelas}</span>
+              </div>
+
+              <label className="block text-xs font-semibold text-slate-700">
+                Nama Lengkap <span className="text-rose-500">*</span>
+                <input
+                  required
+                  value={profilForm.Nama}
+                  onChange={e => setProfilForm(f => ({ ...f, Nama: e.target.value }))}
+                  className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Tempat Lahir
+                  <input
+                    value={profilForm.TempatLahir}
+                    placeholder="Contoh: Bandung"
+                    onChange={e => setProfilForm(f => ({ ...f, TempatLahir: e.target.value }))}
+                    className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </label>
+                <label className="block text-xs font-semibold text-slate-700">
+                  Tanggal Lahir
+                  <input
+                    type="date"
+                    value={profilForm.TanggalLahir}
+                    onChange={e => setProfilForm(f => ({ ...f, TanggalLahir: e.target.value }))}
+                    className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Jenis Kelamin
+                  <select
+                    value={profilForm.JenisKelamin}
+                    onChange={e => setProfilForm(f => ({ ...f, JenisKelamin: e.target.value }))}
+                    className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">-- Pilih Jenis Kelamin --</option>
+                    <option value="Laki-laki">Laki-laki</option>
+                    <option value="Perempuan">Perempuan</option>
+                  </select>
+                </label>
+                <label className="block text-xs font-semibold text-slate-700">
+                  Catatan Kesehatan
+                  <input
+                    value={profilForm.Kesehatan}
+                    placeholder="Normal / alergi / riwayat"
+                    onChange={e => setProfilForm(f => ({ ...f, Kesehatan: e.target.value }))}
+                    className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block text-xs font-semibold text-slate-700">
+                  No. HP / WhatsApp Siswa
+                  <input
+                    type="tel"
+                    value={profilForm.NoSiswa}
+                    placeholder="0812..."
+                    onChange={e => setProfilForm(f => ({ ...f, NoSiswa: e.target.value }))}
+                    className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </label>
+                <label className="block text-xs font-semibold text-slate-700">
+                  No. HP / WhatsApp Orang Tua
+                  <input
+                    type="tel"
+                    value={profilForm.NoOrtu}
+                    placeholder="0813..."
+                    onChange={e => setProfilForm(f => ({ ...f, NoOrtu: e.target.value }))}
+                    className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </label>
+              </div>
+
+              <label className="block text-xs font-semibold text-slate-700">
+                Alamat Lengkap
+                <textarea
+                  rows={2}
+                  value={profilForm.Alamat}
+                  placeholder="Jl. Nama Jalan, RT/RW, Kelurahan, Kecamatan"
+                  onChange={e => setProfilForm(f => ({ ...f, Alamat: e.target.value }))}
+                  className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </label>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={savingProfil}
+                onClick={() => setProfilModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold bg-white border border-slate-300 text-slate-700 rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={savingProfil}
+                className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white rounded-xl inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{savingProfil ? 'Menyimpan…' : 'Simpan & Sinkron ke Admin'}</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Class Chat & Teacher Consultation Drawer */}
       <ClassChatDrawer
