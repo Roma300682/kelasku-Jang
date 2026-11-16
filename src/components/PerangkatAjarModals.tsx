@@ -1,26 +1,14 @@
 import React, { useState } from 'react';
-import {
-  Download,
-  ExternalLink,
-  Link2,
-  Loader2,
-  Paperclip,
-  Plus,
-  Sparkles,
-  Trash2,
-  Upload,
-  Unlink,
-  BookOpen,
-  Check,
-  Layers
-} from 'lucide-react';
-import { MODUL_AWAL, STATUS_TP } from '../constants';
-import { downloadAjarFile, fetchJson, pesanErr, uploadAjarFile } from '../api';
+import { AlertCircle, BookOpen, Check, CheckCircle2, Download, ExternalLink, Layers, Link2, Loader2, Paperclip, Plus, Sparkles, Trash2, Upload, Unlink } from 'lucide-react';
+import { ekstrakTingkatanKelas, MODUL_AWAL, STATUS_TP } from '../constants';
+import { downloadAjarFile, fetchJson, pesanErr, uploadAjarRawFile } from '../api';
 
-interface PendingFile {
+const MAX_AJAR_FILE_BYTES = 35 * 1024 * 1024; // 35 MB
+
+interface PendingExtractFile {
+  file: File;
   namaFile: string;
   mimeType: string;
-  base64Data: string;
   size: number;
 }
 
@@ -147,28 +135,317 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function readFileAsBase64(
-  file: File,
-  showToast: (msg: string, ms?: number) => void,
-  onReady: (pf: PendingFile) => void
-) {
-  if (file.size > 15 * 1024 * 1024) {
-    showToast('Ukuran berkas maksimal 15 MB');
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = () => {
-    const res = String(reader.result || '');
-    const base64Data = res.includes(',') ? res.split(',')[1] : res;
-    onReady({
-      namaFile: file.name,
-      mimeType: file.type || 'application/octet-stream',
-      base64Data,
-      size: file.size
-    });
-  };
-  reader.readAsDataURL(file);
+function readFileAsBase64String(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = String(reader.result || '');
+      resolve(res.includes(',') ? res.split(',')[1] : res);
+    };
+    reader.onerror = () => reject(new Error('Gagal membaca isi berkas dari perangkat Anda.'));
+    reader.readAsDataURL(file);
+  });
 }
+
+type CakupanMode = 'same_level' | 'all_subject' | 'selected';
+
+function resolveInitialCakupan(
+  initialKelas: string | undefined,
+  kelasList: any[],
+  currentKelasId: string
+): { mode: CakupanMode; selectedIds: string[]; defaultLevel: string } {
+  const curKelas = (kelasList || []).find(k => k.ID === currentKelasId);
+  const curLevel = ekstrakTingkatanKelas(curKelas?.Nama || '');
+  const raw = String(initialKelas || '').trim();
+
+  if (!raw) {
+    if (curLevel) {
+      return {
+        mode: 'same_level',
+        selectedIds: currentKelasId ? [currentKelasId] : [],
+        defaultLevel: curLevel
+      };
+    }
+    return {
+      mode: 'all_subject',
+      selectedIds: currentKelasId ? [currentKelasId] : [],
+      defaultLevel: ''
+    };
+  }
+
+  if (raw.startsWith('__TINGKAT__:')) {
+    const lvl = raw.slice('__TINGKAT__:'.length).trim().toUpperCase();
+    return {
+      mode: 'same_level',
+      selectedIds: currentKelasId ? [currentKelasId] : [],
+      defaultLevel: lvl || curLevel
+    };
+  }
+
+  if (raw === '__ALL__' || raw === 'all') {
+    return {
+      mode: 'all_subject',
+      selectedIds: currentKelasId ? [currentKelasId] : [],
+      defaultLevel: curLevel
+    };
+  }
+
+  const ids = raw.split(',').map(s => s.trim()).filter(Boolean);
+  return {
+    mode: 'selected',
+    selectedIds: ids.length > 0 ? ids : currentKelasId ? [currentKelasId] : [],
+    defaultLevel: curLevel
+  };
+}
+
+function buildFinalKelasScope(
+  mode: CakupanMode,
+  selectedIds: string[],
+  targetLevel: string,
+  currentKelasId: string
+): string {
+  if (mode === 'same_level') {
+    if (targetLevel) return `__TINGKAT__:${targetLevel}`;
+    return '__ALL__';
+  }
+  if (mode === 'all_subject') return '__ALL__';
+  return selectedIds.length > 0 ? selectedIds.join(',') : currentKelasId || '__ALL__';
+}
+
+interface CakupanKelasSelectorProps {
+  radioName: string;
+  mapel: string;
+  kelasList: any[];
+  currentKelasId: string;
+  mode: CakupanMode;
+  setMode: (m: CakupanMode) => void;
+  targetLevel: string;
+  setTargetLevel: (lvl: string) => void;
+  selectedKelasIds: string[];
+  setSelectedKelasIds: React.Dispatch<React.SetStateAction<string[]>>;
+  itemLabel?: string;
+}
+
+const CakupanKelasSelector: React.FC<CakupanKelasSelectorProps> = ({
+  radioName,
+  mapel,
+  kelasList,
+  currentKelasId,
+  mode,
+  setMode,
+  targetLevel,
+  setTargetLevel,
+  selectedKelasIds,
+  setSelectedKelasIds,
+  itemLabel = 'perangkat ajar'
+}) => {
+  const levels = Array.from(
+    new Set(
+      (kelasList || [])
+        .map(k => ekstrakTingkatanKelas(k.Nama || ''))
+        .filter(Boolean)
+    )
+  );
+  const effectiveLevel = targetLevel || levels[0] || '';
+  const sameLevelClasses = effectiveLevel
+    ? (kelasList || []).filter(k => ekstrakTingkatanKelas(k.Nama || '') === effectiveLevel)
+    : [];
+
+  return (
+    <div className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/50 space-y-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-1">
+        <label className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+          <Layers className="w-3.5 h-3.5 text-indigo-600" />
+          Cakupan Kelas Otomatis (Sekali Upload)
+        </label>
+        <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-100/70 px-2 py-0.5 rounded">
+          Sesuai Tingkatan &amp; Lintas Kelas
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-600">
+        Unggah 1x saja — otomatis tampil di kelas lain sesuai tingkatan atau mata pelajaran tanpa perlu upload ulang.
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        {effectiveLevel && (
+          <label
+            onClick={() => {
+              setMode('same_level');
+              if (!targetLevel) setTargetLevel(effectiveLevel);
+            }}
+            className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-start gap-2 transition-colors ${
+              mode === 'same_level'
+                ? 'bg-white border-indigo-500 shadow-2xs text-indigo-950 font-semibold'
+                : 'bg-white/60 border-slate-200 text-slate-700'
+            }`}
+          >
+            <input
+              type="radio"
+              name={radioName}
+              checked={mode === 'same_level'}
+              onChange={() => {
+                setMode('same_level');
+                if (!targetLevel) setTargetLevel(effectiveLevel);
+              }}
+              className="mt-0.5 text-indigo-600"
+            />
+            <div className="min-w-0">
+              <div className="font-semibold text-indigo-950">
+                Semua Kelas Tingkat {effectiveLevel}
+              </div>
+              <div className="text-[11px] font-normal text-slate-500 mt-0.5">
+                Otomatis ada di seluruh kelas tingkat {effectiveLevel}
+                {sameLevelClasses.length > 0
+                  ? ` (${sameLevelClasses.map(c => c.Nama).join(', ')})`
+                  : ''}.
+              </div>
+            </div>
+          </label>
+        )}
+
+        <label
+          onClick={() => setMode('all_subject')}
+          className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-start gap-2 transition-colors ${
+            mode === 'all_subject'
+              ? 'bg-white border-indigo-500 shadow-2xs text-indigo-950 font-semibold'
+              : 'bg-white/60 border-slate-200 text-slate-700'
+          }`}
+        >
+          <input
+            type="radio"
+            name={radioName}
+            checked={mode === 'all_subject'}
+            onChange={() => setMode('all_subject')}
+            className="mt-0.5 text-indigo-600"
+          />
+          <div className="min-w-0">
+            <div className="font-semibold text-indigo-950">
+              Semua Tingkatan ({mapel || 'Mapel Ini'})
+            </div>
+            <div className="text-[11px] font-normal text-slate-500 mt-0.5">
+              Tampil di semua tingkatan kelas yang mempelajari {mapel || 'mata pelajaran ini'}.
+            </div>
+          </div>
+        </label>
+
+        <label
+          onClick={() => {
+            setMode('selected');
+            if (selectedKelasIds.length === 0 && currentKelasId) {
+              setSelectedKelasIds([currentKelasId]);
+            }
+          }}
+          className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-start gap-2 transition-colors ${
+            mode === 'selected'
+              ? 'bg-white border-indigo-500 shadow-2xs text-indigo-950 font-semibold'
+              : 'bg-white/60 border-slate-200 text-slate-700'
+          }`}
+        >
+          <input
+            type="radio"
+            name={radioName}
+            checked={mode === 'selected'}
+            onChange={() => {
+              setMode('selected');
+              if (selectedKelasIds.length === 0 && currentKelasId) {
+                setSelectedKelasIds([currentKelasId]);
+              }
+            }}
+            className="mt-0.5 text-indigo-600"
+          />
+          <div className="min-w-0">
+            <div className="font-semibold text-indigo-950">Pilih Kelas Tertentu</div>
+            <div className="text-[11px] font-normal text-slate-500 mt-0.5">
+              Hanya untuk {itemLabel} pada kelas yang dicentang manual.
+            </div>
+          </div>
+        </label>
+      </div>
+
+      {mode === 'same_level' && levels.length > 1 && (
+        <div className="pt-1.5 border-t border-indigo-100 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold text-indigo-900 mr-1">Tingkatan target:</span>
+          {levels.map(lvl => (
+            <button
+              key={lvl}
+              type="button"
+              onClick={() => setTargetLevel(lvl)}
+              className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold cursor-pointer transition-colors ${
+                effectiveLevel === lvl
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'bg-white text-slate-700 border-indigo-200 hover:bg-indigo-100'
+              }`}
+            >
+              Tingkat {lvl}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {mode === 'selected' && kelasList && kelasList.length > 0 && (
+        <div className="pt-1.5 border-t border-indigo-100 space-y-2">
+          {levels.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-slate-500 mr-1">Pilih cepat:</span>
+              {levels.map(lvl => {
+                const idsInLvl = kelasList
+                  .filter(k => ekstrakTingkatanKelas(k.Nama || '') === lvl)
+                  .map(k => k.ID);
+                const allInLvlSelected =
+                  idsInLvl.length > 0 && idsInLvl.every(id => selectedKelasIds.includes(id));
+                return (
+                  <button
+                    key={lvl}
+                    type="button"
+                    onClick={() => {
+                      setSelectedKelasIds(prev => {
+                        if (allInLvlSelected) {
+                          return prev.filter(id => !idsInLvl.includes(id));
+                        }
+                        return Array.from(new Set([...prev, ...idsInLvl]));
+                      });
+                    }}
+                    className={`px-2 py-0.5 rounded-md border text-[11px] font-semibold cursor-pointer ${
+                      allInLvlSelected
+                        ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {allInLvlSelected ? '✓ ' : '+ '}Tingkat {lvl}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {kelasList.map((k: any) => {
+              const isChecked = selectedKelasIds.includes(k.ID);
+              return (
+                <button
+                  type="button"
+                  key={k.ID}
+                  onClick={() => {
+                    setSelectedKelasIds(prev =>
+                      prev.includes(k.ID) ? prev.filter(id => id !== k.ID) : [...prev, k.ID]
+                    );
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${
+                    isChecked
+                      ? 'bg-indigo-600 text-white border-indigo-600 font-semibold'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  {isChecked && <Check className="w-3.5 h-3.5" />}
+                  <span>{k.Nama}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface TpModalFormProps {
   token: string;
@@ -176,6 +453,8 @@ interface TpModalFormProps {
   defaultKode: string;
   defaultModulId?: string;
   modList?: any[];
+  kelasList?: any[];
+  currentKelasId?: string;
   onClose: () => void;
   onSave: (payload: {
     ModulID: string;
@@ -185,6 +464,7 @@ interface TpModalFormProps {
     Status: string;
     FileID: string;
     NamaFile: string;
+    Kelas?: string;
   }) => Promise<void>;
   showToast: (msg: string, ms?: number) => void;
 }
@@ -195,6 +475,8 @@ export const TpModalForm: React.FC<TpModalFormProps> = ({
   defaultKode,
   defaultModulId = '',
   modList = [],
+  kelasList = [],
+  currentKelasId = '',
   onClose,
   onSave,
   showToast
@@ -204,53 +486,92 @@ export const TpModalForm: React.FC<TpModalFormProps> = ({
   const [tujuan, setTujuan] = useState<string>(initial?.Tujuan || '');
   const [materi, setMateri] = useState<string>(initial?.Materi || '');
   const [status, setStatus] = useState<string>(initial?.Status || 'Belum');
+
+  const initCakupan = resolveInitialCakupan(initial?.Kelas, kelasList, currentKelasId);
+  const [cakupanMode, setCakupanMode] = useState<CakupanMode>(initCakupan.mode);
+  const [targetLevel, setTargetLevel] = useState<string>(initCakupan.defaultLevel);
+  const [selectedKelasIds, setSelectedKelasIds] = useState<string[]>(initCakupan.selectedIds);
+
   const [fileId, setFileId] = useState<string>(initial?.FileID || '');
   const [namaFile, setNamaFile] = useState<string>(initial?.NamaFile || '');
-  const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
+  const [fileSizeText, setFileSizeText] = useState<string>('');
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadError, setUploadError] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const handleTpFilePick = async (file: File | undefined) => {
+    if (!file) return;
+    setUploadError('');
+    if (file.size === 0) {
+      setUploadError('Berkas kosong (0 byte). Silakan pilih berkas yang valid.');
+      return;
+    }
+    if (file.size > MAX_AJAR_FILE_BYTES) {
+      const msg = `Ukuran berkas (${formatFileSize(file.size)}) melebihi batas 35 MB.`;
+      setUploadError(msg);
+      showToast(msg, 4000);
+      return;
+    }
+    setUploadingFile(true);
+    try {
+      const uploaded = await uploadAjarRawFile(token, file);
+      setFileId(uploaded.fileId);
+      setNamaFile(uploaded.namaFile);
+      setFileSizeText(formatFileSize(file.size));
+      if (!materi.trim()) {
+        setMateri(file.name.replace(/\.[^.]+$/, ''));
+      }
+      showToast(`Berkas "${uploaded.namaFile}" berhasil diunggah`, 3000);
+    } catch (e) {
+      const errMsg = pesanErr(e) || 'Gagal mengunggah berkas TP.';
+      setUploadError(errMsg);
+      showToast('Gagal mengunggah berkas TP: ' + errMsg, 4500);
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
   const handleSubmit = async () => {
+    if (uploadingFile) {
+      showToast('Tunggu sebentar, berkas sedang diunggah…');
+      return;
+    }
     const tujuanFinal =
       tujuan.trim() ||
-      (pendingFile
-        ? `Dokumen TP: ${pendingFile.namaFile}`
-        : namaFile
-          ? `Dokumen TP: ${namaFile}`
-          : '');
+      (namaFile ? `Dokumen TP: ${namaFile}` : '');
     if (!tujuanFinal) {
+      setUploadError('Rumusan Tujuan Pembelajaran atau berkas lampiran wajib diisi.');
       showToast('Rumusan Tujuan Pembelajaran atau berkas lampiran wajib diisi');
       return;
     }
+    const linkedMod = modList.find((m: any) => m.ID === modulId);
+    const finalKelas =
+      linkedMod?.Kelas ||
+      buildFinalKelasScope(cakupanMode, selectedKelasIds, targetLevel, currentKelasId);
+
     setSaving(true);
+    setUploadError('');
     try {
-      let finalFileId = fileId;
-      let finalNamaFile = namaFile;
-      if (pendingFile) {
-        showToast('Mengunggah berkas TP…', 6000);
-        const uploaded = await uploadAjarFile(
-          token,
-          pendingFile.namaFile,
-          pendingFile.mimeType,
-          pendingFile.base64Data
-        );
-        finalFileId = uploaded.fileId;
-        finalNamaFile = uploaded.namaFile;
-      }
       await onSave({
         ModulID: modulId,
         Kode: kode.trim() || defaultKode,
         Tujuan: tujuanFinal,
         Materi: materi.trim(),
         Status: status,
-        FileID: finalFileId,
-        NamaFile: finalNamaFile
+        FileID: fileId,
+        NamaFile: namaFile,
+        Kelas: finalKelas
       });
     } catch (e) {
-      showToast('Gagal menyimpan TP: ' + pesanErr(e), 4500);
+      const errMsg = 'Gagal menyimpan TP: ' + pesanErr(e);
+      setUploadError(errMsg);
+      showToast(errMsg, 4500);
     } finally {
       setSaving(false);
     }
   };
+
+  const linkedModObj = modList.find((m: any) => m.ID === modulId);
 
   return (
     <div className="space-y-3.5">
@@ -269,6 +590,22 @@ export const TpModalForm: React.FC<TpModalFormProps> = ({
           ))}
         </select>
       </label>
+
+      {!linkedModObj && (
+        <CakupanKelasSelector
+          radioName="tpCakupanKelas"
+          mapel="Semua Mapel"
+          kelasList={kelasList}
+          currentKelasId={currentKelasId}
+          mode={cakupanMode}
+          setMode={setCakupanMode}
+          targetLevel={targetLevel}
+          setTargetLevel={setTargetLevel}
+          selectedKelasIds={selectedKelasIds}
+          setSelectedKelasIds={setSelectedKelasIds}
+          itemLabel="tujuan pembelajaran"
+        />
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="block text-xs font-semibold text-slate-700">
@@ -322,60 +659,54 @@ export const TpModalForm: React.FC<TpModalFormProps> = ({
           <span className="text-xs font-bold text-pink-900 flex items-center gap-1.5">
             <Paperclip className="w-3.5 h-3.5 text-pink-600" /> Upload File Dokumen TP (Opsional)
           </span>
-          <span className="text-[11px] text-slate-500">Maks 15 MB</span>
+          <span className="text-[11px] text-slate-500">Maks 35 MB</span>
         </div>
         <label className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-pink-300 bg-white hover:bg-pink-50 text-xs font-semibold text-pink-700 cursor-pointer transition-colors">
-          <Upload className="w-4 h-4" />
-          <span>{pendingFile || fileId ? 'Ganti Berkas Lampiran TP' : 'Pilih Berkas (PDF, DOCX, XLSX, PPTX, Gambar)'}</span>
+          {uploadingFile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+          <span>
+            {uploadingFile
+              ? 'Sedang mengunggah berkas ke server…'
+              : fileId
+                ? 'Ganti Berkas Lampiran TP'
+                : 'Pilih & Unggah Berkas (PDF, DOCX, XLSX, PPTX, Gambar)'}
+          </span>
           <input
             type="file"
             className="hidden"
+            disabled={uploadingFile}
             onChange={e => {
               const f = e.target.files?.[0];
-              if (f) {
-                readFileAsBase64(f, showToast, pf => {
-                  setPendingFile(pf);
-                  if (!materi.trim()) {
-                    setMateri(f.name.replace(/\.[^.]+$/, ''));
-                  }
-                });
-              }
               e.target.value = '';
+              void handleTpFilePick(f);
             }}
           />
         </label>
 
-        {pendingFile && (
-          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs">
-            <div className="min-w-0 truncate text-emerald-800 font-medium">
-              Siap diunggah: <strong>{pendingFile.namaFile}</strong> ({formatFileSize(pendingFile.size)})
-            </div>
-            <button
-              type="button"
-              onClick={() => setPendingFile(null)}
-              className="text-rose-600 hover:text-rose-700 shrink-0 p-1 cursor-pointer"
-              title="Batalkan pilihan berkas"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+        {uploadError && (
+          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <span>{uploadError}</span>
           </div>
         )}
 
-        {!pendingFile && fileId && (
-          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white border border-slate-200 text-xs">
+        {fileId && (
+          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs">
             <button
               type="button"
               onClick={() => downloadAjarFile(fileId, namaFile)}
-              className="min-w-0 truncate text-sky-700 hover:underline font-semibold flex items-center gap-1.5 cursor-pointer"
+              className="min-w-0 truncate text-emerald-800 hover:underline font-semibold flex items-center gap-1.5 cursor-pointer"
             >
-              <Download className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{namaFile || 'Unduh lampiran TP'}</span>
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="truncate">
+                Terunggah: {namaFile || 'Lampiran TP'} {fileSizeText ? `(${fileSizeText})` : ''}
+              </span>
             </button>
             <button
               type="button"
               onClick={() => {
                 setFileId('');
                 setNamaFile('');
+                setFileSizeText('');
               }}
               className="text-rose-600 hover:text-rose-700 shrink-0 text-[11px] font-semibold cursor-pointer"
             >
@@ -389,18 +720,18 @@ export const TpModalForm: React.FC<TpModalFormProps> = ({
         <button
           type="button"
           onClick={onClose}
-          disabled={saving}
-          className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+          disabled={saving || uploadingFile}
+          className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer disabled:opacity-50"
         >
           Batal
         </button>
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={saving}
+          disabled={saving || uploadingFile}
           className="px-4 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer disabled:opacity-50"
         >
-          {saving ? 'Menyimpan…' : 'Simpan TP'}
+          {uploadingFile ? 'Mengunggah Berkas…' : saving ? 'Menyimpan…' : 'Simpan TP'}
         </button>
       </div>
     </div>
@@ -449,17 +780,11 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
   const [judul, setJudul] = useState<string>(initial?.Judul || '');
   const [mapel, setMapel] = useState<string>(initial?.Mapel || mapelList[0]?.Nama || 'Umum');
   const [alokasi, setAlokasi] = useState<string>(initial?.Alokasi || '2 x 45 Menit');
-  const [cakupanKelas, setCakupanKelas] = useState<'all_subject' | 'selected'>(() => {
-    if (!initial?.Kelas) return 'all_subject';
-    if (initial.Kelas === '__ALL__' || initial.Kelas === 'all') return 'all_subject';
-    return 'selected';
-  });
-  const [selectedKelasIds, setSelectedKelasIds] = useState<string[]>(() => {
-    if (initial?.Kelas && initial.Kelas !== '__ALL__' && initial.Kelas !== 'all') {
-      return String(initial.Kelas).split(',').map(s => s.trim()).filter(Boolean);
-    }
-    return currentKelasId ? [currentKelasId] : (kelasList?.map(k => k.ID) || []);
-  });
+
+  const initCakupan = resolveInitialCakupan(initial?.Kelas, kelasList, currentKelasId);
+  const [cakupanMode, setCakupanMode] = useState<CakupanMode>(initCakupan.mode);
+  const [targetLevel, setTargetLevel] = useState<string>(initCakupan.defaultLevel);
+  const [selectedKelasIds, setSelectedKelasIds] = useState<string[]>(initCakupan.selectedIds);
 
   const initialTpIdSet = new Set(
     String(initial?.TPIDs || '')
@@ -495,7 +820,10 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
   );
   const [fileId, setFileId] = useState<string>(initial?.FileID || '');
   const [namaFile, setNamaFile] = useState<string>(initial?.NamaFile || '');
-  const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
+  const [fileSizeText, setFileSizeText] = useState<string>('');
+  const [extractFileRef, setExtractFileRef] = useState<PendingExtractFile | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadError, setUploadError] = useState('');
   const [extractingTp, setExtractingTp] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -532,13 +860,53 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
     ]);
   };
 
+  const handleModulFilePick = async (file: File | undefined) => {
+    if (!file) return;
+    setUploadError('');
+    if (file.size === 0) {
+      setUploadError('Berkas kosong (0 byte). Silakan pilih berkas yang valid.');
+      return;
+    }
+    if (file.size > MAX_AJAR_FILE_BYTES) {
+      const msg = `Ukuran berkas (${formatFileSize(file.size)}) melebihi batas 35 MB.`;
+      setUploadError(msg);
+      showToast(msg, 4000);
+      return;
+    }
+    setExtractFileRef({
+      file,
+      namaFile: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      size: file.size
+    });
+    if (!judul.trim()) {
+      setJudul(file.name.replace(/\.[^.]+$/, ''));
+    }
+    setUploadingFile(true);
+    try {
+      const uploaded = await uploadAjarRawFile(token, file);
+      setFileId(uploaded.fileId);
+      setNamaFile(uploaded.namaFile);
+      setFileSizeText(formatFileSize(file.size));
+      showToast(`Modul "${uploaded.namaFile}" berhasil diunggah ke server`, 3000);
+    } catch (e) {
+      const errMsg = pesanErr(e) || 'Gagal mengunggah berkas Modul Ajar.';
+      setUploadError(errMsg);
+      showToast('Gagal mengunggah berkas Modul Ajar: ' + errMsg, 4500);
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
   const handleExtractTpFromFile = async () => {
-    if (!pendingFile) {
+    if (!fileId && !extractFileRef) {
       showToast('Pilih berkas Modul Ajar yang ingin dipisahkan TP-nya terlebih dahulu.');
       return;
     }
     setExtractingTp(true);
     try {
+      const base64Data =
+        !fileId && extractFileRef ? await readFileAsBase64String(extractFileRef.file) : undefined;
       const json = await fetchJson(
         '/api/ajar/extract-tp',
         {
@@ -546,10 +914,15 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             token,
-            namaFile: pendingFile.namaFile,
-            mimeType: pendingFile.mimeType,
-            base64Data: pendingFile.base64Data,
-            judulModul: judul.trim() || pendingFile.namaFile.replace(/\.[^.]+$/, ''),
+            fileId: fileId && !fileId.startsWith('local_ajr_') ? fileId : undefined,
+            namaFile: extractFileRef?.namaFile || namaFile,
+            mimeType: extractFileRef?.mimeType || 'application/octet-stream',
+            base64Data:
+              base64Data ||
+              (fileId?.startsWith('local_ajr_') && extractFileRef
+                ? await readFileAsBase64String(extractFileRef.file)
+                : undefined),
+            judulModul: judul.trim() || (extractFileRef?.namaFile || namaFile).replace(/\.[^.]+$/, ''),
             mapel: mapel.trim() || 'Umum'
           })
         },
@@ -595,34 +968,24 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
   };
 
   const handleSubmit = async () => {
+    if (uploadingFile) {
+      showToast('Tunggu sebentar, berkas Modul Ajar sedang diunggah…');
+      return;
+    }
     const judulFinal =
       judul.trim() ||
-      (pendingFile ? pendingFile.namaFile.replace(/\.[^.]+$/, '') : '') ||
+      (extractFileRef ? extractFileRef.namaFile.replace(/\.[^.]+$/, '') : '') ||
       (namaFile ? namaFile.replace(/\.[^.]+$/, '') : '');
     if (!judulFinal) {
+      setUploadError('Judul Modul Ajar wajib diisi atau unggah berkas modul terlebih dahulu.');
       showToast('Judul Modul Ajar wajib diisi atau unggah berkas modul terlebih dahulu');
       return;
     }
     const validTps = moduleTps.filter(t => t.Tujuan.trim().length > 0);
     setSaving(true);
+    setUploadError('');
     try {
-      let finalFileId = fileId;
-      let finalNamaFile = namaFile;
-      if (pendingFile) {
-        showToast('Mengunggah berkas Modul Ajar…', 6000);
-        const uploaded = await uploadAjarFile(
-          token,
-          pendingFile.namaFile,
-          pendingFile.mimeType,
-          pendingFile.base64Data
-        );
-        finalFileId = uploaded.fileId;
-        finalNamaFile = uploaded.namaFile;
-      }
-      const finalKelas =
-        cakupanKelas === 'all_subject'
-          ? '__ALL__'
-          : (selectedKelasIds.length > 0 ? selectedKelasIds.join(',') : (currentKelasId || '__ALL__'));
+      const finalKelas = buildFinalKelasScope(cakupanMode, selectedKelasIds, targetLevel, currentKelasId);
 
       await onSave({
         Judul: judulFinal,
@@ -636,8 +999,8 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         Catatan: catatan.trim(),
         PertanyaanPemantik: pertanyaanPemantik.trim(),
         LinkSumber: serializeSumberLinks(linkSumberRows),
-        FileID: finalFileId,
-        NamaFile: finalNamaFile,
+        FileID: fileId,
+        NamaFile: namaFile,
         Kelas: finalKelas,
         moduleTps: validTps.map((t, i) => ({
           ...t,
@@ -647,7 +1010,9 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         }))
       });
     } catch (e) {
-      showToast('Gagal menyimpan Modul Ajar: ' + pesanErr(e), 4500);
+      const errMsg = 'Gagal menyimpan Modul Ajar: ' + pesanErr(e);
+      setUploadError(errMsg);
+      showToast(errMsg, 4500);
     } finally {
       setSaving(false);
     }
@@ -660,34 +1025,48 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
           <span className="text-xs font-bold text-fuchsia-900 flex items-center gap-1.5">
             <Paperclip className="w-3.5 h-3.5 text-fuchsia-600" /> Upload File Modul Ajar / RPP (Opsional)
           </span>
-          <span className="text-[11px] text-slate-500">PDF, Word, PPT, Gambar · Maks 15 MB</span>
+          <span className="text-[11px] text-slate-500">PDF, Word, PPT, Gambar · Maks 35 MB</span>
         </div>
         <label className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-fuchsia-300 bg-white hover:bg-fuchsia-50 text-xs font-semibold text-fuchsia-700 cursor-pointer transition-colors">
-          <Upload className="w-4 h-4" />
-          <span>{pendingFile || fileId ? 'Ganti Berkas Modul Ajar' : 'Pilih Berkas Modul Ajar untuk Diunggah'}</span>
+          {uploadingFile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+          <span>
+            {uploadingFile
+              ? 'Sedang mengunggah berkas ke server…'
+              : fileId
+                ? 'Ganti Berkas Modul Ajar'
+                : 'Pilih & Unggah Berkas Modul Ajar'}
+          </span>
           <input
             type="file"
             className="hidden"
+            disabled={uploadingFile}
             onChange={e => {
               const f = e.target.files?.[0];
-              if (f) {
-                readFileAsBase64(f, showToast, pf => {
-                  setPendingFile(pf);
-                  if (!judul.trim()) {
-                    setJudul(f.name.replace(/\.[^.]+$/, ''));
-                  }
-                });
-              }
               e.target.value = '';
+              void handleModulFilePick(f);
             }}
           />
         </label>
 
-        {pendingFile && (
+        {uploadError && (
+          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <span>{uploadError}</span>
+          </div>
+        )}
+
+        {fileId && (
           <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs">
-            <div className="min-w-0 truncate text-emerald-800 font-medium">
-              Siap diunggah: <strong>{pendingFile.namaFile}</strong> ({formatFileSize(pendingFile.size)})
-            </div>
+            <button
+              type="button"
+              onClick={() => downloadAjarFile(fileId, namaFile)}
+              className="min-w-0 truncate text-emerald-800 hover:underline font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="truncate">
+                Terunggah: {namaFile || 'Lampiran Modul Ajar'} {fileSizeText ? `(${fileSizeText})` : ''}
+              </span>
+            </button>
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
@@ -707,36 +1086,18 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setPendingFile(null)}
+                onClick={() => {
+                  setFileId('');
+                  setNamaFile('');
+                  setFileSizeText('');
+                  setExtractFileRef(null);
+                }}
                 className="text-rose-600 hover:text-rose-700 shrink-0 p-1 cursor-pointer"
-                title="Batalkan pilihan berkas"
+                title="Hapus berkas modul"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
-          </div>
-        )}
-
-        {!pendingFile && fileId && (
-          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white border border-slate-200 text-xs">
-            <button
-              type="button"
-              onClick={() => downloadAjarFile(fileId, namaFile)}
-              className="min-w-0 truncate text-sky-700 hover:underline font-semibold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{namaFile || 'Unduh lampiran Modul Ajar'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFileId('');
-                setNamaFile('');
-              }}
-              className="text-rose-600 hover:text-rose-700 shrink-0 text-[11px] font-semibold cursor-pointer"
-            >
-              Hapus
-            </button>
           </div>
         )}
       </div>
@@ -777,94 +1138,19 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         </label>
       </div>
 
-      {/* Cakupan Kelas (Hanya Sekali Upload Modul) */}
-      <div className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/50 space-y-2.5">
-        <div className="flex flex-wrap items-center justify-between gap-1">
-          <label className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-indigo-600" />
-            Cakupan Kelas (Cukup Sekali Upload Modul)
-          </label>
-          <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-100/70 px-2 py-0.5 rounded">
-            Otomatis Lintas Kelas
-          </span>
-        </div>
-        <p className="text-[11px] text-slate-600">
-          Sesuaikan agar guru tidak perlu mengunggah ulang modul ajar untuk setiap kelas yang mempelajari mata pelajaran ini.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <label
-            onClick={() => setCakupanKelas('all_subject')}
-            className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-start gap-2.5 transition-colors ${
-              cakupanKelas === 'all_subject'
-                ? 'bg-white border-indigo-500 shadow-2xs text-indigo-950 font-semibold'
-                : 'bg-white/60 border-slate-200 text-slate-700'
-            }`}
-          >
-            <input
-              type="radio"
-              name="cakupanKelas"
-              checked={cakupanKelas === 'all_subject'}
-              onChange={() => setCakupanKelas('all_subject')}
-              className="mt-0.5 text-indigo-600"
-            />
-            <div>
-              <div className="font-semibold text-indigo-950">Semua Kelas yang Mempelajari {mapel || 'Mapel ini'}</div>
-              <div className="text-[11px] font-normal text-slate-500 mt-0.5">
-                (Direkomendasikan) 1x upload modul berlaku untuk seluruh kelas yang mempelajari mata pelajaran ini.
-              </div>
-            </div>
-          </label>
-          <label
-            onClick={() => setCakupanKelas('selected')}
-            className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-start gap-2.5 transition-colors ${
-              cakupanKelas === 'selected'
-                ? 'bg-white border-indigo-500 shadow-2xs text-indigo-950 font-semibold'
-                : 'bg-white/60 border-slate-200 text-slate-700'
-            }`}
-          >
-            <input
-              type="radio"
-              name="cakupanKelas"
-              checked={cakupanKelas === 'selected'}
-              onChange={() => setCakupanKelas('selected')}
-              className="mt-0.5 text-indigo-600"
-            />
-            <div>
-              <div className="font-semibold text-indigo-950">Pilih Kelas Tertentu</div>
-              <div className="text-[11px] font-normal text-slate-500 mt-0.5">
-                Khusus untuk kelas tertentu saja yang dicentang di bawah.
-              </div>
-            </div>
-          </label>
-        </div>
-
-        {cakupanKelas === 'selected' && kelasList && kelasList.length > 0 && (
-          <div className="pt-1 border-t border-indigo-100 flex flex-wrap gap-2">
-            {kelasList.map((k: any) => {
-              const isChecked = selectedKelasIds.includes(k.ID);
-              return (
-                <button
-                  type="button"
-                  key={k.ID}
-                  onClick={() => {
-                    setSelectedKelasIds(prev =>
-                      prev.includes(k.ID) ? prev.filter(id => id !== k.ID) : [...prev, k.ID]
-                    );
-                  }}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${
-                    isChecked
-                      ? 'bg-indigo-600 text-white border-indigo-600 font-semibold'
-                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                  }`}
-                >
-                  {isChecked && <Check className="w-3.5 h-3.5" />}
-                  <span>{k.Nama}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      <CakupanKelasSelector
+        radioName="modulCakupanKelas"
+        mapel={mapel}
+        kelasList={kelasList}
+        currentKelasId={currentKelasId}
+        mode={cakupanMode}
+        setMode={setCakupanMode}
+        targetLevel={targetLevel}
+        setTargetLevel={setTargetLevel}
+        selectedKelasIds={selectedKelasIds}
+        setSelectedKelasIds={setSelectedKelasIds}
+        itemLabel="modul ajar"
+      />
 
       {/* Separated TPs Specifically for This Uploaded Module */}
       <div className="p-3.5 rounded-xl border border-pink-200 bg-pink-50/40 space-y-2.5">
@@ -1129,18 +1415,18 @@ export const ModulModalForm: React.FC<ModulModalFormProps> = ({
         <button
           type="button"
           onClick={onClose}
-          disabled={saving}
-          className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+          disabled={saving || uploadingFile}
+          className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer disabled:opacity-50"
         >
           Batal
         </button>
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={saving}
+          disabled={saving || uploadingFile}
           className="px-4 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer disabled:opacity-50"
         >
-          {saving ? 'Menyimpan…' : 'Simpan Modul Ajar'}
+          {uploadingFile ? 'Mengunggah Berkas…' : saving ? 'Menyimpan…' : 'Simpan Modul Ajar'}
         </button>
       </div>
     </div>
@@ -1218,6 +1504,10 @@ export const PemantikModalForm: React.FC<PemantikModalFormProps> = ({
     }
     return '';
   });
+  const initPemCakupan = resolveInitialCakupan(initial?.Kelas || initialMod?.Kelas, kelasList, currentKelasId);
+  const [cakupanMode, setCakupanMode] = useState<CakupanMode>(initPemCakupan.mode);
+  const [targetLevel, setTargetLevel] = useState<string>(initPemCakupan.defaultLevel);
+  const [selectedKelasIds, setSelectedKelasIds] = useState<string[]>(initPemCakupan.selectedIds);
   const [saving, setSaving] = useState(false);
 
   const applyFromModul = (selectedModId: string) => {
@@ -1226,6 +1516,12 @@ export const PemantikModalForm: React.FC<PemantikModalFormProps> = ({
     if (!m) return;
     if (!mapel.trim() || mapel === 'Umum' || !initial) setMapel(m.Mapel || mapel);
     if (!judul.trim() || !initial) setJudul(`Pemantik: ${m.Judul}`);
+    if (m.Kelas) {
+      const nextScope = resolveInitialCakupan(m.Kelas, kelasList, currentKelasId);
+      setCakupanMode(nextScope.mode);
+      setTargetLevel(nextScope.defaultLevel);
+      setSelectedKelasIds(nextScope.selectedIds);
+    }
     if (m.PertanyaanPemantik) {
       setPertanyaan(m.PertanyaanPemantik);
     } else if (!pertanyaan.trim() && m.Pembuka) {
@@ -1273,8 +1569,7 @@ export const PemantikModalForm: React.FC<PemantikModalFormProps> = ({
     const serializedLinks = serializeSumberLinks(cleanLinks);
     const firstUrl = cleanLinks[0]?.url || '';
 
-    const linkedMod = modList.find((m: any) => m.ID === modulId);
-    const finalKelas = initial?.Kelas || linkedMod?.Kelas || '__ALL__';
+    const finalKelas = buildFinalKelasScope(cakupanMode, selectedKelasIds, targetLevel, currentKelasId);
 
     setSaving(true);
     try {
@@ -1342,6 +1637,20 @@ export const PemantikModalForm: React.FC<PemantikModalFormProps> = ({
           </datalist>
         </label>
       </div>
+
+      <CakupanKelasSelector
+        radioName="pemantikCakupanKelas"
+        mapel={mapel}
+        kelasList={kelasList}
+        currentKelasId={currentKelasId}
+        mode={cakupanMode}
+        setMode={setCakupanMode}
+        targetLevel={targetLevel}
+        setTargetLevel={setTargetLevel}
+        selectedKelasIds={selectedKelasIds}
+        setSelectedKelasIds={setSelectedKelasIds}
+        itemLabel="slide pemantik"
+      />
 
       <label className="block text-xs font-semibold text-slate-700">
         Pertanyaan Pemantik
@@ -1486,17 +1795,10 @@ export const MateriModalForm: React.FC<MateriModalFormProps> = ({
   const [ringkasan, setRingkasan] = useState<string>(initial?.Ringkasan || '');
   const [isiMateri, setIsiMateri] = useState<string>(initial?.IsiMateri || '');
 
-  const initKelasStr = String(initial?.Kelas || '').trim();
-  const initIsAll = !initial || initKelasStr === '__ALL__' || initKelasStr === 'all' || !initKelasStr;
-  const [cakupanKelas, setCakupanKelas] = useState<'all_subject' | 'selected'>(
-    initIsAll ? 'all_subject' : 'selected'
-  );
-  const [selectedKelasIds, setSelectedKelasIds] = useState<string[]>(() => {
-    if (!initIsAll && initKelasStr) {
-      return initKelasStr.split(',').map(s => s.trim()).filter(Boolean);
-    }
-    return currentKelasId ? [currentKelasId] : [];
-  });
+  const initCakupan = resolveInitialCakupan(initial?.Kelas, kelasList, currentKelasId);
+  const [cakupanMode, setCakupanMode] = useState<CakupanMode>(initCakupan.mode);
+  const [targetLevel, setTargetLevel] = useState<string>(initCakupan.defaultLevel);
+  const [selectedKelasIds, setSelectedKelasIds] = useState<string[]>(initCakupan.selectedIds);
 
   const [links, setLinks] = useState<SumberLinkItem[]>(() => {
     const parsed = parseSumberLinks(initial?.LinkSumber);
@@ -1506,37 +1808,60 @@ export const MateriModalForm: React.FC<MateriModalFormProps> = ({
   const [fileId, setFileId] = useState<string>(initial?.FileID || '');
   const [namaFile, setNamaFile] = useState<string>(initial?.NamaFile || '');
   const [ukuranFile, setUkuranFile] = useState<string>(initial?.UkuranFile || '');
-  const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadError, setUploadError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const handleFilePick = (file: File | undefined) => {
+  const handleFilePick = async (file: File | undefined) => {
     if (!file) return;
-    readFileAsBase64(file, showToast, pf => {
-      setPendingFile(pf);
-      setUkuranFile(formatFileSize(pf.size));
-      if (!judul.trim()) {
-        setJudul(file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
-      }
-    });
+    setUploadError('');
+    if (file.size === 0) {
+      setUploadError('Berkas kosong (0 byte). Silakan pilih berkas yang valid.');
+      return;
+    }
+    if (file.size > MAX_AJAR_FILE_BYTES) {
+      const msg = `Ukuran berkas (${formatFileSize(file.size)}) melebihi batas 35 MB.`;
+      setUploadError(msg);
+      showToast(msg, 4000);
+      return;
+    }
+    if (!judul.trim()) {
+      setJudul(file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
+    }
+    setUploadingFile(true);
+    try {
+      const uploaded = await uploadAjarRawFile(token, file);
+      setFileId(uploaded.fileId);
+      setNamaFile(uploaded.namaFile);
+      setUkuranFile(formatFileSize(file.size));
+      showToast(`Berkas "${uploaded.namaFile}" berhasil diunggah ke server`, 3000);
+    } catch (e) {
+      const errMsg = pesanErr(e) || 'Gagal mengunggah berkas materi pelajaran.';
+      setUploadError(errMsg);
+      showToast('Gagal mengunggah berkas materi: ' + errMsg, 4500);
+    } finally {
+      setUploadingFile(false);
+    }
   };
 
   const handleSubmit = async () => {
-    const cleanJudul = judul.trim() || pendingFile?.namaFile?.replace(/\.[^.]+$/, '') || '';
+    if (uploadingFile) {
+      showToast('Tunggu sebentar, berkas materi sedang diunggah…');
+      return;
+    }
+    const cleanJudul = judul.trim() || namaFile.replace(/\.[^.]+$/, '') || '';
     if (!cleanJudul) {
+      setUploadError('Judul materi pelajaran wajib diisi.');
       showToast('Judul materi pelajaran wajib diisi');
       return;
     }
-    if (!isiMateri.trim() && !ringkasan.trim() && !pendingFile && !fileId && !links.some(l => normalizeHttpUrl(l.url))) {
+    if (!isiMateri.trim() && !ringkasan.trim() && !fileId && !links.some(l => normalizeHttpUrl(l.url))) {
+      setUploadError('Isi ringkasan/materi, unggah berkas, atau tambahkan minimal satu link sumber.');
       showToast('Isi ringkasan/materi, unggah berkas, atau tambahkan minimal satu link sumber');
       return;
     }
 
-    const finalKelas =
-      cakupanKelas === 'all_subject'
-        ? '__ALL__'
-        : selectedKelasIds.length > 0
-          ? selectedKelasIds.join(',')
-          : currentKelasId || '__ALL__';
+    const finalKelas = buildFinalKelasScope(cakupanMode, selectedKelasIds, targetLevel, currentKelasId);
 
     const cleanLinks = links
       .map(l => ({ label: l.label.trim(), url: normalizeHttpUrl(l.url) }))
@@ -1544,23 +1869,8 @@ export const MateriModalForm: React.FC<MateriModalFormProps> = ({
     const serializedLinks = serializeSumberLinks(cleanLinks);
 
     setSaving(true);
+    setUploadError('');
     try {
-      let finalFileId = fileId;
-      let finalNamaFile = namaFile;
-      let finalUkuran = ukuranFile;
-      if (pendingFile) {
-        showToast('Mengunggah berkas materi pelajaran…', 6000);
-        const uploaded = await uploadAjarFile(
-          token,
-          pendingFile.namaFile,
-          pendingFile.mimeType,
-          pendingFile.base64Data
-        );
-        finalFileId = uploaded.fileId;
-        finalNamaFile = uploaded.namaFile;
-        finalUkuran = formatFileSize(pendingFile.size);
-      }
-
       const todayStr = new Date().toISOString().slice(0, 10);
       await onSave({
         Kelas: finalKelas,
@@ -1570,14 +1880,16 @@ export const MateriModalForm: React.FC<MateriModalFormProps> = ({
         Ringkasan: ringkasan.trim(),
         IsiMateri: isiMateri.trim(),
         LinkSumber: serializedLinks,
-        FileID: finalFileId,
-        NamaFile: finalNamaFile,
-        UkuranFile: finalUkuran,
+        FileID: fileId,
+        NamaFile: namaFile,
+        UkuranFile: ukuranFile,
         TanggalUpload: initial?.TanggalUpload || todayStr,
         Pengunggah: initial?.Pengunggah || defaultPengunggah || 'Guru Mata Pelajaran'
       });
     } catch (e) {
-      showToast('Gagal menyimpan materi pelajaran: ' + pesanErr(e), 4500);
+      const errMsg = 'Gagal menyimpan materi pelajaran: ' + pesanErr(e);
+      setUploadError(errMsg);
+      showToast(errMsg, 4500);
     } finally {
       setSaving(false);
     }
@@ -1600,51 +1912,61 @@ export const MateriModalForm: React.FC<MateriModalFormProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="text-xs font-bold text-teal-950">
-              Berkas Materi Pelajaran (PDF / PPT / Word / Gambar / Video / Audio)
+              Berkas Materi Pelajaran (PDF / PPT / Word / Gambar / Video / Audio / Lainnya)
             </div>
             <p className="text-[11px] text-slate-600">
-              Siswa dapat melihat dan mengunduh langsung berkas ini di Portal Siswa (maks. 15 MB).
+              Siswa dapat melihat dan mengunduh langsung berkas ini di Portal Siswa (maks. 35 MB).
             </p>
           </div>
           <label className="px-3 py-1.5 text-xs font-semibold bg-teal-600 hover:bg-teal-500 text-white rounded-lg inline-flex items-center gap-1.5 cursor-pointer shadow-xs">
-            <Upload className="w-3.5 h-3.5" />
-            <span>{pendingFile || namaFile ? 'Ganti Berkas' : 'Pilih Berkas Materi'}</span>
+            {uploadingFile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+            <span>
+              {uploadingFile ? 'Mengunggah…' : fileId ? 'Ganti Berkas' : 'Pilih & Unggah Berkas'}
+            </span>
             <input
               type="file"
-              accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.csv,.jpg,.jpeg,.png,.webp,.mp4,.mp3"
-              onChange={e => handleFilePick(e.target.files?.[0])}
+              disabled={uploadingFile}
+              onChange={e => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                void handleFilePick(f);
+              }}
               className="hidden"
             />
           </label>
         </div>
 
-        {(pendingFile || fileId) && (
-          <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-white border border-teal-200 rounded-lg text-xs">
+        {uploadError && (
+          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <span>{uploadError}</span>
+          </div>
+        )}
+
+        {fileId && (
+          <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs">
             <div className="flex items-center gap-2 min-w-0">
-              <Paperclip className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-              <span className="font-semibold text-slate-800 truncate">
-                {pendingFile ? pendingFile.namaFile : namaFile || 'Lampiran Materi'}
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="font-semibold text-emerald-900 truncate">
+                Terunggah: {namaFile || 'Lampiran Materi'}
               </span>
-              {(pendingFile || ukuranFile) && (
-                <span className="text-[11px] text-slate-400 shrink-0">
-                  ({pendingFile ? formatFileSize(pendingFile.size) : ukuranFile})
+              {ukuranFile && (
+                <span className="text-[11px] text-emerald-700 shrink-0">
+                  ({ukuranFile})
                 </span>
               )}
             </div>
             <div className="flex items-center gap-2">
-              {!pendingFile && fileId && (
-                <button
-                  type="button"
-                  onClick={() => downloadAjarFile(fileId, namaFile)}
-                  className="text-sky-600 hover:underline font-semibold inline-flex items-center gap-1 cursor-pointer"
-                >
-                  <Download className="w-3 h-3" /> Unduh
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => downloadAjarFile(fileId, namaFile)}
+                className="text-sky-700 hover:underline font-semibold inline-flex items-center gap-1 cursor-pointer"
+              >
+                <Download className="w-3 h-3" /> Unduh
+              </button>
               <button
                 type="button"
                 onClick={() => {
-                  setPendingFile(null);
                   setFileId('');
                   setNamaFile('');
                   setUkuranFile('');
@@ -1694,88 +2016,19 @@ export const MateriModalForm: React.FC<MateriModalFormProps> = ({
         />
       </label>
 
-      {/* Cakupan Kelas (1x Upload) */}
-      <div className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/50 space-y-2.5">
-        <div className="flex flex-wrap items-center justify-between gap-1">
-          <label className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-indigo-600" />
-            Cakupan Kelas (1x Upload untuk Semua Kelas Mapel Ini)
-          </label>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <label
-            onClick={() => setCakupanKelas('all_subject')}
-            className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-start gap-2.5 transition-colors ${
-              cakupanKelas === 'all_subject'
-                ? 'bg-white border-indigo-500 shadow-2xs text-indigo-950 font-semibold'
-                : 'bg-white/60 border-slate-200 text-slate-700'
-            }`}
-          >
-            <input
-              type="radio"
-              name="materiCakupanKelas"
-              checked={cakupanKelas === 'all_subject'}
-              onChange={() => setCakupanKelas('all_subject')}
-              className="mt-0.5 text-indigo-600"
-            />
-            <div>
-              <div className="font-semibold text-indigo-950">Semua Kelas yang Mempelajari {mapel || 'Mapel ini'}</div>
-              <div className="text-[11px] font-normal text-slate-500 mt-0.5">
-                Cukup 1x unggah, siswa di seluruh kelas terkait otomatis bisa melihat &amp; mengunduh.
-              </div>
-            </div>
-          </label>
-          <label
-            onClick={() => setCakupanKelas('selected')}
-            className={`p-2.5 rounded-xl border text-xs cursor-pointer flex items-start gap-2.5 transition-colors ${
-              cakupanKelas === 'selected'
-                ? 'bg-white border-indigo-500 shadow-2xs text-indigo-950 font-semibold'
-                : 'bg-white/60 border-slate-200 text-slate-700'
-            }`}
-          >
-            <input
-              type="radio"
-              name="materiCakupanKelas"
-              checked={cakupanKelas === 'selected'}
-              onChange={() => setCakupanKelas('selected')}
-              className="mt-0.5 text-indigo-600"
-            />
-            <div>
-              <div className="font-semibold text-indigo-950">Pilih Kelas Tertentu</div>
-              <div className="text-[11px] font-normal text-slate-500 mt-0.5">
-                Hanya tampil di Portal Siswa kelas yang dicentang di bawah.
-              </div>
-            </div>
-          </label>
-        </div>
-
-        {cakupanKelas === 'selected' && kelasList && kelasList.length > 0 && (
-          <div className="pt-1 border-t border-indigo-100 flex flex-wrap gap-2">
-            {kelasList.map((k: any) => {
-              const isChecked = selectedKelasIds.includes(k.ID);
-              return (
-                <button
-                  type="button"
-                  key={k.ID}
-                  onClick={() => {
-                    setSelectedKelasIds(prev =>
-                      prev.includes(k.ID) ? prev.filter(id => id !== k.ID) : [...prev, k.ID]
-                    );
-                  }}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${
-                    isChecked
-                      ? 'bg-indigo-600 text-white border-indigo-600 font-semibold'
-                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                  }`}
-                >
-                  {isChecked && <Check className="w-3.5 h-3.5" />}
-                  <span>{k.Nama}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      <CakupanKelasSelector
+        radioName="materiCakupanKelas"
+        mapel={mapel}
+        kelasList={kelasList}
+        currentKelasId={currentKelasId}
+        mode={cakupanMode}
+        setMode={setCakupanMode}
+        targetLevel={targetLevel}
+        setTargetLevel={setTargetLevel}
+        selectedKelasIds={selectedKelasIds}
+        setSelectedKelasIds={setSelectedKelasIds}
+        itemLabel="materi pelajaran"
+      />
 
       <label className="block text-xs font-semibold text-slate-700">
         Ringkasan Singkat
@@ -1860,18 +2113,18 @@ export const MateriModalForm: React.FC<MateriModalFormProps> = ({
         <button
           type="button"
           onClick={onClose}
-          disabled={saving}
-          className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+          disabled={saving || uploadingFile}
+          className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer disabled:opacity-50"
         >
           Batal
         </button>
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={saving}
+          disabled={saving || uploadingFile}
           className="px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg cursor-pointer disabled:opacity-50"
         >
-          {saving ? 'Menyimpan…' : 'Simpan Materi Pelajaran'}
+          {uploadingFile ? 'Mengunggah Berkas…' : saving ? 'Menyimpan…' : 'Simpan Materi Pelajaran'}
         </button>
       </div>
     </div>

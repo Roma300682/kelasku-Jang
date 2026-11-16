@@ -1344,9 +1344,42 @@ function tugasIzin_(izin: string[]) {
   return { milik, semua };
 }
 
+function ekstrakTingkatanKelas_(namaKelas: string): string {
+  const raw = String(namaKelas || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^(?:KELAS|KLS)\s+/i, '')
+    .trim();
+  if (!raw) return '';
+  const highRoman = /^(XII|XI|X|IX|VIII|VII)(?=$|[\s.\-_/0-9A-Z])/.exec(raw);
+  if (highRoman) return highRoman[1];
+  const numMatch = /^(1[0-2]|[1-9])(?=$|[\s.\-_/A-Z])/.exec(raw);
+  if (numMatch) {
+    const n = numMatch[1];
+    if (n === '10') return 'X';
+    if (n === '11') return 'XI';
+    if (n === '12') return 'XII';
+    if (n === '7') return 'VII';
+    if (n === '8') return 'VIII';
+    if (n === '9') return 'IX';
+    return n;
+  }
+  const sdRoman = /^(VI|IV|V|III|II|I)(?=$|[\s.\-_/0-9])/.exec(raw);
+  if (sdRoman) {
+    const map: Record<string, string> = { I: '1', II: '2', III: '3', IV: '4', V: '5', VI: '6' };
+    return map[sdRoman[1]] || sdRoman[1];
+  }
+  return '';
+}
+
 function rowMatchesIzin(rowKelas: string, izin: string[]): boolean {
   const k = String(rowKelas || '').trim();
   if (!k || k === '__ALL__' || k === 'all') return true;
+  if (k.startsWith('__TINGKAT__:')) {
+    const reqLvl = k.slice('__TINGKAT__:'.length).trim().toUpperCase();
+    if (!reqLvl) return true;
+    return baca_('Kelas').some(c => izin.includes(c.ID) && ekstrakTingkatanKelas_(c.Nama) === reqLvl);
+  }
   const parts = k.split(',').map(s => s.trim()).filter(Boolean);
   return parts.some(p => izin.includes(p));
 }
@@ -2325,9 +2358,18 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
         }
 
         const allMateri = baca_('Materi');
+        const siswaTingkatan = ekstrakTingkatanKelas_(kelas.Nama || '');
         const matchingMateri = allMateri.filter((m: any) => {
           const kRaw = String(m.Kelas || '').trim();
           const mMapel = String(m.Mapel || '').trim().toLowerCase();
+          if (kRaw.startsWith('__TINGKAT__:')) {
+            const reqLvl = kRaw.slice('__TINGKAT__:'.length).trim().toUpperCase();
+            if (!reqLvl || !siswaTingkatan || siswaTingkatan !== reqLvl) return false;
+            if (explicitRaw === '__NONE__') return false;
+            if (!mMapel || mMapel === 'umum') return true;
+            if (explicitRaw) return classMapelSet.size === 0 || classMapelSet.has(mMapel);
+            return true;
+          }
           if (kRaw === '__ALL__' || kRaw === 'all' || !kRaw) {
             if (!mMapel || mMapel === 'umum' || classMapelSet.size === 0) return true;
             return classMapelSet.has(mMapel);
@@ -2839,11 +2881,12 @@ async function startServer() {
   const app = express();
   const PORT = process.env.NODE_ENV === 'production' ? Number(process.env.PORT) || 3000 : 3000;
 
-  app.use(express.json({ limit: '25mb' }));
+  app.use(express.raw({ type: 'application/octet-stream', limit: '50mb' }));
+  app.use(express.json({ limit: '50mb' }));
   app.use((err: any, req: any, res: any, next: any) => {
     if (req.path.startsWith('/api/') || err) {
       if (err?.type === 'entity.too.large' || err?.status === 413) {
-        res.status(413).json({ ok: false, error: 'Ukuran data atau berkas melebihi batas 25 MB.' });
+        res.status(413).json({ ok: false, error: 'Ukuran data atau berkas melebihi batas 50 MB.' });
         return;
       }
       if (err instanceof SyntaxError && 'body' in err) {
@@ -2862,12 +2905,14 @@ async function startServer() {
   app.use('/api', async (req, res, next) => {
     try {
       await ensureDbLoaded();
+      const headerToken = typeof req.headers['x-ajar-token'] === 'string' ? req.headers['x-ajar-token'] : '';
       const bodyToken =
-        typeof req.body?.token === 'string'
-          ? req.body.token
-          : Array.isArray(req.body?.args) && typeof req.body.args[0] === 'string'
-          ? req.body.args[0]
-          : '';
+        headerToken ||
+        (typeof (req.body as any)?.token === 'string'
+          ? (req.body as any).token
+          : Array.isArray((req.body as any)?.args) && typeof (req.body as any).args[0] === 'string'
+          ? (req.body as any).args[0]
+          : '');
       if (bodyToken && !sessions.has(bodyToken) && detectStorageEngine().isVercelCloud) {
         const remoteSess = await loadRemoteSession(bodyToken);
         if (remoteSess && Date.now() <= remoteSess.expires) {
@@ -3978,31 +4023,63 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
     }
   });
 
-  // Upload Lampiran Perangkat Ajar (TP & Modul Ajar)
+  // Upload Lampiran Perangkat Ajar (TP, Modul Ajar & Materi Pelajaran)
   app.post('/api/ajar/upload', async (req, res) => {
     try {
-      const { token, namaFile, mimeType, base64Data } = req.body || {};
+      let token = '';
+      let namaFile = '';
+      let mime = 'application/octet-stream';
+      let buf: Buffer | null = null;
+      let base64Str = '';
+
+      if (Buffer.isBuffer(req.body)) {
+        token = String(req.headers['x-ajar-token'] || '');
+        const rawNameHdr = String(req.headers['x-ajar-filename'] || '');
+        try {
+          namaFile = decodeURIComponent(rawNameHdr);
+        } catch {
+          namaFile = rawNameHdr;
+        }
+        mime = String(req.headers['x-ajar-mime'] || 'application/octet-stream');
+        buf = req.body;
+      } else {
+        const body = req.body || {};
+        token = String(body.token || req.headers['x-ajar-token'] || '');
+        namaFile = String(body.namaFile || '');
+        mime = String(body.mimeType || 'application/octet-stream');
+        base64Str = String(body.base64Data || '');
+        if (base64Str) {
+          buf = Buffer.from(base64Str, 'base64');
+        }
+      }
+
       staf_(token);
-      if (!namaFile || !base64Data) {
-        res.status(400).json({ ok: false, error: 'Pilih berkas TP atau Modul Ajar terlebih dahulu.' });
+      if (!namaFile || !buf || buf.length === 0) {
+        res.status(400).json({ ok: false, error: 'Pilih berkas Perangkat Ajar terlebih dahulu.' });
         return;
       }
+
       const fileId = 'ajr_' + uidShort();
       const cleanName = String(namaFile).replace(/[^a-zA-Z0-9._-]/g, '_');
       const diskName = `${fileId}__${cleanName}`;
-      const buf = Buffer.from(String(base64Data), 'base64');
-      const mime = String(mimeType || 'application/octet-stream');
+      const isVercel = detectStorageEngine().isVercelCloud;
+
       try {
         if (!fs.existsSync(AJAR_DIR)) fs.mkdirSync(AJAR_DIR, { recursive: true });
         fs.writeFileSync(path.join(AJAR_DIR, diskName), buf);
-      } catch (_) {}
-      if (detectStorageEngine().isVercelCloud) {
+      } catch (diskErr: any) {
+        if (!isVercel) {
+          throw new Error('Gagal menyimpan berkas ke penyimpanan server: ' + (diskErr?.message || String(diskErr)));
+        }
+      }
+
+      if (isVercel) {
         await saveRemoteFile({
           id: fileId,
           kind: 'ajar',
           filename: String(namaFile),
           mime,
-          contentBase64: String(base64Data)
+          contentBase64: base64Str || buf.toString('base64')
         });
       }
       res.json({ ok: true, data: { fileId, namaFile: String(namaFile) } });
@@ -4049,16 +4126,39 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
   // Extract / Split Tujuan Pembelajaran (TP) from an uploaded Modul Ajar file
   app.post('/api/ajar/extract-tp', async (req, res) => {
     try {
-      const { token, namaFile, mimeType, base64Data, judulModul, mapel } = req.body || {};
+      const { token, fileId, namaFile, mimeType, base64Data, judulModul, mapel } = req.body || {};
       staf_(token);
-      if (!namaFile || !base64Data) {
+
+      let buf: Buffer | null = base64Data ? Buffer.from(String(base64Data), 'base64') : null;
+      let resolvedName = String(namaFile || '');
+      let resolvedMime = String(mimeType || '');
+
+      if ((!buf || buf.length === 0) && fileId) {
+        const safeId = String(fileId).replace(/[^a-zA-Z0-9_-]/g, '');
+        if (safeId && fs.existsSync(AJAR_DIR)) {
+          const match = fs.readdirSync(AJAR_DIR).find(f => f.startsWith(safeId + '__'));
+          if (match) {
+            buf = fs.readFileSync(path.join(AJAR_DIR, match));
+            if (!resolvedName) resolvedName = match.slice((safeId + '__').length);
+          }
+        }
+        if ((!buf || buf.length === 0) && safeId && detectStorageEngine().isVercelCloud) {
+          const remote = await loadRemoteFile(safeId);
+          if (remote?.contentBase64) {
+            buf = Buffer.from(remote.contentBase64, 'base64');
+            if (!resolvedName) resolvedName = remote.filename || 'modul';
+            if (!resolvedMime) resolvedMime = remote.mime || '';
+          }
+        }
+      }
+
+      if (!resolvedName || !buf || buf.length === 0) {
         res.status(400).json({ ok: false, error: 'Unggah berkas Modul Ajar terlebih dahulu.' });
         return;
       }
 
-      const buf = Buffer.from(String(base64Data), 'base64');
-      const mime = String(mimeType || '').toLowerCase();
-      const fname = String(namaFile);
+      const mime = resolvedMime.toLowerCase();
+      const fname = resolvedName;
       const isTextLike =
         mime.includes('text') ||
         mime.includes('csv') ||

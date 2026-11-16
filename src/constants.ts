@@ -388,3 +388,89 @@ export function avatarColorFor(name: string): string {
   return AVATAR_COLORS[hash % AVATAR_COLORS.length];
 }
 
+export function ekstrakTingkatanKelas(namaKelas: string): string {
+  let raw = String(namaKelas || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^(?:KELAS|KLS)\s+/i, '')
+    .trim();
+  if (!raw) return '';
+
+  // Roman high/junior school levels: XII, XI, X, IX, VIII, VII
+  const highRoman = /^(XII|XI|X|IX|VIII|VII)(?=$|[\s.\-_/0-9A-Z])/.exec(raw);
+  if (highRoman) {
+    return highRoman[1];
+  }
+
+  // Arabic grades 10-12 -> canonical X, XI, XII; 7-9 -> canonical VII, VIII, IX; 1-6 -> '1'..'6'
+  const numMatch = /^(1[0-2]|[1-9])(?=$|[\s.\-_/A-Z])/.exec(raw);
+  if (numMatch) {
+    const n = numMatch[1];
+    if (n === '10') return 'X';
+    if (n === '11') return 'XI';
+    if (n === '12') return 'XII';
+    if (n === '7') return 'VII';
+    if (n === '8') return 'VIII';
+    if (n === '9') return 'IX';
+    return n;
+  }
+
+  // Elementary Roman numerals (only when separated cleanly so words like IPA/IPS don't match I)
+  const sdRoman = /^(VI|IV|V|III|II|I)(?=$|[\s.\-_/0-9])/.exec(raw);
+  if (sdRoman) {
+    const map: Record<string, string> = { I: '1', II: '2', III: '3', IV: '4', V: '5', VI: '6' };
+    return map[sdRoman[1]] || sdRoman[1];
+  }
+
+  return '';
+}
+
+export function formatLabelCakupanKelas(scopeRaw: string): string {
+  const k = String(scopeRaw || '').trim();
+  if (!k || k === '__ALL__' || k === 'all') return 'Semua Tingkatan';
+  if (k.startsWith('__TINGKAT__:')) {
+    const lvl = k.slice('__TINGKAT__:'.length).trim().toUpperCase();
+    return lvl ? `Tingkat ${lvl}` : 'Semua Tingkatan';
+  }
+  if (k.includes(',')) return `${k.split(',').filter(Boolean).length} Kelas`;
+  return 'Kelas Ini';
+}
+
+export function cocokCakupanKelasAjar(
+  scopeRaw: string,
+  targetKelas: { ID?: string; Nama?: string; Mapel?: string } | undefined,
+  classSubjects: string[],
+  itemMapel = ''
+): boolean {
+  const kRaw = String(scopeRaw || '').trim();
+  const subjectLowerSet = new Set((classSubjects || []).map(s => String(s || '').trim().toLowerCase()).filter(Boolean));
+  const mMapel = String(itemMapel || '').trim().toLowerCase();
+
+  if (kRaw.startsWith('__TINGKAT__:')) {
+    const reqLvl = kRaw.slice('__TINGKAT__:'.length).trim().toUpperCase();
+    const tgtLvl = ekstrakTingkatanKelas(targetKelas?.Nama || '');
+    if (!reqLvl || !tgtLvl || tgtLvl !== reqLvl) return false;
+    const explicitMapel = String(targetKelas?.Mapel || '').trim();
+    if (explicitMapel === '__NONE__') return false;
+    if (!mMapel || mMapel === 'umum') return true;
+    // If target class has explicit subjects configured, respect subject match; otherwise share across all classes of the same tingkatan
+    if (explicitMapel) {
+      return subjectLowerSet.size === 0 || subjectLowerSet.has(mMapel);
+    }
+    return true;
+  }
+
+  if (kRaw === '__ALL__' || kRaw === 'all') {
+    if (!mMapel || mMapel === 'umum') return true;
+    return subjectLowerSet.size === 0 || subjectLowerSet.has(mMapel);
+  }
+
+  if (!kRaw) {
+    return !mMapel || mMapel === 'umum' || subjectLowerSet.has(mMapel);
+  }
+
+  const ids = kRaw.split(',').map(s => s.trim()).filter(Boolean);
+  return targetKelas?.ID ? ids.includes(targetKelas.ID) : false;
+}
+
+

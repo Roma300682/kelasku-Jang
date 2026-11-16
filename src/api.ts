@@ -89,7 +89,7 @@ export async function fetchJson<T = any>(url: string, init?: RequestInit, retrie
       }
 
       if (res.status === 413) {
-        throw new Error('Ukuran data atau berkas melebihi batas maksimal server (25 MB).');
+        throw new Error('Ukuran data atau berkas melebihi batas maksimal server (50 MB).');
       }
       if (isHtmlOrPageText) {
         throw new Error(
@@ -165,13 +165,55 @@ export const acak = <T>(a: T[]): T[] => {
 
 export const urlAman = (u: string): boolean => /^https?:\/\//i.test(String(u || '').trim());
 
-export const waLink = (phone: string, text = ''): string => {
+export type WaLaunchMode = 'app' | 'web';
+
+const WA_LAUNCH_MODE_KEY = 'mk_wa_launch_mode_v1';
+
+export const getWaMode = (): WaLaunchMode => {
+  try {
+    const saved = localStorage.getItem(WA_LAUNCH_MODE_KEY);
+    return saved === 'web' ? 'web' : 'app';
+  } catch {
+    return 'app';
+  }
+};
+
+export const setWaMode = (mode: WaLaunchMode): void => {
+  try {
+    localStorage.setItem(WA_LAUNCH_MODE_KEY, mode);
+  } catch {}
+};
+
+export const normalizeWaDigits = (phone: string): string => {
   let digits = String(phone || '').replace(/\D/g, '');
   if (!digits) return '';
   if (digits.startsWith('0')) digits = '62' + digits.slice(1);
   else if (digits.startsWith('8')) digits = '62' + digits;
-  const q = text ? `?text=${encodeURIComponent(text)}` : '';
-  return `https://wa.me/${digits}${q}`;
+  return digits;
+};
+
+export const waWebLink = (phone: string, text = ''): string => {
+  const digits = normalizeWaDigits(phone);
+  if (!digits) return '';
+  const q = text ? `&text=${encodeURIComponent(text)}` : '';
+  return `https://web.whatsapp.com/send?phone=${digits}${q}`;
+};
+
+export const waAppLink = (phone: string, text = ''): string => {
+  const digits = normalizeWaDigits(phone);
+  if (!digits) return '';
+  const q = text ? `&text=${encodeURIComponent(text)}` : '';
+  return `whatsapp://send?phone=${digits}${q}`;
+};
+
+export const waLink = (phone: string, text = '', overrideMode?: WaLaunchMode): string => {
+  const mode = overrideMode || getWaMode();
+  return mode === 'web' ? waWebLink(phone, text) : waAppLink(phone, text);
+};
+
+export const waTarget = (overrideMode?: WaLaunchMode): string | undefined => {
+  const mode = overrideMode || getWaMode();
+  return mode === 'web' ? 'kelasku_wa_web_session' : undefined;
 };
 
 export const tglParse = (s: string): Date => {
@@ -339,6 +381,61 @@ function readLocalAjarFiles(): Record<string, { namaFile: string; mimeType: stri
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
+  }
+}
+
+function readFileAsBase64Promise(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = String(reader.result || '');
+      resolve(res.includes(',') ? res.split(',')[1] : res);
+    };
+    reader.onerror = () => reject(new Error('Gagal membaca berkas dari perangkat Anda.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function uploadAjarRawFile(
+  token: string,
+  file: File
+): Promise<{ fileId: string; namaFile: string }> {
+  try {
+    const res = await fetchJson<{ ok: boolean; data?: { fileId: string; namaFile: string }; error?: string }>(
+      '/api/ajar/upload',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Ajar-Token': token,
+          'X-Ajar-Filename': encodeURIComponent(file.name || 'berkas'),
+          'X-Ajar-Mime': file.type || 'application/octet-stream'
+        },
+        body: file
+      }
+    );
+    if (!res.ok || !res.data) {
+      throw new Error(res.error || 'Gagal mengunggah berkas perangkat ajar.');
+    }
+    return res.data;
+  } catch (e: any) {
+    if (e instanceof ApiUnavailableError && e.status === 404) {
+      const base64Data = await readFileAsBase64Promise(file);
+      const fileId = 'local_ajr_' + uid();
+      const map = readLocalAjarFiles();
+      map[fileId] = {
+        namaFile: file.name || 'berkas',
+        mimeType: file.type || 'application/octet-stream',
+        base64Data
+      };
+      try {
+        localStorage.setItem(LOCAL_AJAR_FILES_KEY, JSON.stringify(map));
+      } catch {
+        throw new Error('Penyimpanan lokal browser penuh. Gunakan file berukuran lebih kecil.');
+      }
+      return { fileId, namaFile: file.name || 'berkas' };
+    }
+    throw e;
   }
 }
 

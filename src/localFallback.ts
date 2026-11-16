@@ -1,4 +1,5 @@
 import { getKaldikJabarEvents, KALDIK_JABAR_REF } from './data/kaldikJabar';
+import { ekstrakTingkatanKelas } from './constants';
 
 const STORAGE_KEY = 'mk_local_db_v1';
 const SESSION_KEY = 'mk_local_sessions_v1';
@@ -1276,9 +1277,18 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
         }
 
         const allMateri = db.sheets.Materi || [];
+        const siswaTingkatan = ekstrakTingkatanKelas(kelas.Nama || '');
         const matchingMateri = allMateri.filter((m: any) => {
           const kRaw = String(m.Kelas || '').trim();
           const mMapel = String(m.Mapel || '').trim().toLowerCase();
+          if (kRaw.startsWith('__TINGKAT__:')) {
+            const reqLvl = kRaw.slice('__TINGKAT__:'.length).trim().toUpperCase();
+            if (!reqLvl || !siswaTingkatan || siswaTingkatan !== reqLvl) return false;
+            if (explicitRaw === '__NONE__') return false;
+            if (!mMapel || mMapel === 'umum') return true;
+            if (explicitRaw) return classMapelSet.size === 0 || classMapelSet.has(mMapel);
+            return true;
+          }
           if (kRaw === '__ALL__' || kRaw === 'all' || !kRaw) {
             if (!mMapel || mMapel === 'umum' || classMapelSet.size === 0) return true;
             return classMapelSet.has(mMapel);
