@@ -947,9 +947,35 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
   }
 
   if (fn === 'api_saveSheet') {
-    const [token, nama, rows] = args;
+    const [token, nama, rowsIn] = args;
     getSesi(token, 'staf');
-    db.sheets[nama] = Array.isArray(rows) ? rows : [];
+    let rows: Record<string, any>[] = Array.isArray(rowsIn) ? rowsIn : [];
+    if (nama === 'Siswa') {
+      const byNisIdx = new Map<string, number>();
+      const deduped: Record<string, any>[] = [];
+      rows.forEach(s => {
+        const nisKey = String(s.NIS || '').trim().toLowerCase();
+        if (nisKey) {
+          const prevIdx = byNisIdx.get(nisKey);
+          if (prevIdx !== undefined) {
+            deduped[prevIdx] = { ...deduped[prevIdx], ...s };
+            return;
+          }
+          byNisIdx.set(nisKey, deduped.length);
+        }
+        deduped.push(s);
+      });
+      rows = deduped;
+      const validIds = new Set(rows.map(s => s.ID));
+      db.sheets.Akun = (db.sheets.Akun || []).filter(a => validIds.has(a.SiswaID));
+    }
+    db.sheets[nama] = rows;
+    if (nama === 'Kelas') {
+      const validClassIds = new Set(rows.map(c => String(c.ID || '')));
+      db.sheets.Siswa = (db.sheets.Siswa || []).filter(s => validClassIds.has(String(s.Kelas || '')));
+      const validSid = new Set(db.sheets.Siswa.map(s => s.ID));
+      db.sheets.Akun = (db.sheets.Akun || []).filter(a => validSid.has(a.SiswaID));
+    }
     saveDb(db);
     return true;
   }

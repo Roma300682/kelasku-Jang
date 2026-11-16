@@ -1905,11 +1905,42 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
     rows = rows || [];
     if (st.izin && tk) rows = gabungIzin_(nama, rows, tk);
     if (nama === 'Jadwal') validasiJadwal_(rows as Record<string, string>[], baca_('Jadwal'));
+
+    if (nama === 'Siswa') {
+      // Enforce clean UPSERT by normalized NIS (keep latest entry if same NIS appears more than once)
+      const byNisIdx = new Map<string, number>();
+      const deduped: Record<string, any>[] = [];
+      rows.forEach(s => {
+        const nisKey = String(s.NIS || '').trim().toLowerCase();
+        if (nisKey) {
+          const prevIdx = byNisIdx.get(nisKey);
+          if (prevIdx !== undefined) {
+            deduped[prevIdx] = { ...deduped[prevIdx], ...s };
+            return;
+          }
+          byNisIdx.set(nisKey, deduped.length);
+        }
+        deduped.push(s);
+      });
+      rows = deduped;
+    }
+
     tulis_(nama, rows);
+
     if (nama === 'Siswa') {
       const ada: Record<string, boolean> = {};
       rows.forEach(s => (ada[s.ID] = true));
       tulis_('Akun', baca_('Akun').filter(a => ada[a.SiswaID]));
+    } else if (nama === 'Kelas') {
+      // Remove orphaned students & class-specific records when a class is deleted
+      const validClassIds = new Set(rows.map(c => String(c.ID || '')));
+      const sisaSiswa = baca_('Siswa').filter(s => validClassIds.has(String(s.Kelas || '')));
+      tulis_('Siswa', sisaSiswa);
+      const validSid = new Set(sisaSiswa.map(s => s.ID));
+      tulis_('Akun', baca_('Akun').filter(a => validSid.has(a.SiswaID)));
+      ['Absensi', 'Nilai', 'Perilaku', 'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur'].forEach(sheetName => {
+        tulis_(sheetName, baca_(sheetName).filter(r => !r.Kelas || validClassIds.has(String(r.Kelas))));
+      });
     }
     return true;
   },

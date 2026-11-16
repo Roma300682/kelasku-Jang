@@ -7,6 +7,7 @@ import {
   tglIndo,
   pad,
   waLink,
+  waTarget,
   fetchJson,
   downloadAjarFile,
   downloadTextAsFile,
@@ -438,8 +439,8 @@ export default function StudentPortal({
                 p.waInfo,
                 `Halo Admin/Informasi ${p.sekolah || 'Sekolah'}, saya ${p.siswa?.Nama || ''} (NIS ${p.siswa?.NIS || ''}, Kelas ${p.kelas || ''}) ingin menanyakan informasi.`
               )}
-              target="_blank"
-              rel="noopener noreferrer"
+              target={waTarget()}
+              rel={waTarget() ? 'noopener noreferrer' : undefined}
               className="px-3 py-1.5 text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl transition-colors flex items-center gap-1.5 whitespace-nowrap shadow-sm"
             >
               <MessageCircle className="w-3.5 h-3.5" />

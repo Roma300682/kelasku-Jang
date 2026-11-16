@@ -165,16 +165,72 @@ export const acak = <T>(a: T[]): T[] => {
 
 export const urlAman = (u: string): boolean => /^https?:\/\//i.test(String(u || '').trim());
 
-export type WaLaunchMode = 'app' | 'web';
+export type WaLaunchMode = 'auto' | 'app' | 'web';
 
 const WA_LAUNCH_MODE_KEY = 'mk_wa_launch_mode_v1';
+
+export interface WaDeviceInfo {
+  platform: 'windows' | 'mac' | 'android' | 'ios' | 'other';
+  platformLabel: string;
+  isMobile: boolean;
+  recommendedLabel: string;
+}
+
+export const detectWaDeviceInfo = (): WaDeviceInfo => {
+  try {
+    const nav = typeof navigator !== 'undefined' ? navigator : null;
+    const ua = String(nav?.userAgent || '');
+    const plat = String((nav as any)?.userAgentData?.platform || nav?.platform || '');
+    const combined = `${plat} ${ua}`;
+
+    if (/android/i.test(combined)) {
+      return {
+        platform: 'android',
+        platformLabel: 'Android',
+        isMobile: true,
+        recommendedLabel: 'Android Intent WhatsApp (Otomatis)'
+      };
+    }
+    if (/iphone|ipad|ipod|ios/i.test(combined) || (/mac/i.test(plat) && typeof document !== 'undefined' && 'ontouchend' in document)) {
+      return {
+        platform: 'ios',
+        platformLabel: 'iPhone / iPad (iOS)',
+        isMobile: true,
+        recommendedLabel: 'Aplikasi WhatsApp iOS (whatsapp://)'
+      };
+    }
+    if (/win/i.test(combined)) {
+      return {
+        platform: 'windows',
+        platformLabel: 'Windows',
+        isMobile: false,
+        recommendedLabel: 'Aplikasi WhatsApp Windows (whatsapp://)'
+      };
+    }
+    if (/mac/i.test(combined)) {
+      return {
+        platform: 'mac',
+        platformLabel: 'macOS',
+        isMobile: false,
+        recommendedLabel: 'Aplikasi WhatsApp Mac (whatsapp://)'
+      };
+    }
+  } catch {}
+  return {
+    platform: 'other',
+    platformLabel: 'Perangkat Anda',
+    isMobile: false,
+    recommendedLabel: 'Aplikasi WhatsApp (whatsapp://)'
+  };
+};
 
 export const getWaMode = (): WaLaunchMode => {
   try {
     const saved = localStorage.getItem(WA_LAUNCH_MODE_KEY);
-    return saved === 'web' ? 'web' : 'app';
+    if (saved === 'web' || saved === 'app' || saved === 'auto') return saved;
+    return 'auto';
   } catch {
-    return 'app';
+    return 'auto';
   }
 };
 
@@ -199,6 +255,13 @@ export const waWebLink = (phone: string, text = ''): string => {
   return `https://web.whatsapp.com/send?phone=${digits}${q}`;
 };
 
+export const waApiLink = (phone: string, text = ''): string => {
+  const digits = normalizeWaDigits(phone);
+  if (!digits) return '';
+  const q = text ? `&text=${encodeURIComponent(text)}` : '';
+  return `https://api.whatsapp.com/send?phone=${digits}${q}`;
+};
+
 export const waAppLink = (phone: string, text = ''): string => {
   const digits = normalizeWaDigits(phone);
   if (!digits) return '';
@@ -206,9 +269,21 @@ export const waAppLink = (phone: string, text = ''): string => {
   return `whatsapp://send?phone=${digits}${q}`;
 };
 
+export const waIntentLink = (phone: string, text = ''): string => {
+  const digits = normalizeWaDigits(phone);
+  if (!digits) return '';
+  const encText = text ? `&text=${encodeURIComponent(text)}` : '';
+  const fallbackUrl = waApiLink(phone, text);
+  return `intent://send?phone=${digits}${encText}#Intent;scheme=whatsapp;S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};end`;
+};
+
 export const waLink = (phone: string, text = '', overrideMode?: WaLaunchMode): string => {
   const mode = overrideMode || getWaMode();
-  return mode === 'web' ? waWebLink(phone, text) : waAppLink(phone, text);
+  if (mode === 'web') return waWebLink(phone, text);
+  if (mode === 'app') return waAppLink(phone, text);
+  const dev = detectWaDeviceInfo();
+  if (dev.platform === 'android') return waIntentLink(phone, text);
+  return waAppLink(phone, text);
 };
 
 export const waTarget = (overrideMode?: WaLaunchMode): string | undefined => {

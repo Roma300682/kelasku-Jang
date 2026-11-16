@@ -30,7 +30,10 @@ import {
   MODUL_AWAL,
   TAB_THEME,
   DAY_THEME,
-  avatarColorFor
+  avatarColorFor,
+  ekstrakTingkatanKelas,
+  cocokCakupanKelasAjar,
+  formatLabelCakupanKelas
 } from './constants';
 import {
   callRaw,
@@ -52,6 +55,7 @@ import {
   adaPelajaran,
   slotJadwal,
   waLink,
+  waTarget,
   downloadAjarFile,
   downloadTextAsFile,
   getAjarFilePreviewUrl
@@ -1119,16 +1123,8 @@ export default function App() {
   }
 
   function isModulForClass(m: any, classId: string, classSubjects: string[]): boolean {
-    const kRaw = String(m?.Kelas || '').trim();
-    const subjectLowerSet = new Set(classSubjects.map(s => s.toLowerCase()));
-    const mMapel = String(m?.Mapel || '').trim().toLowerCase();
-    if (kRaw === '__ALL__' || kRaw === 'all') {
-      if (!mMapel || mMapel === 'umum') return true;
-      return subjectLowerSet.size === 0 || subjectLowerSet.has(mMapel);
-    }
-    if (!kRaw) return !mMapel || subjectLowerSet.has(mMapel);
-    const ids = kRaw.split(',').map(s => s.trim()).filter(Boolean);
-    return ids.includes(classId);
+    const cls = (db.Kelas || []).find((k: any) => k.ID === classId) || { ID: classId, Nama: '' };
+    return cocokCakupanKelasAjar(m?.Kelas, cls, classSubjects, m?.Mapel);
   }
 
   const siswaK = (db.Siswa || [])
@@ -1895,8 +1891,8 @@ export default function App() {
                         publicInfo.waInfo,
                         `Halo Admin ${publicInfo.sekolah}, saya siswa atas nama ${forgotSiswaNama || '[Nama Siswa]'} (NIS: ${forgotSiswaNis || '[NIS]'}) lupa PIN login Portal Siswa. Mohon bantuan reset PIN akun saya. Terima kasih.`
                       )}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      target={waTarget()}
+                      rel={waTarget() ? 'noopener noreferrer' : undefined}
                       className="w-full py-2.5 px-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-110 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md"
                     >
                       <MessageCircle className="w-4 h-4" /> Hubungi Admin via WhatsApp
@@ -1998,8 +1994,8 @@ export default function App() {
             {waInfoUrl && (
               <a
                 href={waInfoUrl}
-                target="_blank"
-                rel="noopener noreferrer"
+                target={waTarget()}
+                rel={waTarget() ? 'noopener noreferrer' : undefined}
                 className="w-full py-2 px-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:brightness-105 text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all"
               >
                 <MessageCircle className="w-4 h-4" />
@@ -2011,7 +2007,7 @@ export default function App() {
           </div>
         </div>
         {toastMsg && (
-          <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg">
+          <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg">
             {toastMsg}
           </div>
         )}
@@ -2032,7 +2028,7 @@ export default function App() {
           showToast={showToast}
         />
         {toastMsg && (
-          <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg">
+          <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg">
             {toastMsg}
           </div>
         )}
@@ -2355,8 +2351,8 @@ export default function App() {
                               x.s.NoSiswa || x.s.KontakOrtu,
                               `Halo ${x.s.Nama} (Kelas ${kelasObj.Nama}). Kami menginformasikan bahwa kamu tercatat ${x.a} hari tidak hadir tanpa keterangan (Alpa). Harap segera konfirmasi kepada Wali Kelas. Terima kasih.`
                             )}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                            target={waTarget()}
+                            rel={waTarget() ? 'noopener noreferrer' : undefined}
                             className="px-2.5 py-1 text-[11px] font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-lg flex items-center gap-1 shadow-2xs"
                           >
                             <MessageCircle className="w-3 h-3" /> WA Siswa
@@ -2368,8 +2364,8 @@ export default function App() {
                               x.s.NoOrtu,
                               `Assalamu'alaikum Bapak/Ibu Wali Murid dari ${x.s.Nama} (Kelas ${kelasObj.Nama}). Kami menginformasikan bahwa ananda tercatat ${x.a} hari tidak hadir tanpa keterangan (Alpa). Mohon konfirmasi kepada Wali Kelas. Terima kasih.`
                             )}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                            target={waTarget()}
+                            rel={waTarget() ? 'noopener noreferrer' : undefined}
                             className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg flex items-center gap-1 shadow-2xs"
                           >
                             <MessageCircle className="w-3 h-3" /> WA Ortu
@@ -3085,20 +3081,23 @@ export default function App() {
               onClick={async () => {
                 if (!nama.trim()) return showToast('Nama siswa wajib diisi');
                 const nisClean = nis.trim();
-                if (
-                  nisClean &&
-                  (db.Siswa || []).some(
-                    (x: any) =>
-                      x.ID !== id && String(x.NIS).trim().toLowerCase() === nisClean.toLowerCase()
-                  )
-                ) {
+                const nextSiswa = [...(db.Siswa || [])];
+                const existingByIdIdx = id ? nextSiswa.findIndex(x => x.ID === id) : -1;
+                const existingByNisIdx = nisClean
+                  ? nextSiswa.findIndex(
+                      (x: any) =>
+                        x.ID !== id &&
+                        String(x.NIS || '').trim().toLowerCase() === nisClean.toLowerCase()
+                    )
+                  : -1;
+
+                if (existingByIdIdx >= 0 && existingByNisIdx >= 0) {
                   return showToast('NIS sudah dipakai siswa lain');
                 }
-                const nextSiswa = [...(db.Siswa || [])];
-                const idx = nextSiswa.findIndex(x => x.ID === id);
-                if (idx >= 0) {
-                  nextSiswa[idx] = {
-                    ...nextSiswa[idx],
+
+                if (existingByIdIdx >= 0) {
+                  nextSiswa[existingByIdIdx] = {
+                    ...nextSiswa[existingByIdIdx],
                     Nama: nama.trim(),
                     NIS: nisClean,
                     TempatLahir: tempatLahir.trim(),
@@ -3109,6 +3108,22 @@ export default function App() {
                     Alamat: alm.trim(),
                     Kesehatan: kes.trim()
                   };
+                } else if (existingByNisIdx >= 0) {
+                  const prev = nextSiswa[existingByNisIdx];
+                  nextSiswa[existingByNisIdx] = {
+                    ...prev,
+                    Kelas: K,
+                    Nama: nama.trim() || prev.Nama || '',
+                    NIS: nisClean,
+                    TempatLahir: tempatLahir.trim() || prev.TempatLahir || '',
+                    TanggalLahir: tanggalLahir.trim() || prev.TanggalLahir || '',
+                    JenisKelamin: jenisKelamin || prev.JenisKelamin || '',
+                    NoSiswa: noSiswa.trim() || prev.NoSiswa || '',
+                    NoOrtu: noOrtu.trim() || prev.NoOrtu || '',
+                    Alamat: alm.trim() || prev.Alamat || '',
+                    Kesehatan: kes.trim() || prev.Kesehatan || ''
+                  };
+                  showToast(`UPSERT: Data NIS ${nisClean} diperbarui & dimasukkan ke kelas ${kelasObj.Nama || ''}`);
                 } else {
                   nextSiswa.push({
                     ID: uid(),
@@ -4603,7 +4618,7 @@ export default function App() {
           return t.ModulID && modIdSetFiltered.has(t.ModulID);
         }
         if (t.ModulID && modIdSetAll.has(t.ModulID)) return true;
-        return t.Kelas === K || t.Kelas === '__ALL__';
+        return isModulForClass(t, K, classMapelList);
       })
       .sort((a: any, b: any) => a.Kode.localeCompare(b.Kode, undefined, { numeric: true }));
 
@@ -4624,6 +4639,9 @@ export default function App() {
         : matListAllForClass.filter(
             (m: any) => String(m.Mapel || '').trim().toLowerCase() === activeAjarMapel.toLowerCase()
           );
+
+    const levelKelasIni = ekstrakTingkatanKelas(kelasObj.Nama || '');
+    const defaultTingkatScope = levelKelasIni ? `__TINGKAT__:${levelKelasIni}` : '__ALL__';
 
     const getModuleTps = (m: any) => tpList.filter((t: any) => t.ModulID === m.ID);
     const modMap = new Map<string, any>(modList.map((m: any) => [m.ID, m]));
@@ -4651,20 +4669,23 @@ export default function App() {
             defaultKode={defaultKode}
             defaultModulId={defaultModulId}
             modList={modList}
+            kelasList={db.Kelas || []}
+            currentKelasId={K}
             onClose={() => setModalContent(null)}
             showToast={showToast}
             onSave={async payload => {
               const newId = editRow ? editRow.ID : uid();
+              const tpScope = payload.Kelas || editRow?.Kelas || defaultTingkatScope;
               const nextTp = editRow
                 ? (db.TP || []).map((x: any) =>
-                    x.ID === editRow.ID ? { ...x, ...payload } : x
+                    x.ID === editRow.ID ? { ...x, ...payload, Kelas: tpScope } : x
                   )
                 : [
                     ...(db.TP || []),
                     {
                       ID: newId,
-                      Kelas: K,
-                      ...payload
+                      ...payload,
+                      Kelas: tpScope
                     }
                   ];
               const nextMod = syncModuleTpIds(nextTp, db.Modul || []);
@@ -4699,7 +4720,7 @@ export default function App() {
             onSave={async payload => {
               const modulId = editRow?.ID || uid();
               const { moduleTps, Kelas: savedKelas, ...modulFields } = payload;
-              const targetKelasScope = savedKelas || editRow?.Kelas || '__ALL__';
+              const targetKelasScope = savedKelas || editRow?.Kelas || defaultTingkatScope;
 
               const keptExistingIds = new Set(
                 moduleTps.map(mt => mt.existingId).filter(Boolean) as string[]
@@ -4818,7 +4839,7 @@ export default function App() {
             onSave={async payload => {
               const pemId = editRow?.ID || uid();
               const { Kelas: savedKelas, ...restPayload } = payload;
-              const targetKelasScope = savedKelas || editRow?.Kelas || '__ALL__';
+              const targetKelasScope = savedKelas || editRow?.Kelas || defaultTingkatScope;
               const nextPem = editRow
                 ? (db.Pemantik || []).map((x: any) =>
                     x.ID === pemId ? { ...x, Kelas: targetKelasScope, ...restPayload } : x
@@ -5352,16 +5373,12 @@ export default function App() {
                           </div>
                           <span
                             className={`px-2 py-0.5 text-[10px] font-bold rounded border shrink-0 ${
-                              isShared
+                              isShared || String(m.Kelas || '').startsWith('__TINGKAT__:')
                                 ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                                 : 'bg-slate-50 text-slate-600 border-slate-200'
                             }`}
                           >
-                            {m.Kelas === '__ALL__' || m.Kelas === 'all' || !m.Kelas
-                              ? 'Lintas Kelas (Mapel)'
-                              : String(m.Kelas).includes(',')
-                              ? `${String(m.Kelas).split(',').length} Kelas`
-                              : 'Kelas Ini'}
+                            {formatLabelCakupanKelas(m.Kelas)}
                           </span>
                         </div>
 
@@ -5667,7 +5684,12 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {modList.map((m: any) => {
                   const modTps = getModuleTps(m);
-                  const isShared = !m.Kelas || m.Kelas === '__ALL__' || m.Kelas === 'all' || String(m.Kelas).includes(',');
+                  const isShared =
+                    !m.Kelas ||
+                    m.Kelas === '__ALL__' ||
+                    m.Kelas === 'all' ||
+                    String(m.Kelas).startsWith('__TINGKAT__:') ||
+                    String(m.Kelas).includes(',');
                   return (
                     <div
                       key={m.ID}
@@ -5688,11 +5710,7 @@ export default function App() {
                                 : 'bg-slate-50 text-slate-600 border-slate-200'
                             }`}
                           >
-                            {m.Kelas === '__ALL__' || m.Kelas === 'all' || !m.Kelas
-                              ? 'Lintas Kelas (Mapel)'
-                              : String(m.Kelas).includes(',')
-                              ? `${String(m.Kelas).split(',').length} Kelas`
-                              : 'Kelas Ini'}
+                            {formatLabelCakupanKelas(m.Kelas)}
                           </span>
                         </div>
                         {m.FileID && (
@@ -8248,10 +8266,22 @@ export default function App() {
                     }}
                     onOpenAturMapel={openModalAturMapelKelas}
                     onDelete={async () => {
-                      if (await askConfirm(`Hapus kelas "${kls.Nama}"?`)) {
+                      if (
+                        await askConfirm(
+                          `Hapus kelas "${kls.Nama}"? Data siswa, absensi, dan nilai pada kelas ini ikut dibersihkan.`
+                        )
+                      ) {
                         const next = (db.Kelas || []).filter((x: any) => x.ID !== kls.ID);
-                        await persistSheets({ ...db, Kelas: next }, 'Kelas');
+                        const nextSiswa = (db.Siswa || []).filter((x: any) => x.Kelas !== kls.ID);
+                        const nextAbs = (db.Absensi || []).filter((x: any) => x.Kelas !== kls.ID);
+                        const nextNil = (db.Nilai || []).filter((x: any) => x.Kelas !== kls.ID);
+                        await persistSheets(
+                          { ...db, Kelas: next, Siswa: nextSiswa, Absensi: nextAbs, Nilai: nextNil },
+                          'Kelas',
+                          'Siswa'
+                        );
                         if (K === kls.ID) setK(next[0]?.ID || '');
+                        showToast(`Kelas "${kls.Nama}" & data terkait berhasil dihapus`);
                       }
                     }}
                   />
@@ -8596,8 +8626,8 @@ export default function App() {
                 S.waInfo,
                 `Halo Admin/Informasi ${S.sekolah || 'Sekolah'}, saya ${peran === 'admin' ? 'Admin' : db.namaPengguna} ingin berkoordinasi.`
               )}
-              target="_blank"
-              rel="noopener noreferrer"
+              target={waTarget()}
+              rel={waTarget() ? 'noopener noreferrer' : undefined}
               className="w-full py-1.5 px-2.5 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white font-semibold flex items-center justify-center gap-1.5 transition-colors"
             >
               <MessageCircle className="w-3.5 h-3.5" /> WA Informasi Sekolah
@@ -8663,8 +8693,8 @@ export default function App() {
                   S.waInfo,
                   `Halo Informasi ${S.sekolah || 'Sekolah'}, saya memerlukan informasi.`
                 )}
-                target="_blank"
-                rel="noopener noreferrer"
+                target={waTarget()}
+                rel={waTarget() ? 'noopener noreferrer' : undefined}
                 title="WhatsApp Informasi Sekolah"
                 className="px-3 py-1.5 text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl flex items-center gap-1.5 whitespace-nowrap shadow-xs"
               >
@@ -8915,7 +8945,7 @@ export default function App() {
 
       {/* Toast Notification */}
       {toastMsg && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-indigo-700 to-violet-700 text-white text-xs font-semibold px-5 py-2.5 rounded-full shadow-lg border border-white/20">
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] bg-gradient-to-r from-indigo-700 to-violet-700 text-white text-xs font-semibold px-5 py-2.5 rounded-full shadow-lg border border-white/20">
           {toastMsg}
         </div>
       )}

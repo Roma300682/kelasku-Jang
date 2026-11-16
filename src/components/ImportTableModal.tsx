@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { Upload, Download, FileSpreadsheet, AlertTriangle, CheckCircle2, X } from 'lucide-react';
+import { Upload, Download, FileSpreadsheet, CheckCircle2, X } from 'lucide-react';
 import { petaKolom, uid, uraiCSV } from '../api';
 import { HARI, STATUS_TP } from '../constants';
 
@@ -145,6 +145,9 @@ export default function ImportTableModal({
 
     const seenNisBatch = new Set<string>();
     const allSiswa = db.Siswa || [];
+    const kelasNamaById = new Map<string, string>(
+      (db.Kelas || []).map((k: any) => [String(k.ID || ''), String(k.Nama || '')])
+    );
 
     return dataRows
       .map((r, idx) => {
@@ -159,8 +162,9 @@ export default function ImportTableModal({
         const kesehatan = String((col.kesehatan !== undefined ? r[col.kesehatan] : '') || '').trim() || 'Normal';
 
         const nisLow = nis.toLowerCase();
-        let status: 'baru' | 'perbarui' | 'bentrok_kelas_lain' | 'duplikat_impor' | 'kosong' = 'baru';
+        let status: 'baru' | 'perbarui' | 'pindah_update' | 'duplikat_impor' | 'kosong' = 'baru';
         let existingId = '';
+        let prevKelasInfo = '';
 
         if (!nama) {
           status = 'kosong';
@@ -173,11 +177,13 @@ export default function ImportTableModal({
               (s: any) => String(s.NIS || '').trim().toLowerCase() === nisLow
             );
             if (matchAny) {
+              existingId = matchAny.ID;
               if (matchAny.Kelas === kelasId) {
                 status = 'perbarui';
-                existingId = matchAny.ID;
               } else {
-                status = 'bentrok_kelas_lain';
+                status = 'pindah_update';
+                const prevName = kelasNamaById.get(String(matchAny.Kelas || ''));
+                prevKelasInfo = prevName ? `dari ${prevName}` : 'data lama / kelas terhapus';
               }
             }
           }
@@ -186,6 +192,7 @@ export default function ImportTableModal({
         return {
           rowNum: idx + 1,
           existingId,
+          prevKelasInfo,
           nama,
           nis,
           tempatLahir,
@@ -199,7 +206,7 @@ export default function ImportTableModal({
         };
       })
       .filter(x => x.status !== 'kosong');
-  }, [mode, rawText, db.Siswa, kelasId]);
+  }, [mode, rawText, db.Siswa, db.Kelas, kelasId]);
 
   const parsedNilai = useMemo(() => {
     if (mode !== 'nilai' || !rawText.trim()) return [];
@@ -423,7 +430,9 @@ export default function ImportTableModal({
   const validCount =
     mode === 'siswa'
       ? parsedSiswa.filter(
-          x => x.status === 'baru' || (x.status === 'perbarui' && updateExistingSiswa)
+          x =>
+            x.status === 'baru' ||
+            ((x.status === 'perbarui' || x.status === 'pindah_update') && updateExistingSiswa)
         ).length
       : mode === 'nilai'
       ? parsedNilai.filter(x => x.valid).length
@@ -458,11 +467,16 @@ export default function ImportTableModal({
               Kesehatan: item.kesehatan
             });
             added++;
-          } else if (item.status === 'perbarui' && updateExistingSiswa && item.existingId) {
+          } else if (
+            (item.status === 'perbarui' || item.status === 'pindah_update') &&
+            updateExistingSiswa &&
+            item.existingId
+          ) {
             const idx = nextSiswa.findIndex(x => x.ID === item.existingId);
             if (idx >= 0) {
               nextSiswa[idx] = {
                 ...nextSiswa[idx],
+                Kelas: kelasId,
                 Nama: item.nama,
                 NIS: item.nis,
                 TempatLahir: item.tempatLahir || nextSiswa[idx].TempatLahir || '',
@@ -667,7 +681,7 @@ export default function ImportTableModal({
                 onChange={e => setUpdateExistingSiswa(e.target.checked)}
                 className="w-4 h-4 rounded text-indigo-600"
               />
-              Perbarui data siswa otomatis jika NIS sudah terdaftar di kelas {kelasNama}
+              Sistem UPSERT aktif: otomatis perbarui data &amp; masukkan ke kelas {kelasNama} jika NIS sudah ada di database
             </label>
           )}
 
@@ -713,16 +727,18 @@ export default function ImportTableModal({
                           <td className="py-1.5 px-3 text-slate-600">{row.kesehatan}</td>
                           <td className="py-1.5 px-3 whitespace-nowrap">
                             {row.status === 'baru' && (
-                              <span className="text-emerald-700 font-semibold">Baru</span>
+                              <span className="text-emerald-700 font-semibold">Baru (Insert)</span>
                             )}
                             {row.status === 'perbarui' && (
                               <span className="text-sky-700 font-semibold">
-                                {updateExistingSiswa ? 'Perbarui' : 'Dilewati (NIS ada)'}
+                                {updateExistingSiswa ? 'Perbarui (Update)' : 'Dilewati (NIS ada)'}
                               </span>
                             )}
-                            {row.status === 'bentrok_kelas_lain' && (
-                              <span className="text-rose-600 font-semibold inline-flex items-center gap-1">
-                                <AlertTriangle className="w-3 h-3" /> NIS di kelas lain
+                            {row.status === 'pindah_update' && (
+                              <span className="text-indigo-700 font-semibold">
+                                {updateExistingSiswa
+                                  ? `UPSERT → Pindah ke ${kelasNama} (${row.prevKelasInfo})`
+                                  : 'Dilewati (NIS ada)'}
                               </span>
                             )}
                             {row.status === 'duplikat_impor' && (
