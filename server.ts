@@ -120,7 +120,7 @@ function extractOfficeXmlText(buf: Buffer): string {
 const SKEMA: Record<string, string[]> = {
   Pengaturan: ['Kunci', 'Nilai'],
   Kelas: ['ID', 'Nama', 'Jurusan', 'Mapel'],
-  Siswa: ['ID', 'Kelas', 'Nama', 'NIS', 'TempatLahir', 'TanggalLahir', 'JenisKelamin', 'NoSiswa', 'NoOrtu', 'Alamat', 'Kesehatan'],
+  Siswa: ['ID', 'Kelas', 'Nama', 'NIS', 'TempatLahir', 'TanggalLahir', 'JenisKelamin', 'NoSiswa', 'NoOrtu', 'Alamat', 'Kesehatan', 'Foto'],
   Absensi: ['Kelas', 'Tanggal', 'SiswaID', 'Kode', 'Keterangan', 'Sumber'],
   Tugas: ['ID', 'Kelas', 'Judul', 'Mapel', 'Deskripsi', 'Tenggat', 'Jenis', 'FileID', 'NamaFile'],
   Pengumpulan: ['TugasID', 'SiswaID', 'Status', 'Nilai', 'FileID', 'NamaFile', 'TanggalKumpul', 'CatatanSiswa'],
@@ -1104,7 +1104,8 @@ function normalizeLoadedDb(rawDb: DatabaseFile): DatabaseFile {
     TanggalLahir: s.TanggalLahir || '',
     JenisKelamin: s.JenisKelamin || '',
     NoSiswa: s.NoSiswa || s.KontakOrtu || '',
-    NoOrtu: s.NoOrtu || ''
+    NoOrtu: s.NoOrtu || '',
+    Foto: s.Foto || ''
   }));
   const tpToModul = new Map<string, string>();
   (rawDb.sheets.Modul || []).forEach((m: any) => {
@@ -2249,7 +2250,8 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
         Alamat: siswa.Alamat || '',
         NoSiswa: siswa.NoSiswa || siswa.KontakOrtu || '',
         NoOrtu: siswa.NoOrtu || '',
-        Kesehatan: siswa.Kesehatan || ''
+        Kesehatan: siswa.Kesehatan || '',
+        Foto: siswa.Foto || ''
       },
       kelasId: siswa.Kelas || '',
       kelas: kelas.Nama || '',
@@ -2498,6 +2500,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       NoSiswa?: string;
       NoOrtu?: string;
       Kesehatan?: string;
+      Foto?: string;
     }
   ) {
     const sesi = sesi_(token, 'siswa');
@@ -2513,6 +2516,13 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
         : jkRaw === 'P' || jkRaw.toLowerCase() === 'perempuan'
         ? 'Perempuan'
         : '';
+    const fotoRaw = payload?.Foto !== undefined ? String(payload.Foto || '').trim() : String(cur.Foto || '').trim();
+    const fotoSafe =
+      /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(fotoRaw) && fotoRaw.length <= 450000
+        ? fotoRaw
+        : /^https?:\/\/\S+$/i.test(fotoRaw) && fotoRaw.length <= 600
+        ? fotoRaw
+        : '';
     semua[idx] = {
       ...cur,
       Nama: namaClean || cur.Nama,
@@ -2522,7 +2532,8 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       Alamat: String(payload?.Alamat ?? cur.Alamat ?? '').trim().slice(0, 250),
       NoSiswa: String(payload?.NoSiswa ?? cur.NoSiswa ?? '').trim().slice(0, 30),
       NoOrtu: String(payload?.NoOrtu ?? cur.NoOrtu ?? '').trim().slice(0, 30),
-      Kesehatan: String(payload?.Kesehatan ?? cur.Kesehatan ?? '').trim().slice(0, 120)
+      Kesehatan: String(payload?.Kesehatan ?? cur.Kesehatan ?? '').trim().slice(0, 120),
+      Foto: fotoSafe
     };
     tulis_('Siswa', semua);
     if (namaClean && namaClean !== sesi.nama) {
@@ -2542,7 +2553,8 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       Alamat: upd.Alamat || '',
       NoSiswa: upd.NoSiswa || '',
       NoOrtu: upd.NoOrtu || '',
-      Kesehatan: upd.Kesehatan || ''
+      Kesehatan: upd.Kesehatan || '',
+      Foto: upd.Foto || ''
     };
   },
 

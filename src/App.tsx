@@ -82,6 +82,7 @@ import {
   useOfflineStatus
 } from './components/PwaOfflineControls';
 import { syncOfflineQueueNow } from './offlineSync';
+import { SiswaEditorModalBody } from './components/SiswaEditorModalBody';
 import {
   AturMapelKelasModal,
   EditableKelasRow,
@@ -2497,14 +2498,23 @@ export default function App() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {pkHari.map((p: any) => {
                   const nama = namaSiswa(p.SiswaID);
+                  const sObj = (db.Siswa || []).find((x: any) => x.ID === p.SiswaID);
                   return (
                     <div
                       key={p.ID}
                       className="p-3 rounded-xl bg-gradient-to-br from-emerald-50/70 to-teal-50/50 border border-emerald-200 flex items-center gap-2.5"
                     >
-                      <div className={`w-7 h-7 rounded-lg bg-gradient-to-br ${avatarColorFor(nama)} text-white text-xs font-bold flex items-center justify-center shrink-0`}>
-                        {nama.slice(0, 1).toUpperCase()}
-                      </div>
+                      {sObj?.Foto ? (
+                        <img
+                          src={sObj.Foto}
+                          alt={nama}
+                          className="w-7 h-7 rounded-lg object-cover border border-emerald-200 shrink-0"
+                        />
+                      ) : (
+                        <div className={`w-7 h-7 rounded-lg bg-gradient-to-br ${avatarColorFor(nama)} text-white text-xs font-bold flex items-center justify-center shrink-0`}>
+                          {nama.slice(0, 1).toUpperCase()}
+                        </div>
+                      )}
                       <div className="min-w-0">
                         <div className="text-xs font-bold text-slate-900 truncate">{nama}</div>
                         <div className="text-[11px] text-teal-700 truncate">{p.Tugas || '-'}</div>
@@ -2893,12 +2903,20 @@ export default function App() {
       render: () => (
         <div className="space-y-4">
           <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 via-orange-50 to-indigo-50 border border-amber-200/80 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <div
-                className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${avatarColorFor(s.Nama || 'S')} text-white text-lg font-bold flex items-center justify-center shrink-0 shadow-sm`}
-              >
-                {String(s.Nama || 'S').slice(0, 1).toUpperCase()}
-              </div>
+            <div className="flex items-center gap-3.5 min-w-0">
+              {s.Foto ? (
+                <img
+                  src={s.Foto}
+                  alt={s.Nama || 'Foto Siswa'}
+                  className="w-16 h-16 rounded-2xl object-cover border-2 border-white shadow-sm shrink-0 bg-white"
+                />
+              ) : (
+                <div
+                  className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${avatarColorFor(s.Nama || 'S')} text-white text-xl font-bold flex items-center justify-center shrink-0 shadow-sm`}
+                >
+                  {String(s.Nama || 'S').slice(0, 1).toUpperCase()}
+                </div>
+              )}
               <div className="min-w-0">
                 <h4 className="text-base font-bold text-slate-900 truncate">{s.Nama || '-'}</h4>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 mt-0.5">
@@ -3020,189 +3038,83 @@ export default function App() {
 
   function openModalSiswa(id?: string) {
     const s = (db.Siswa || []).find((x: any) => x.ID === id) || {};
-    let nama = s.Nama || '';
-    let nis = s.NIS || '';
-    let tempatLahir = s.TempatLahir || '';
-    let tanggalLahir = s.TanggalLahir || '';
-    let jenisKelamin = s.JenisKelamin || '';
-    let noSiswa = s.NoSiswa || s.KontakOrtu || '';
-    let noOrtu = s.NoOrtu || '';
-    let alm = s.Alamat || '';
-    let kes = s.Kesehatan || '';
 
     setModalContent({
       title: id ? 'Edit Data & Profil Siswa' : 'Tambah Siswa Baru',
       wide: true,
       render: () => (
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="block text-xs font-semibold text-slate-700">
-              NIS / NISN (Username Portal Siswa)
-              <input
-                defaultValue={nis}
-                placeholder="102601"
-                onChange={e => (nis = e.target.value)}
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono"
-              />
-            </label>
-            <label className="block text-xs font-semibold text-slate-700">
-              Nama Lengkap
-              <input
-                defaultValue={nama}
-                placeholder="Nama lengkap siswa"
-                onChange={e => (nama = e.target.value)}
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-              />
-            </label>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <label className="block text-xs font-semibold text-slate-700">
-              Tempat Lahir
-              <input
-                defaultValue={tempatLahir}
-                placeholder="Bandung"
-                onChange={e => (tempatLahir = e.target.value)}
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-              />
-            </label>
-            <label className="block text-xs font-semibold text-slate-700">
-              Tanggal Lahir
-              <input
-                type="date"
-                defaultValue={tanggalLahir}
-                onChange={e => (tanggalLahir = e.target.value)}
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-              />
-            </label>
-            <label className="block text-xs font-semibold text-slate-700">
-              Jenis Kelamin
-              <select
-                defaultValue={jenisKelamin}
-                onChange={e => (jenisKelamin = e.target.value)}
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
-              >
-                <option value="">-- Pilih --</option>
-                <option value="Laki-laki">Laki-laki</option>
-                <option value="Perempuan">Perempuan</option>
-              </select>
-            </label>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="block text-xs font-semibold text-slate-700">
-              No. HP / WA Siswa
-              <input
-                defaultValue={noSiswa}
-                placeholder="0812..."
-                onChange={e => (noSiswa = e.target.value)}
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono"
-              />
-            </label>
-            <label className="block text-xs font-semibold text-slate-700">
-              No. HP / WA Orang Tua
-              <input
-                defaultValue={noOrtu}
-                placeholder="0813..."
-                onChange={e => (noOrtu = e.target.value)}
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono"
-              />
-            </label>
-          </div>
-          <label className="block text-xs font-semibold text-slate-700">
-            Alamat Tempat Tinggal
-            <input
-              defaultValue={alm}
-              placeholder="Jl. Nama Jalan No. ..."
-              onChange={e => (alm = e.target.value)}
-              className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-            />
-          </label>
-          <label className="block text-xs font-semibold text-slate-700">
-            Catatan Kesehatan
-            <input
-              defaultValue={kes}
-              placeholder="Normal / riwayat khusus"
-              onChange={e => (kes = e.target.value)}
-              className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-            />
-          </label>
-          <div className="flex justify-end gap-2 pt-3">
-            <button
-              onClick={() => setModalContent(null)}
-              className="px-4 py-2 text-xs font-semibold bg-slate-100 text-slate-700 rounded-lg"
-            >
-              Batal
-            </button>
-            <button
-              onClick={async () => {
-                if (!nama.trim()) return showToast('Nama siswa wajib diisi');
-                const nisClean = nis.trim();
-                const nextSiswa = [...(db.Siswa || [])];
-                const existingByIdIdx = id ? nextSiswa.findIndex(x => x.ID === id) : -1;
-                const existingByNisIdx = nisClean
-                  ? nextSiswa.findIndex(
-                      (x: any) =>
-                        x.ID !== id &&
-                        String(x.NIS || '').trim().toLowerCase() === nisClean.toLowerCase()
-                    )
-                  : -1;
+        <SiswaEditorModalBody
+          initial={s}
+          showToast={showToast}
+          onCancel={() => setModalContent(null)}
+          onSubmit={async payload => {
+            const nisClean = payload.NIS;
+            const nextSiswa = [...(db.Siswa || [])];
+            const existingByIdIdx = id ? nextSiswa.findIndex(x => x.ID === id) : -1;
+            const existingByNisIdx = nisClean
+              ? nextSiswa.findIndex(
+                  (x: any) =>
+                    x.ID !== id &&
+                    String(x.NIS || '').trim().toLowerCase() === nisClean.toLowerCase()
+                )
+              : -1;
 
-                if (existingByIdIdx >= 0 && existingByNisIdx >= 0) {
-                  return showToast('NIS sudah dipakai siswa lain');
-                }
+            if (existingByIdIdx >= 0 && existingByNisIdx >= 0) {
+              showToast('NIS sudah dipakai siswa lain');
+              return;
+            }
 
-                if (existingByIdIdx >= 0) {
-                  nextSiswa[existingByIdIdx] = {
-                    ...nextSiswa[existingByIdIdx],
-                    Nama: nama.trim(),
-                    NIS: nisClean,
-                    TempatLahir: tempatLahir.trim(),
-                    TanggalLahir: tanggalLahir.trim(),
-                    JenisKelamin: jenisKelamin,
-                    NoSiswa: noSiswa.trim(),
-                    NoOrtu: noOrtu.trim(),
-                    Alamat: alm.trim(),
-                    Kesehatan: kes.trim()
-                  };
-                } else if (existingByNisIdx >= 0) {
-                  const prev = nextSiswa[existingByNisIdx];
-                  nextSiswa[existingByNisIdx] = {
-                    ...prev,
-                    Kelas: K,
-                    Nama: nama.trim() || prev.Nama || '',
-                    NIS: nisClean,
-                    TempatLahir: tempatLahir.trim() || prev.TempatLahir || '',
-                    TanggalLahir: tanggalLahir.trim() || prev.TanggalLahir || '',
-                    JenisKelamin: jenisKelamin || prev.JenisKelamin || '',
-                    NoSiswa: noSiswa.trim() || prev.NoSiswa || '',
-                    NoOrtu: noOrtu.trim() || prev.NoOrtu || '',
-                    Alamat: alm.trim() || prev.Alamat || '',
-                    Kesehatan: kes.trim() || prev.Kesehatan || ''
-                  };
-                  showToast(`UPSERT: Data NIS ${nisClean} diperbarui & dimasukkan ke kelas ${kelasObj.Nama || ''}`);
-                } else {
-                  nextSiswa.push({
-                    ID: uid(),
-                    Kelas: K,
-                    Nama: nama.trim(),
-                    NIS: nisClean,
-                    TempatLahir: tempatLahir.trim(),
-                    TanggalLahir: tanggalLahir.trim(),
-                    JenisKelamin: jenisKelamin,
-                    NoSiswa: noSiswa.trim(),
-                    NoOrtu: noOrtu.trim(),
-                    Alamat: alm.trim(),
-                    Kesehatan: kes.trim()
-                  });
-                }
-                setModalContent(null);
-                await persistSheets({ ...db, Siswa: nextSiswa }, 'Siswa');
-              }}
-              className="px-4 py-2 text-xs font-semibold bg-slate-900 text-white rounded-lg"
-            >
-              Simpan
-            </button>
-          </div>
-        </div>
+            if (existingByIdIdx >= 0) {
+              nextSiswa[existingByIdIdx] = {
+                ...nextSiswa[existingByIdIdx],
+                Nama: payload.Nama,
+                NIS: nisClean,
+                TempatLahir: payload.TempatLahir,
+                TanggalLahir: payload.TanggalLahir,
+                JenisKelamin: payload.JenisKelamin,
+                NoSiswa: payload.NoSiswa,
+                NoOrtu: payload.NoOrtu,
+                Alamat: payload.Alamat,
+                Kesehatan: payload.Kesehatan,
+                Foto: payload.Foto
+              };
+            } else if (existingByNisIdx >= 0) {
+              const prev = nextSiswa[existingByNisIdx];
+              nextSiswa[existingByNisIdx] = {
+                ...prev,
+                Kelas: K,
+                Nama: payload.Nama || prev.Nama || '',
+                NIS: nisClean,
+                TempatLahir: payload.TempatLahir || prev.TempatLahir || '',
+                TanggalLahir: payload.TanggalLahir || prev.TanggalLahir || '',
+                JenisKelamin: payload.JenisKelamin || prev.JenisKelamin || '',
+                NoSiswa: payload.NoSiswa || prev.NoSiswa || '',
+                NoOrtu: payload.NoOrtu || prev.NoOrtu || '',
+                Alamat: payload.Alamat || prev.Alamat || '',
+                Kesehatan: payload.Kesehatan || prev.Kesehatan || '',
+                Foto: payload.Foto || prev.Foto || ''
+              };
+              showToast(`UPSERT: Data NIS ${nisClean} diperbarui & dimasukkan ke kelas ${kelasObj.Nama || ''}`);
+            } else {
+              nextSiswa.push({
+                ID: uid(),
+                Kelas: K,
+                Nama: payload.Nama,
+                NIS: nisClean,
+                TempatLahir: payload.TempatLahir,
+                TanggalLahir: payload.TanggalLahir,
+                JenisKelamin: payload.JenisKelamin,
+                NoSiswa: payload.NoSiswa,
+                NoOrtu: payload.NoOrtu,
+                Alamat: payload.Alamat,
+                Kesehatan: payload.Kesehatan,
+                Foto: payload.Foto
+              });
+            }
+            setModalContent(null);
+            await persistSheets({ ...db, Siswa: nextSiswa }, 'Siswa');
+          }}
+        />
       )
     });
   }
@@ -3681,9 +3593,17 @@ export default function App() {
                             onClick={() => openModalProfilSiswa(s)}
                             className="flex items-center gap-2.5 text-left group cursor-pointer"
                           >
-                            <div className={`w-7 h-7 rounded-lg bg-gradient-to-br ${avatarColorFor(s.Nama)} text-white text-xs font-bold flex items-center justify-center shrink-0`}>
-                              {s.Nama.slice(0, 1).toUpperCase()}
-                            </div>
+                            {s.Foto ? (
+                              <img
+                                src={s.Foto}
+                                alt={s.Nama}
+                                className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0 bg-white"
+                              />
+                            ) : (
+                              <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${avatarColorFor(s.Nama)} text-white text-xs font-bold flex items-center justify-center shrink-0`}>
+                                {s.Nama.slice(0, 1).toUpperCase()}
+                              </div>
+                            )}
                             <span className="font-semibold text-slate-900 group-hover:text-indigo-700 group-hover:underline">
                               {s.Nama}
                             </span>

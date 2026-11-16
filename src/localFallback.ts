@@ -1234,7 +1234,8 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
         Alamat: siswa.Alamat || '',
         NoSiswa: siswa.NoSiswa || siswa.KontakOrtu || '',
         NoOrtu: siswa.NoOrtu || '',
-        Kesehatan: siswa.Kesehatan || ''
+        Kesehatan: siswa.Kesehatan || '',
+        Foto: siswa.Foto || ''
       },
       kelasId: siswa.Kelas || '',
       kelas: kelas.Nama || '',
@@ -1420,6 +1421,13 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
         : jkRaw === 'P' || jkRaw.toLowerCase() === 'perempuan'
         ? 'Perempuan'
         : '';
+    const fotoRaw = payload?.Foto !== undefined ? String(payload.Foto || '').trim() : String(cur.Foto || '').trim();
+    const fotoSafe =
+      /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(fotoRaw) && fotoRaw.length <= 450000
+        ? fotoRaw
+        : /^https?:\/\/\S+$/i.test(fotoRaw) && fotoRaw.length <= 600
+        ? fotoRaw
+        : '';
     list[idx] = {
       ...cur,
       Nama: namaClean || cur.Nama,
@@ -1429,7 +1437,8 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
       Alamat: String(payload?.Alamat ?? cur.Alamat ?? '').trim().slice(0, 250),
       NoSiswa: String(payload?.NoSiswa ?? cur.NoSiswa ?? '').trim().slice(0, 30),
       NoOrtu: String(payload?.NoOrtu ?? cur.NoOrtu ?? '').trim().slice(0, 30),
-      Kesehatan: String(payload?.Kesehatan ?? cur.Kesehatan ?? '').trim().slice(0, 120)
+      Kesehatan: String(payload?.Kesehatan ?? cur.Kesehatan ?? '').trim().slice(0, 120),
+      Foto: fotoSafe
     };
     if (namaClean) {
       const map = getSessions();

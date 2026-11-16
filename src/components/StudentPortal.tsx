@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { KODE, HARI, LVL_STR, JENIS_AK } from '../constants';
+import { KODE, HARI, LVL_STR, JENIS_AK, avatarColorFor } from '../constants';
 import {
   num,
   fmt,
@@ -11,7 +11,8 @@ import {
   fetchJson,
   downloadAjarFile,
   downloadTextAsFile,
-  getAjarFilePreviewUrl
+  getAjarFilePreviewUrl,
+  prosesFotoSiswa
 } from '../api';
 import { parseSumberLinks } from './PerangkatAjarModals';
 import { ClassChatDrawer } from './ClassChatDrawer';
@@ -45,7 +46,9 @@ import {
   MapPin,
   Phone,
   Edit3,
-  HeartPulse
+  HeartPulse,
+  Camera,
+  Trash2
 } from 'lucide-react';
 
 interface StudentPortalProps {
@@ -108,6 +111,7 @@ export default function StudentPortal({
   // Student Profile Biodata Modal State
   const [profilModalOpen, setProfilModalOpen] = useState(false);
   const [savingProfil, setSavingProfil] = useState(false);
+  const [processingFoto, setProcessingFoto] = useState(false);
   const [profilForm, setProfilForm] = useState({
     Nama: '',
     TempatLahir: '',
@@ -116,7 +120,8 @@ export default function StudentPortal({
     Alamat: '',
     NoSiswa: '',
     NoOrtu: '',
-    Kesehatan: ''
+    Kesehatan: '',
+    Foto: ''
   });
 
   React.useEffect(() => {
@@ -477,11 +482,49 @@ export default function StudentPortal({
         <div className="bg-gradient-to-r from-sky-600 via-indigo-600 to-violet-600 rounded-2xl p-6 text-white shadow-lg shadow-indigo-500/20 space-y-5">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-3.5 min-w-0">
+              <button
+                type="button"
+                title="Klik untuk mengganti foto profil"
+                onClick={() => {
+                  setProfilForm({
+                    Nama: p.siswa?.Nama || '',
+                    TempatLahir: p.siswa?.TempatLahir || '',
+                    TanggalLahir: p.siswa?.TanggalLahir || '',
+                    JenisKelamin: p.siswa?.JenisKelamin || '',
+                    Alamat: p.siswa?.Alamat || '',
+                    NoSiswa: p.siswa?.NoSiswa || '',
+                    NoOrtu: p.siswa?.NoOrtu || '',
+                    Kesehatan: p.siswa?.Kesehatan || '',
+                    Foto: p.siswa?.Foto || ''
+                  });
+                  setProfilModalOpen(true);
+                }}
+                className="relative group shrink-0 cursor-pointer"
+              >
+                {p.siswa?.Foto ? (
+                  <img
+                    src={p.siswa.Foto}
+                    alt={p.siswa?.Nama || 'Foto Profil'}
+                    className="w-14 h-14 rounded-2xl object-cover border-2 border-white/90 shadow-md bg-white"
+                  />
+                ) : (
+                  <div
+                    className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${avatarColorFor(
+                      p.siswa?.Nama || 'S'
+                    )} border-2 border-white/80 text-white text-xl font-bold flex items-center justify-center shadow-md`}
+                  >
+                    {String(p.siswa?.Nama || 'S').slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-white text-indigo-700 border border-indigo-200 flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
+                  <Camera className="w-3 h-3" />
+                </span>
+              </button>
               {p.jurusanLogo && (
                 <img
                   src={p.jurusanLogo}
                   alt={`Logo ${p.jurusan}`}
-                  className="w-12 h-12 rounded-2xl object-contain bg-white/95 p-1 shadow-sm shrink-0"
+                  className="w-11 h-11 rounded-2xl object-contain bg-white/95 p-1 shadow-sm shrink-0 hidden sm:block"
                 />
               )}
               <div className="min-w-0">
@@ -553,13 +596,30 @@ export default function StudentPortal({
         {/* Profil Biodata Siswa Section */}
         <section className="bg-white border border-indigo-100 rounded-2xl p-6 space-y-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <User className="w-4 h-4 text-indigo-600" /> Profil Biodata Siswa
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Identitas pribadi &amp; kontak orang tua yang tersinkron langsung dengan akun Admin &amp; Wali Kelas.
-              </p>
+            <div className="flex items-center gap-3 min-w-0">
+              {p.siswa?.Foto ? (
+                <img
+                  src={p.siswa.Foto}
+                  alt={p.siswa?.Nama || 'Foto Profil'}
+                  className="w-12 h-12 rounded-2xl object-cover border border-indigo-200 shadow-xs shrink-0"
+                />
+              ) : (
+                <div
+                  className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${avatarColorFor(
+                    p.siswa?.Nama || 'S'
+                  )} text-white text-base font-bold flex items-center justify-center shadow-xs shrink-0`}
+                >
+                  {String(p.siswa?.Nama || 'S').slice(0, 1).toUpperCase()}
+                </div>
+              )}
+              <div>
+                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <User className="w-4 h-4 text-indigo-600" /> Profil Biodata Siswa
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Identitas pribadi, foto profil &amp; kontak orang tua yang tersinkron langsung dengan akun Admin &amp; Wali Kelas.
+                </p>
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg">
@@ -576,7 +636,8 @@ export default function StudentPortal({
                     Alamat: p.siswa?.Alamat || '',
                     NoSiswa: p.siswa?.NoSiswa || '',
                     NoOrtu: p.siswa?.NoOrtu || '',
-                    Kesehatan: p.siswa?.Kesehatan || ''
+                    Kesehatan: p.siswa?.Kesehatan || '',
+                    Foto: p.siswa?.Foto || ''
                   });
                   setProfilModalOpen(true);
                 }}
@@ -2226,7 +2287,8 @@ export default function StudentPortal({
                   Alamat: profilForm.Alamat.trim(),
                   NoSiswa: profilForm.NoSiswa.trim(),
                   NoOrtu: profilForm.NoOrtu.trim(),
-                  Kesehatan: profilForm.Kesehatan.trim()
+                  Kesehatan: profilForm.Kesehatan.trim(),
+                  Foto: profilForm.Foto
                 });
                 try {
                   if (typeof BroadcastChannel !== 'undefined') {
@@ -2238,7 +2300,7 @@ export default function StudentPortal({
                 } catch (_) {}
                 setProfilModalOpen(false);
                 await onRefresh();
-                showToast('Profil tersimpan & langsung tersinkron ke akun Admin', 3500);
+                showToast('Profil & foto tersimpan dan langsung tersinkron ke akun Admin', 3500);
               } catch (err: any) {
                 showToast(err?.message || 'Gagal memperbarui profil', 4000);
               } finally {
@@ -2253,7 +2315,7 @@ export default function StudentPortal({
                   <User className="w-4 h-4 text-indigo-600" /> Edit &amp; Lengkapi Profil Siswa
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Perubahan biodata Anda otomatis tersinkron ke data induk di akun Admin &amp; Wali Kelas.
+                  Perubahan foto &amp; biodata Anda otomatis tersinkron ke data induk di akun Admin &amp; Wali Kelas.
                 </p>
               </div>
               <button
@@ -2267,6 +2329,69 @@ export default function StudentPortal({
             </div>
 
             <div className="p-6 space-y-3.5">
+              {/* Foto Profil Upload */}
+              <div className="p-3.5 rounded-2xl bg-indigo-50/60 border border-indigo-100 flex flex-wrap items-center gap-4">
+                {profilForm.Foto ? (
+                  <img
+                    src={profilForm.Foto}
+                    alt={profilForm.Nama || 'Foto Profil'}
+                    className="w-18 h-18 rounded-2xl object-cover border-2 border-white shadow-sm bg-white shrink-0"
+                  />
+                ) : (
+                  <div
+                    className={`w-18 h-18 rounded-2xl bg-gradient-to-br ${avatarColorFor(
+                      profilForm.Nama || p.siswa?.Nama || 'S'
+                    )} text-white text-2xl font-bold flex items-center justify-center shadow-sm shrink-0`}
+                  >
+                    {String(profilForm.Nama || p.siswa?.Nama || 'S').slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <div className="flex-1 min-w-[200px] space-y-1.5">
+                  <div className="text-xs font-bold text-slate-900">Foto Profil Siswa</div>
+                  <p className="text-[11px] text-slate-500">
+                    Unggah foto wajah terbaik Anda (JPG, PNG, atau WebP). Otomatis terkompresi rapi.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <label className="px-3 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl inline-flex items-center gap-1.5 cursor-pointer shadow-2xs">
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>{processingFoto ? 'Memproses…' : profilForm.Foto ? 'Ganti Foto' : 'Unggah Foto'}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={processingFoto || savingProfil}
+                        onChange={async e => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (!file) return;
+                          setProcessingFoto(true);
+                          try {
+                            const dataUrl = await prosesFotoSiswa(file, 256);
+                            setProfilForm(f => ({ ...f, Foto: dataUrl }));
+                            showToast('Foto siap disimpan — klik Simpan untuk menyinkronkan', 2500);
+                          } catch (err: any) {
+                            showToast(err?.message || 'Gagal memproses foto', 3500);
+                          } finally {
+                            setProcessingFoto(false);
+                          }
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                    {profilForm.Foto && (
+                      <button
+                        type="button"
+                        disabled={processingFoto || savingProfil}
+                        onClick={() => setProfilForm(f => ({ ...f, Foto: '' }))}
+                        className="px-3 py-1.5 text-xs font-semibold bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-xl inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Hapus Foto</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-100 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div>
                   <span className="text-slate-500">NIS (Username Portal): </span>

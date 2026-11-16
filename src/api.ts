@@ -691,4 +691,50 @@ export function downloadTextAsFile(filename: string, content: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+export function sanitizeFotoSiswa(val: unknown): string {
+  const s = String(val || '').trim();
+  if (!s) return '';
+  if (/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(s) && s.length <= 450000) {
+    return s;
+  }
+  if (/^https?:\/\/\S+$/i.test(s) && s.length <= 600) {
+    return s;
+  }
+  return '';
+}
+
+export async function prosesFotoSiswa(file: File, maxDim = 256): Promise<string> {
+  if (!file.type.startsWith('image/')) {
+    throw new Error('Pilih berkas foto berformat JPG, PNG, atau WebP.');
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error('Ukuran berkas foto terlalu besar (maksimal 10 MB).');
+  }
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Gagal membaca berkas foto.'));
+    reader.onload = () => {
+      const raw = String(reader.result || '');
+      const img = new Image();
+      img.onload = () => {
+        const minSide = Math.min(img.width, img.height);
+        const sx = Math.max(0, Math.round((img.width - minSide) / 2));
+        const sy = Math.max(0, Math.round((img.height - minSide) / 2));
+        const target = Math.min(maxDim, Math.max(64, minSide));
+        const canvas = document.createElement('canvas');
+        canvas.width = target;
+        canvas.height = target;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(sanitizeFotoSiswa(raw));
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, target, target);
+        ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, target, target);
+        resolve(canvas.toDataURL('image/jpeg', 0.84));
+      };
+      img.onerror = () => reject(new Error('Berkas gambar tidak dapat diproses.'));
+      img.src = raw;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
