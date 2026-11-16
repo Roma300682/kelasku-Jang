@@ -4474,8 +4474,16 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
 
     const server = http.createServer(app);
 
-    // Setup WebSocket server for real-time chat
-    const wss = new WebSocketServer({ server, path: '/ws/chat' });
+    // Setup WebSocket server for real-time chat using noServer so Vite HMR upgrades are never rejected
+    const wss = new WebSocketServer({ noServer: true });
+    server.on('upgrade', (req, socket, head) => {
+      const urlPath = (req.url || '').split('?')[0];
+      if (urlPath === '/ws/chat') {
+        wss.handleUpgrade(req, socket, head, ws => {
+          wss.emit('connection', ws, req);
+        });
+      }
+    });
     interface ChatClientInfo {
       ws: WebSocket;
       kelas: string;
@@ -4568,7 +4576,31 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
         import('vite')
           .then(({ createServer: createViteServer }) =>
             createViteServer({
-              server: { middlewareMode: true },
+              plugins:
+                process.env.DISABLE_HMR === 'true'
+                  ? [
+                      {
+                        name: 'disable-hmr-ws-client',
+                        transform(code: string, id: string) {
+                          if (id.replace(/\\/g, '/').includes('vite/dist/client/client.mjs')) {
+                            return {
+                              code: code.replace(
+                                /createConnection:\s*\(\)\s*=>\s*new WebSocket\([^)]+\)/g,
+                                'createConnection: () => ({ readyState: 1, OPEN: 1, addEventListener() {}, send() {}, close() {} })'
+                              ),
+                              map: null
+                            };
+                          }
+                        }
+                      }
+                    ]
+                  : undefined,
+              server: {
+                middlewareMode: true,
+                allowedHosts: true,
+                hmr: process.env.DISABLE_HMR !== 'true',
+                ws: process.env.DISABLE_HMR === 'true' ? false : { server }
+              },
               appType: 'spa'
             })
           )
