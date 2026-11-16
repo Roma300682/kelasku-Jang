@@ -76,6 +76,13 @@ import ResetDatabasePanel from './components/ResetDatabasePanel';
 import ImportTableModal, { ImportTableMode } from './components/ImportTableModal';
 import { ClassChatDrawer } from './components/ClassChatDrawer';
 import {
+  PWAInstallButton,
+  OfflineModeTogglePill,
+  OfflineIndicator,
+  useOfflineStatus
+} from './components/PwaOfflineControls';
+import { syncOfflineQueueNow } from './offlineSync';
+import {
   AturMapelKelasModal,
   EditableKelasRow,
   EditableJurusanRow,
@@ -376,6 +383,8 @@ export default function App() {
     i: number;
   } | null>(null);
   const kaldikAutoCheckedRef = React.useRef(false);
+  const offlineStatus = useOfflineStatus();
+  const autoSyncInFlightRef = React.useRef(false);
 
   // Toast helper
   const showToast = useCallback((msg: string, ms = 2500) => {
@@ -397,9 +406,13 @@ export default function App() {
       if (t) {
         sessionStorage.setItem('mk_token', t);
         sessionStorage.setItem('mk_role', r || '');
+        localStorage.setItem('mk_token', t);
+        localStorage.setItem('mk_role', r || '');
       } else {
         sessionStorage.removeItem('mk_token');
         sessionStorage.removeItem('mk_role');
+        localStorage.removeItem('mk_token');
+        localStorage.removeItem('mk_role');
       }
     } catch (_) {}
   };
@@ -459,8 +472,8 @@ export default function App() {
         let savedTok = '';
         let savedRole = '';
         try {
-          savedTok = sessionStorage.getItem('mk_token') || '';
-          savedRole = sessionStorage.getItem('mk_role') || '';
+          savedTok = sessionStorage.getItem('mk_token') || localStorage.getItem('mk_token') || '';
+          savedRole = sessionStorage.getItem('mk_role') || localStorage.getItem('mk_role') || '';
         } catch (_) {}
         if (savedTok && savedRole) {
           await masukSesi(savedTok, savedRole);
@@ -558,6 +571,38 @@ export default function App() {
       void silentSyncNow();
     }
   }, [tab, token, role, silentSyncNow]);
+
+  // Automatic background synchronization when network comes back online and user is not in manual offline mode
+  useEffect(() => {
+    if (
+      !token ||
+      !offlineStatus.isNetworkOnline ||
+      offlineStatus.isManualOffline ||
+      offlineStatus.pendingCount === 0 ||
+      autoSyncInFlightRef.current
+    ) {
+      return;
+    }
+    autoSyncInFlightRef.current = true;
+    (async () => {
+      try {
+        const res = await syncOfflineQueueNow(token);
+        if (res.syncedCount > 0) {
+          showToast(`✓ ${res.syncedCount} perubahan offline disinkronkan ke server`, 3500);
+          void silentSyncNow();
+        }
+      } finally {
+        autoSyncInFlightRef.current = false;
+      }
+    })();
+  }, [
+    token,
+    offlineStatus.isNetworkOnline,
+    offlineStatus.isManualOffline,
+    offlineStatus.pendingCount,
+    silentSyncNow,
+    showToast
+  ]);
 
   // Keyboard navigation for slide presentation
   useEffect(() => {
@@ -1322,16 +1367,20 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-                {!loginBrandEdit && (
-                  <button
-                    type="button"
-                    onClick={bukaEditorBrandingLogin}
-                    title="Ganti Logo Sekolah, Gambar Latar & Jurusan"
-                    className="px-2.5 py-1.5 text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl flex items-center gap-1 shrink-0 cursor-pointer transition-colors whitespace-nowrap"
-                  >
-                    <Edit3 className="w-3 h-3" /> Logo & Latar
-                  </button>
-                )}
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                  <OfflineModeTogglePill variant="light" showToast={showToast} />
+                  <PWAInstallButton variant="light" />
+                  {!loginBrandEdit && (
+                    <button
+                      type="button"
+                      onClick={bukaEditorBrandingLogin}
+                      title="Ganti Logo Sekolah, Gambar Latar & Jurusan"
+                      className="px-2.5 py-1.5 text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl flex items-center gap-1 shrink-0 cursor-pointer transition-colors whitespace-nowrap"
+                    >
+                      <Edit3 className="w-3 h-3" /> Logo & Latar
+                    </button>
+                  )}
+                </div>
               </div>
               {publicInfo.jurusan && !loginBrandEdit && (() => {
                 const jLogos = parseJurusanLogos(publicInfo.jurusanLogos);
@@ -2006,6 +2055,7 @@ export default function App() {
             )}
           </div>
         </div>
+        <OfflineIndicator token="" showToast={showToast} />
         {toastMsg && (
           <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg">
             {toastMsg}
@@ -2025,6 +2075,11 @@ export default function App() {
           apiCall={apiCall}
           onRefresh={muatUlang}
           onLogout={handleLogout}
+          showToast={showToast}
+        />
+        <OfflineIndicator
+          token={token}
+          onSyncDone={() => void silentSyncNow()}
           showToast={showToast}
         />
         {toastMsg && (
@@ -8677,7 +8732,14 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <OfflineModeTogglePill
+              variant="light"
+              token={token}
+              onSyncDone={() => void silentSyncNow()}
+              showToast={showToast}
+            />
+            <PWAInstallButton variant="light" />
             <button
               type="button"
               onClick={() => setChatOpen(true)}
@@ -8940,6 +9002,12 @@ export default function App() {
           peran: 'siswa' as const,
           nis: s.NIS
         }))}
+        showToast={showToast}
+      />
+
+      <OfflineIndicator
+        token={token}
+        onSyncDone={() => void silentSyncNow()}
         showToast={showToast}
       />
 

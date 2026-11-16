@@ -736,7 +736,21 @@ async function getDb(): Promise<LocalDb> {
 function saveDb(db: LocalDb) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-  } catch (_) {}
+  } catch (_) {
+    try {
+      const compact: LocalDb = {
+        ...db,
+        sheets: {
+          ...db.sheets,
+          BerkasCloud: (db.sheets.BerkasCloud || []).map(f => ({
+            ...f,
+            DataBase64: ''
+          }))
+        }
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(compact));
+    } catch (_) {}
+  }
 }
 
 function getSessions(): Record<string, LocalSession> {
@@ -788,17 +802,22 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
     const emailHint = em.includes('@')
       ? `${em.slice(0, Math.min(2, em.indexOf('@')))}***@${em.split('@')[1]}`
       : '';
+    let cachedSt: any = null;
+    try {
+      const rawSt = localStorage.getItem('mk_offline_status_v1');
+      if (rawSt) cachedSt = JSON.parse(rawSt);
+    } catch {}
     return {
-      adminAda: !!db.admin,
-      sekolah: set.sekolah || 'Sistem Manajemen Kelas',
-      logo: set.logo || '',
-      loginBg: set.loginBg || '',
-      jurusan: set.jurusan || '',
-      jurusanLogos: set.jurusanLogos || '{}',
-      waInfo: set.waInfo || '',
-      emailHint,
+      adminAda: !!db.admin || !!cachedSt?.adminAda,
+      sekolah: set.sekolah || cachedSt?.sekolah || 'Sistem Manajemen Kelas',
+      logo: set.logo || cachedSt?.logo || '',
+      loginBg: set.loginBg || cachedSt?.loginBg || '',
+      jurusan: set.jurusan || cachedSt?.jurusan || '',
+      jurusanLogos: set.jurusanLogos || cachedSt?.jurusanLogos || '{}',
+      waInfo: set.waInfo || cachedSt?.waInfo || '',
+      emailHint: emailHint || cachedSt?.emailHint || '',
       storageEngine: 'local-json',
-      storageLabel: 'Penyimpanan Browser Lokal',
+      storageLabel: 'Mode Offline (Penyimpanan Perangkat)',
       vercelConfigured: false
     };
   }
@@ -898,6 +917,26 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
         return buatSesi('siswa', s.ID, s.Nama);
       }
     }
+    // Check mirrored online credentials for Admin, Guru/Wali, and Siswa
+    try {
+      const rawCreds = localStorage.getItem('mk_offline_creds_v1');
+      if (rawCreds) {
+        const creds = JSON.parse(rawCreds) as Record<
+          string,
+          { role: 'admin' | 'staf' | 'siswa'; sid: string; nama: string; passHash: string }
+        >;
+        const key = `${mode === 'admin' ? 'admin' : 'siswa'}:${mode === 'admin' ? userRaw : userNisNorm}`;
+        const entry = creds[key];
+        if (entry) {
+          const cand1 = await sha256Base64('offline-cred', passRaw);
+          const cand2 = await sha256Base64('offline-cred', passTrim);
+          if (entry.passHash === cand1 || entry.passHash === cand2) {
+            return buatSesi(entry.role, entry.sid || '', entry.nama || userRaw);
+          }
+        }
+      }
+    } catch {}
+
     throw new Error('Nama pengguna / NIS atau kata sandi / PIN salah.');
   }
 
@@ -1128,7 +1167,18 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
     const [token] = args;
     const sesi = getSesi(token, 'siswa');
     const siswa = (db.sheets.Siswa || []).find(x => x.ID === sesi.sid);
-    if (!siswa) throw new Error('SESI_HABIS');
+    if (!siswa) {
+      try {
+        const cachedRaw = localStorage.getItem('mk_offline_student_portal_v1');
+        if (cachedRaw) {
+          const cachedPortal = JSON.parse(cachedRaw);
+          if (cachedPortal && cachedPortal.siswa?.ID === sesi.sid) {
+            return cachedPortal;
+          }
+        }
+      } catch {}
+      throw new Error('SESI_HABIS');
+    }
     const kelas = (db.sheets.Kelas || []).find(k => k.ID === siswa.Kelas) || { ID: '', Nama: '', Jurusan: '', Mapel: '' };
     const set = getPengaturanObj(db);
     const absKelas = (db.sheets.Absensi || []).filter(a => a.Kelas === siswa.Kelas);
@@ -1680,3 +1730,292 @@ export async function runLocalKaldikSyncFallback(body: any): Promise<any> {
     sourceNote: `${KALDIK_JABAR_REF.dasarSurat} (${ta})`
   };
 }
+
+export function mirrorServerSessionToLocal(
+  token: string,
+  role: string,
+  sid = '',
+  nama = ''
+): void {
+  if (!token) return;
+  const normalizedRole: 'admin' | 'staf' | 'siswa' =
+    role === 'admin' ? 'admin' : role === 'siswa' ? 'siswa' : 'staf';
+  const map = getSessions();
+  map[token] = {
+    role: normalizedRole,
+    sid: sid || '',
+    nama: nama || '',
+    expires: Date.now() + 24 * 3600 * 1000
+  };
+  saveSessions(map);
+}
+
+export async function mirrorLoginCredentialToLocal(
+  mode: string,
+  user: string,
+  pass: string,
+  authRes: { token: string; role: string; nama?: string; userId?: string }
+): Promise<void> {
+  try {
+    const normUser = String(user || '').trim().toLowerCase();
+    const keyUser = mode === 'admin' ? normUser : normUser.replace(/\s+/g, '');
+    const normalizedRole: 'admin' | 'staf' | 'siswa' =
+      authRes.role === 'admin' ? 'admin' : authRes.role === 'siswa' ? 'siswa' : 'staf';
+    mirrorServerSessionToLocal(authRes.token, authRes.role, authRes.userId || '', authRes.nama || '');
+    if (keyUser && pass) {
+      let creds: Record<string, any> = {};
+      try {
+        const prev = localStorage.getItem('mk_offline_creds_v1');
+        if (prev) creds = JSON.parse(prev) || {};
+      } catch {}
+      creds[`${mode === 'admin' ? 'admin' : 'siswa'}:${keyUser}`] = {
+        role: normalizedRole,
+        sid: authRes.userId || '',
+        nama: authRes.nama || normUser,
+        passHash: await sha256Base64('offline-cred', pass)
+      };
+      localStorage.setItem('mk_offline_creds_v1', JSON.stringify(creds));
+    }
+    if (authRes.role === 'admin' && normUser && pass) {
+      const db = await getDb();
+      db.admin = {
+        user: normUser,
+        passHash: await sha256Base64('local-admin', pass)
+      };
+      saveDb(db);
+    }
+  } catch {}
+}
+
+export function mirrorServerStatusToLocal(st: Record<string, any>): void {
+  try {
+    localStorage.setItem('mk_offline_status_v1', JSON.stringify({ ...st, _ts: Date.now() }));
+  } catch {}
+}
+
+export async function mirrorServerAdminLoadToLocal(
+  data: Record<string, any>,
+  token: string
+): Promise<void> {
+  if (!data || typeof data !== 'object') return;
+  try {
+    const db = await getDb();
+    const arraySheets = [
+      'Kelas',
+      'Siswa',
+      'Absensi',
+      'Tugas',
+      'Pengumpulan',
+      'Nilai',
+      'Perilaku',
+      'Checklist',
+      'DenahAtur',
+      'Denah',
+      'Piket',
+      'Struktur',
+      'Jadwal',
+      'JadwalAtur',
+      'Akademik',
+      'TP',
+      'Modul',
+      'Pemantik',
+      'Materi',
+      'Mapel',
+      'BerkasCloud',
+      'CBT',
+      'HasilCBT',
+      'Pesan'
+    ];
+    arraySheets.forEach(name => {
+      if (Array.isArray(data[name])) {
+        db.sheets[name] = data[name];
+      }
+    });
+    if (Array.isArray(data.Pengguna)) {
+      const prevHashes = new Map(
+        (db.sheets.Pengguna || []).map(u => [u.ID, u.Hash || ''])
+      );
+      db.sheets.Pengguna = data.Pengguna.map((u: any) => ({
+        ...u,
+        Hash: u.Hash || prevHashes.get(u.ID) || ''
+      }));
+    }
+    if (data.Pengaturan && typeof data.Pengaturan === 'object') {
+      db.sheets.Pengaturan = Object.entries(data.Pengaturan).map(([Kunci, Nilai]) => ({
+        Kunci,
+        Nilai: String(Nilai ?? '')
+      }));
+    }
+    if (data.pinHashes && typeof data.pinHashes === 'object') {
+      db.sheets.Akun = Object.entries(data.pinHashes).map(([SiswaID, Hash]) => ({
+        SiswaID,
+        Hash: String(Hash || '')
+      }));
+    }
+    if (data.adminUser && (!db.admin || db.admin.user !== String(data.adminUser).toLowerCase())) {
+      db.admin = {
+        user: String(data.adminUser).toLowerCase(),
+        passHash: db.admin?.passHash || ''
+      };
+    }
+    saveDb(db);
+    const localRole = data.peran === 'admin' ? 'admin' : 'staf';
+    mirrorServerSessionToLocal(token, localRole, data.userId || '', data.namaPengguna || '');
+  } catch {}
+}
+
+export async function mirrorServerStudentPortalToLocal(
+  pData: Record<string, any>,
+  token: string
+): Promise<void> {
+  if (!pData || typeof pData !== 'object') return;
+  try {
+    localStorage.setItem('mk_offline_student_portal_v1', JSON.stringify(pData));
+    if (pData.siswa?.ID) {
+      mirrorServerSessionToLocal(token, 'siswa', pData.siswa.ID, pData.siswa.Nama || '');
+      const db = await getDb();
+      const idx = (db.sheets.Siswa || []).findIndex(s => s.ID === pData.siswa.ID);
+      if (idx >= 0) {
+        db.sheets.Siswa[idx] = { ...db.sheets.Siswa[idx], ...pData.siswa };
+        saveDb(db);
+      }
+    }
+  } catch {}
+}
+
+export async function runLocalHttpFallback(
+  url: string,
+  init?: RequestInit
+): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const db = await getDb();
+  const cleanUrl = url.split('?')[0];
+
+  if (cleanUrl === '/api/chat/messages') {
+    const qStr = url.includes('?') ? url.split('?')[1] : '';
+    const params = new URLSearchParams(qStr);
+    const kelas = params.get('kelas') || '';
+    const userId = params.get('userId') || '';
+    const peran = params.get('peran') || 'siswa';
+    const msgs = (db.sheets.Pesan || []).filter(m => {
+      if (kelas && m.Kelas && m.Kelas !== '__ALL__' && m.Kelas !== kelas) return false;
+      const pen = m.PenerimaID || 'ALL';
+      const peng = m.PengirimID || '';
+      return (
+        pen === 'ALL' ||
+        peran === 'admin' ||
+        peran === 'wali' ||
+        peran === 'guru' ||
+        (userId && (pen === userId || peng === userId))
+      );
+    });
+    return { ok: true, data: msgs };
+  }
+
+  if (cleanUrl === '/api/chat/send') {
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const newMsg = {
+      ID: 'msg_' + uidShort(),
+      Kelas: String(body.kelas || '').trim(),
+      PengirimID: String(body.pengirimId || '').trim(),
+      PengirimNama: String(body.pengirimNama || 'Anonim').trim(),
+      PengirimPeran: String(body.pengirimPeran || 'siswa').trim(),
+      PenerimaID: String(body.penerimaId || 'ALL').trim(),
+      PenerimaNama: String(body.penerimaNama || 'Semua Siswa').trim(),
+      Pesan: String(body.pesan || '').trim(),
+      Waktu: new Date().toISOString(),
+      Tipe: String(body.tipe || 'teks').trim(),
+      Lampiran: String(body.lampiran || '').trim()
+    };
+    if (!newMsg.Pesan) return { ok: false, error: 'Pesan tidak boleh kosong' };
+    db.sheets.Pesan = [...(db.sheets.Pesan || []), newMsg];
+    saveDb(db);
+    return { ok: true, data: newMsg };
+  }
+
+  if (cleanUrl === '/api/tugas/submit') {
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const sesi = getSesi(String(body.token || ''), 'siswa');
+    const tugasId = String(body.tugasId || '').trim();
+    const list = db.sheets.Pengumpulan || [];
+    const idx = list.findIndex(p => p.TugasID === tugasId && p.SiswaID === sesi.sid);
+    const tRow = (db.sheets.Tugas || []).find(t => t.ID === tugasId);
+    const nowStr = fmtYmd(new Date());
+    const status = tRow?.Tenggat && nowStr > tRow.Tenggat ? 'Terlambat' : 'Tepat Waktu';
+    const rec = {
+      TugasID: tugasId,
+      SiswaID: sesi.sid,
+      Status: status,
+      Nilai: idx >= 0 ? list[idx].Nilai || '' : '',
+      FileID: String(body.fileId || ''),
+      NamaFile: String(body.namaFile || ''),
+      TanggalKumpul: nowStr,
+      CatatanSiswa: String(body.catatanSiswa || '')
+    };
+    if (idx >= 0) list[idx] = rec;
+    else list.push(rec);
+    db.sheets.Pengumpulan = list;
+    saveDb(db);
+    return { ok: true, data: rec };
+  }
+
+  if (cleanUrl === '/api/cbt/submit') {
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const sesi = getSesi(String(body.token || ''), 'siswa');
+    const cbtId = String(body.cbtId || '').trim();
+    const cbt = (db.sheets.CBT || []).find(c => c.ID === cbtId);
+    let soalObj: any = { soalPG: [], soalUraian: [] };
+    try {
+      soalObj = JSON.parse(cbt?.SoalJSON || '{}');
+    } catch {}
+    const jPg = body.jawabanPG || {};
+    const pgList = soalObj.soalPG || [];
+    let benar = 0;
+    pgList.forEach((q: any) => {
+      if (jPg[q.id] && String(jPg[q.id]).toUpperCase() === String(q.kunci || '').toUpperCase()) {
+        benar++;
+      }
+    });
+    const hasEssay = (soalObj.soalUraian || []).length > 0;
+    const skorPG = pgList.length > 0 ? Math.round((benar / pgList.length) * 100) : 0;
+    const hasil = {
+      ID: 'hcbt_' + uidShort(),
+      CBTID: cbtId,
+      SiswaID: sesi.sid,
+      JawabanPG: JSON.stringify(jPg),
+      JawabanUraian: JSON.stringify(body.jawabanUraian || {}),
+      SkorPG: String(skorPG),
+      SkorUraian: '0',
+      TotalSkor: String(skorPG),
+      StatusNilai: hasEssay ? 'Menunggu Koreksi Uraian' : 'Selesai',
+      WaktuSubmit: new Date().toISOString()
+    };
+    db.sheets.HasilCBT = [
+      ...(db.sheets.HasilCBT || []).filter(h => !(h.CBTID === cbtId && h.SiswaID === sesi.sid)),
+      hasil
+    ];
+    saveDb(db);
+    return { ok: true, data: hasil };
+  }
+
+  if (cleanUrl === '/api/cbt/save-grade') {
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    getSesi(String(body.token || ''), 'staf');
+    const list = db.sheets.HasilCBT || [];
+    const idx = list.findIndex(h => h.ID === body.hasilId);
+    if (idx >= 0) {
+      list[idx] = {
+        ...list[idx],
+        SkorUraian: String(body.skorUraian ?? list[idx].SkorUraian ?? '0'),
+        TotalSkor: String(body.totalSkor ?? list[idx].TotalSkor ?? '0'),
+        StatusNilai: 'Dinilai'
+      };
+      db.sheets.HasilCBT = list;
+      saveDb(db);
+      return { ok: true, data: list[idx] };
+    }
+    return { ok: false, error: 'Hasil CBT tidak ditemukan.' };
+  }
+
+  throw new Error('Operasi ini membutuhkan koneksi internet & server aktif.');
+}
+

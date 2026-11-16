@@ -13,6 +13,7 @@ import {
   Search
 } from 'lucide-react';
 import { fetchJson } from '../api';
+import { isEffectiveOffline, subscribeOfflineState } from '../offlineSync';
 
 export interface ChatUser {
   id: string;
@@ -123,6 +124,10 @@ export const ClassChatDrawer: React.FC<ClassChatDrawerProps> = ({
     let isUnmounted = false;
 
     const connectWebSocket = () => {
+      if (isUnmounted || isEffectiveOffline()) {
+        setWsConnected(false);
+        return;
+      }
       try {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
@@ -162,24 +167,40 @@ export const ClassChatDrawer: React.FC<ClassChatDrawerProps> = ({
         ws.onclose = () => {
           if (isUnmounted) return;
           setWsConnected(false);
-          // Try reconnecting after 3 seconds
-          reconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);
+          if (!isEffectiveOffline()) {
+            reconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);
+          }
         };
 
         ws.onerror = () => {
           if (isUnmounted) return;
           setWsConnected(false);
         };
-      } catch (err) {
-        console.error('WebSocket connection error:', err);
+      } catch {
+        setWsConnected(false);
       }
     };
 
     connectWebSocket();
     loadHistory();
 
+    const unsubOffline = subscribeOfflineState(() => {
+      if (isEffectiveOffline()) {
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        if (wsRef.current) {
+          wsRef.current.close();
+          wsRef.current = null;
+        }
+        setWsConnected(false);
+      } else if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+        connectWebSocket();
+        void loadHistory();
+      }
+    });
+
     return () => {
       isUnmounted = true;
+      unsubOffline();
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (wsRef.current) {
         wsRef.current.close();

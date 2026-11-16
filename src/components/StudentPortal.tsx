@@ -15,6 +15,7 @@ import {
 } from '../api';
 import { parseSumberLinks } from './PerangkatAjarModals';
 import { ClassChatDrawer } from './ClassChatDrawer';
+import { PWAInstallButton, OfflineModeTogglePill } from './PwaOfflineControls';
 import {
   LogOut,
   RefreshCw,
@@ -433,6 +434,13 @@ export default function StudentPortal({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <OfflineModeTogglePill
+            variant="dark"
+            token={token}
+            onSyncDone={onRefresh}
+            showToast={showToast}
+          />
+          <PWAInstallButton variant="dark" />
           {p.waInfo && (
             <a
               href={waLink(

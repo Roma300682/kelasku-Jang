@@ -1,4 +1,18 @@
-import { runLocalKaldikSyncFallback, runLocalRpcFallback } from './localFallback';
+import {
+  mirrorLoginCredentialToLocal,
+  mirrorServerAdminLoadToLocal,
+  mirrorServerStatusToLocal,
+  mirrorServerStudentPortalToLocal,
+  runLocalHttpFallback,
+  runLocalKaldikSyncFallback,
+  runLocalRpcFallback
+} from './localFallback';
+import {
+  enqueueOfflinePost,
+  enqueueOfflineRpc,
+  isEffectiveOffline,
+  isQueueableMutationRpc
+} from './offlineSync';
 
 export class ApiUnavailableError extends Error {
   status: number;
@@ -11,6 +25,46 @@ export class ApiUnavailableError extends Error {
   }
 }
 
+function isNetworkOrOfflineErr(e: any): boolean {
+  if (e instanceof ApiUnavailableError) {
+    return e.status === 0 || e.status === 404 || e.status === 502 || e.status === 503 || e.status === 504;
+  }
+  const msg = String(e?.message || '');
+  return (
+    e?.name === 'TypeError' ||
+    /failed to fetch|networkerror|load failed|offline|status 50[234]/i.test(msg) ||
+    (typeof navigator !== 'undefined' && navigator.onLine === false)
+  );
+}
+
+const OFFLINE_POST_QUEUEABLE = new Set([
+  '/api/chat/send',
+  '/api/tugas/submit',
+  '/api/cbt/submit',
+  '/api/cbt/save-grade'
+]);
+
+async function tryLocalHttpFallback(url: string, init?: RequestInit): Promise<any> {
+  const clean = url.split('?')[0];
+  if (clean === '/api/kaldik/sync-jabar') {
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const data = await runLocalKaldikSyncFallback(body);
+    return { ok: true, data };
+  }
+  if (
+    clean === '/api/chat/messages' ||
+    OFFLINE_POST_QUEUEABLE.has(clean)
+  ) {
+    const res = await runLocalHttpFallback(url, init);
+    if (res?.ok && OFFLINE_POST_QUEUEABLE.has(clean)) {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      enqueueOfflinePost(clean, body, `Sinkron ${clean.replace('/api/', '')}`);
+    }
+    return res;
+  }
+  return null;
+}
+
 export async function hashPinClient(salt: string, teks: string): Promise<string> {
   const bytes = new TextEncoder().encode(salt + '|' + teks);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -21,6 +75,12 @@ export async function hashPinClient(salt: string, teks: string): Promise<string>
 }
 
 export async function fetchJson<T = any>(url: string, init?: RequestInit, retries = 4): Promise<T> {
+  if (isEffectiveOffline()) {
+    const localRes = await tryLocalHttpFallback(url, init);
+    if (localRes) return localRes as T;
+    throw new ApiUnavailableError(url, 0, 'Mode Offline aktif.');
+  }
+
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -60,15 +120,8 @@ export async function fetchJson<T = any>(url: string, init?: RequestInit, retrie
           await new Promise(r => setTimeout(r, 350));
           continue;
         }
-        if (url === '/api/kaldik/sync-jabar') {
-          try {
-            const body = init?.body ? JSON.parse(String(init.body)) : {};
-            const data = await runLocalKaldikSyncFallback(body);
-            return { ok: true, data } as unknown as T;
-          } catch (fbErr: any) {
-            return { ok: false, error: fbErr?.message || String(fbErr) } as unknown as T;
-          }
-        }
+        const localRes = await tryLocalHttpFallback(url, init);
+        if (localRes) return localRes as T;
         throw new ApiUnavailableError(
           url,
           404,
@@ -83,13 +136,22 @@ export async function fetchJson<T = any>(url: string, init?: RequestInit, retrie
         (res.status >= 500 && !isJson) ||
         isHtmlOrPageText;
 
-      if (transient && attempt < retries) {
+      if (transient && attempt < retries && navigator.onLine !== false) {
         await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
         continue;
       }
 
       if (res.status === 413) {
         throw new Error('Ukuran data atau berkas melebihi batas maksimal server (50 MB).');
+      }
+      if (transient) {
+        const localRes = await tryLocalHttpFallback(url, init);
+        if (localRes) return localRes as T;
+        throw new ApiUnavailableError(
+          url,
+          res.status || 503,
+          `Layanan server sementara tidak tersedia (HTTP ${res.status || 503}).`
+        );
       }
       if (isHtmlOrPageText) {
         throw new Error(
@@ -106,9 +168,13 @@ export async function fetchJson<T = any>(url: string, init?: RequestInit, retrie
       const isNetworkErr =
         e?.name === 'TypeError' ||
         /failed to fetch|networkerror|load failed/i.test(msg);
-      if (isNetworkErr && attempt < retries) {
+      if (isNetworkErr && attempt < retries && navigator.onLine !== false) {
         await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
         continue;
+      }
+      if (isNetworkErr) {
+        const localRes = await tryLocalHttpFallback(url, init);
+        if (localRes) return localRes as T;
       }
       throw lastErr;
     }
@@ -116,7 +182,18 @@ export async function fetchJson<T = any>(url: string, init?: RequestInit, retrie
   throw lastErr || new Error('Gagal menghubungi server.');
 }
 
+async function execLocalRpcAndQueue(fn: string, args: any[]): Promise<any> {
+  const data = await runLocalRpcFallback(fn, args);
+  if (isQueueableMutationRpc(fn)) {
+    enqueueOfflineRpc(fn, args);
+  }
+  return data;
+}
+
 export async function callRaw<T = any>(fn: string, ...args: any[]): Promise<T> {
+  if (isEffectiveOffline()) {
+    return (await execLocalRpcAndQueue(fn, args)) as T;
+  }
   try {
     const json = await fetchJson<{ ok: boolean; data?: T; error?: string }>('/api/rpc', {
       method: 'POST',
@@ -126,10 +203,23 @@ export async function callRaw<T = any>(fn: string, ...args: any[]): Promise<T> {
     if (!json.ok) {
       throw new Error(json.error || 'Terjadi kesalahan pada server.');
     }
-    return json.data as T;
+    const resData = json.data as T;
+    // Mirror online data seamlessly to device cache for offline continuity
+    if (fn === 'api_status' && resData) {
+      mirrorServerStatusToLocal(resData as Record<string, any>);
+    } else if (fn === 'api_login' && resData) {
+      void mirrorLoginCredentialToLocal(args[0], args[1], args[2], resData as any);
+    } else if (fn === 'api_load' && resData && args[0]) {
+      void mirrorServerAdminLoadToLocal(resData as Record<string, any>, args[0]);
+    } else if (fn === 'api_loadSiswa' && resData && args[0]) {
+      void mirrorServerStudentPortalToLocal(resData as Record<string, any>, args[0]);
+    } else if (isQueueableMutationRpc(fn)) {
+      void runLocalRpcFallback(fn, args).catch(() => {});
+    }
+    return resData;
   } catch (e: any) {
-    if (e instanceof ApiUnavailableError && e.status === 404) {
-      return (await runLocalRpcFallback(fn, args)) as T;
+    if (isNetworkOrOfflineErr(e)) {
+      return (await execLocalRpcAndQueue(fn, args)) as T;
     }
     throw e;
   }
@@ -494,7 +584,7 @@ export async function uploadAjarRawFile(
     }
     return res.data;
   } catch (e: any) {
-    if (e instanceof ApiUnavailableError && e.status === 404) {
+    if (isNetworkOrOfflineErr(e)) {
       const base64Data = await readFileAsBase64Promise(file);
       const fileId = 'local_ajr_' + uid();
       const map = readLocalAjarFiles();
@@ -534,7 +624,7 @@ export async function uploadAjarFile(
     }
     return res.data;
   } catch (e: any) {
-    if (e instanceof ApiUnavailableError && e.status === 404) {
+    if (isNetworkOrOfflineErr(e)) {
       const fileId = 'local_ajr_' + uid();
       const map = readLocalAjarFiles();
       map[fileId] = { namaFile, mimeType: mimeType || 'application/octet-stream', base64Data };
