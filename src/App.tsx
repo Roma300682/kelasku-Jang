@@ -1755,42 +1755,7 @@ export default function App() {
               </form>
             ) : (
               <>
-            {adminAda && (
-              <div className="grid grid-cols-2 gap-1 p-1 bg-indigo-50 border border-indigo-100 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginMode('admin');
-                    setLoginErr('');
-                    setForgotMsg('');
-                    setForgotOk(false);
-                  }}
-                  className={`py-2 px-3 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                    isAdm
-                      ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm'
-                      : 'text-indigo-700 hover:text-indigo-950'
-                  }`}
-                >
-                  Guru / Wali / Admin
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginMode('siswa');
-                    setLoginErr('');
-                    setForgotMsg('');
-                    setForgotOk(false);
-                  }}
-                  className={`py-2 px-3 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                    !isAdm
-                      ? 'bg-gradient-to-r from-sky-500 to-cyan-600 text-white shadow-sm'
-                      : 'text-indigo-700 hover:text-indigo-950'
-                  }`}
-                >
-                  Portal Siswa
-                </button>
-              </div>
-            )}
+
 
             {forgotMode && adminAda ? (
               isAdm ? (
