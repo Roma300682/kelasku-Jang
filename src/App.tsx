@@ -6382,6 +6382,62 @@ export default function App() {
       return null;
     };
 
+    const confirmHapusTugas = (tugasRow: any) => {
+      if (!tugasRow?.ID) return;
+      const relatedCount = (db.Pengumpulan || []).filter(
+        (p: any) => p.TugasID === tugasRow.ID && (p.Status !== 'Belum' || p.Nilai || p.FileID || p.JawabanSiswa)
+      ).length;
+      setModalContent({
+        title: 'Konfirmasi Hapus Tugas',
+        render: () => (
+          <div className="space-y-4">
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 space-y-1">
+              <div className="font-bold">Hapus tugas ini dari daftar?</div>
+              <div>
+                Judul: <strong>{tugasRow.Judul}</strong>
+                {tugasRow.Mapel ? ` (${tugasRow.Mapel})` : ''}
+              </div>
+              {relatedCount > 0 && (
+                <div className="text-[11px] text-rose-700 pt-1">
+                  Perhatian: terdapat <strong>{relatedCount}</strong> data pengumpulan/nilai siswa pada tugas ini yang juga akan ikut terhapus.
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setModalContent(null)}
+                className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const nextTugas = (db.Tugas || []).filter((t: any) => t.ID !== tugasRow.ID);
+                  const nextPengumpulan = (db.Pengumpulan || []).filter(
+                    (p: any) => p.TugasID !== tugasRow.ID
+                  );
+                  const remainingFiltered = filteredTugasK.filter((t: any) => t.ID !== tugasRow.ID);
+                  setTugSel(remainingFiltered[0]?.ID || '');
+                  setModalContent(null);
+                  await persistSheets(
+                    { ...db, Tugas: nextTugas, Pengumpulan: nextPengumpulan },
+                    'Tugas',
+                    'Pengumpulan'
+                  );
+                  showToast(`Tugas "${tugasRow.Judul}" berhasil dihapus`);
+                }}
+                className="px-4 py-2 text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Ya, Hapus Tugas
+              </button>
+            </div>
+          </div>
+        )
+      });
+    };
+
     const openTambahTugas = (editRow?: any, defaultMapel?: string) => {
       const defaultMapelVal =
         editRow?.Mapel ||
@@ -6411,6 +6467,7 @@ export default function App() {
             subjectOptions={modalSubjectOptions}
             showToast={showToast}
             onCancel={() => setModalContent(null)}
+            onDelete={editRow ? () => confirmHapusTugas(editRow) : undefined}
             onSave={async payload => {
               if (payload.pendingFile) {
                 showToast('Mengunggah berkas tugas…', 5000);
@@ -6847,17 +6904,29 @@ export default function App() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {filteredTugasK.length > 0 && (
-              <select
-                value={activeId}
-                onChange={e => setTugSel(e.target.value)}
-                className="px-3 py-2 text-xs font-semibold text-slate-800 bg-white border border-white/40 rounded-xl max-w-[260px]"
-              >
-                {filteredTugasK.map((t: any) => (
-                  <option key={t.ID} value={t.ID}>
-                    {t.Judul}{t.Mapel ? ` · ${t.Mapel}` : ''} ({t.Jenis})
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={activeId}
+                  onChange={e => setTugSel(e.target.value)}
+                  className="px-3 py-2 text-xs font-semibold text-slate-800 bg-white border border-white/40 rounded-xl max-w-[260px]"
+                >
+                  {filteredTugasK.map((t: any) => (
+                    <option key={t.ID} value={t.ID}>
+                      {t.Judul}{t.Mapel ? ` · ${t.Mapel}` : ''} ({t.Jenis})
+                    </option>
+                  ))}
+                </select>
+                {curTug && (
+                  <button
+                    type="button"
+                    onClick={() => confirmHapusTugas(curTug)}
+                    title="Hapus Tugas Dipilih"
+                    className="p-2 bg-rose-500/90 hover:bg-rose-600 text-white rounded-xl shadow-sm cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             )}
             <button
               onClick={() => openTambahTugas()}
@@ -7125,6 +7194,12 @@ export default function App() {
                   className="px-3 py-2 text-xs font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl flex items-center gap-1 cursor-pointer"
                 >
                   <Edit3 className="w-3.5 h-3.5" /> Edit Tugas
+                </button>
+                <button
+                  onClick={() => confirmHapusTugas(curTug)}
+                  className="px-3 py-2 text-xs font-semibold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl flex items-center gap-1 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Hapus Tugas
                 </button>
                 <button
                   onClick={() => setWaBlastState({ open: true })}
