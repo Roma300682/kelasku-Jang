@@ -4296,36 +4296,134 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
 
       const hasAiKey = Boolean((process.env.GEMINI_API_KEY || '').trim() && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
       if (hasAiKey) {
-        const aiClient = getAiClient();
-        const isInline = mime === 'application/pdf' || mime.startsWith('image/');
-        const parts: any[] = [];
-        if (isInline) {
-          parts.push({ inlineData: { mimeType: mime, data: String(base64Data) } });
-        } else if (plainText) {
-          parts.push({ text: `ISI DOKUMEN KUNCI (${fname}):\n${plainText}` });
-        }
+        try {
+          const aiClient = getAiClient();
+          const isInline = mime === 'application/pdf' || mime.startsWith('image/');
+          const parts: any[] = [];
+          if (isInline) {
+            parts.push({ inlineData: { mimeType: mime, data: String(base64Data) } });
+          } else if (plainText) {
+            parts.push({ text: `ISI DOKUMEN KUNCI (${fname}):\n${plainText}` });
+          }
 
-        if (parts.length > 0) {
-          if (mode === 'pg') {
+          if (parts.length > 0) {
+            if (mode === 'pg') {
+              parts.push({
+                text: 'Ekstrak seluruh kunci jawaban Pilihan Ganda dari dokumen ini. Kembalikan nomor soal (mulai 1) dan huruf kunci (A/B/C/D/E).'
+              });
+              const resp = await generateContentFastWithFallback(aiClient, {
+                modeCepat: false,
+                contents: { parts },
+                systemInstruction:
+                  'Anda mengekstrak kunci jawaban pilihan ganda secara akurat dari dokumen guru Indonesia.',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    opsiMaks: { type: Type.STRING, description: 'ABCD atau ABCDE' },
+                    items: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          no: { type: Type.INTEGER },
+                          kunci: { type: Type.STRING }
+                        },
+                        required: ['no', 'kunci']
+                      }
+                    }
+                  },
+                  required: ['items']
+                }
+              });
+              const parsed = parseJsonSafe<any>(resp.text, {});
+              const map: Record<number, string> = {};
+              for (const it of parsed.items || []) {
+                const no = Number(it.no);
+                const ch = String(it.kunci || '').trim().toUpperCase();
+                if (no >= 1 && /^[A-E]$/.test(ch)) map[no] = ch;
+              }
+              const opsiPG = String(parsed.opsiMaks || '').toUpperCase() === 'ABCD' ? 'ABCD' : 'ABCDE';
+              const maxNo = Object.keys(map).reduce((m, k) => Math.max(m, Number(k)), 0) || 10;
+              res.json({
+                ok: true,
+                data: {
+                  tipeSoal: 'pg',
+                  opsiPG,
+                  jumlahSoal: maxNo,
+                  kunciJawaban: serializePgAnswers(map, maxNo, opsiPG)
+                }
+              });
+              return;
+            }
+
+            if (mode === 'akuntansi') {
+              parts.push({
+                text: 'Ekstrak seluruh kunci jawaban praktik akuntansi (Jurnal Umum, Penyesuaian, Neraca Saldo, Persamaan Dasar Akuntansi, atau Laporan Keuangan) dari dokumen ini menjadi daftar baris terstruktur: keterangan/tanggal, nama akun/item, posisi (D untuk Debit, K untuk Kredit, N jika hanya nominal/perhitungan), nominal angka bulat Rupiah, dan bobot.'
+              });
+              const resp = await generateContentFastWithFallback(aiClient, {
+                modeCepat: false,
+                contents: { parts },
+                systemInstruction:
+                  'Anda ahli ekstraksi tabel dan jurnal akuntansi Indonesia. Pastikan nominal adalah angka bulat tanpa titik/Rp dan posisi D/K akurat.',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    baris: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          no: { type: Type.INTEGER },
+                          keterangan: { type: Type.STRING },
+                          akun: { type: Type.STRING },
+                          posisi: { type: Type.STRING, description: 'D, K, atau N' },
+                          nominal: { type: Type.NUMBER },
+                          bobot: { type: Type.NUMBER }
+                        },
+                        required: ['akun', 'posisi', 'nominal']
+                      }
+                    }
+                  },
+                  required: ['baris']
+                }
+              });
+              const parsed = parseJsonSafe<any>(resp.text, {});
+              const rawRows = Array.isArray(parsed.baris) ? parsed.baris : [];
+              const kunciJson = serializeAkuntansiKunci(
+                rawRows.map((r: any, idx: number) => ({
+                  no: idx + 1,
+                  keterangan: String(r.keterangan || ''),
+                  akun: String(r.akun || ''),
+                  posisi: (String(r.posisi || 'N').toUpperCase() === 'D' ? 'D' : String(r.posisi || 'N').toUpperCase() === 'K' ? 'K' : 'N') as 'D' | 'K' | 'N',
+                  nominal: Number(r.nominal) || 0,
+                  bobot: Number(r.bobot) > 0 ? Number(r.bobot) : 10
+                }))
+              );
+              res.json({ ok: true, data: { tipeSoal: 'akuntansi', kunciJawaban: kunciJson } });
+              return;
+            }
+
+            // Uraian Teks
             parts.push({
-              text: 'Ekstrak seluruh kunci jawaban Pilihan Ganda dari dokumen ini. Kembalikan nomor soal (mulai 1) dan huruf kunci (A/B/C/D/E).'
+              text: 'Ekstrak seluruh butir soal & kunci jawaban uraian dari dokumen ini: nomor soal, pertanyaan/indikator singkat, kunci jawaban/poin kunci (pisahkan poin penting dengan tanda ; jika ada beberapa poin), dan bobot poin.'
             });
             const resp = await generateContentFastWithFallback(aiClient, {
               modeCepat: false,
               contents: { parts },
               systemInstruction:
-                'Anda mengekstrak kunci jawaban pilihan ganda secara akurat dari dokumen guru Indonesia.',
+                'Anda mengekstrak kunci jawaban uraian dan rubrik penilaian guru Indonesia secara terstruktur.',
               responseSchema: {
                 type: Type.OBJECT,
                 properties: {
-                  opsiMaks: { type: Type.STRING, description: 'ABCD atau ABCDE' },
                   items: {
                     type: Type.ARRAY,
                     items: {
                       type: Type.OBJECT,
                       properties: {
                         no: { type: Type.INTEGER },
-                        kunci: { type: Type.STRING }
+                        pertanyaan: { type: Type.STRING },
+                        kunci: { type: Type.STRING },
+                        bobot: { type: Type.NUMBER }
                       },
                       required: ['no', 'kunci']
                     }
@@ -4335,114 +4433,20 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
               }
             });
             const parsed = parseJsonSafe<any>(resp.text, {});
-            const map: Record<number, string> = {};
-            for (const it of parsed.items || []) {
-              const no = Number(it.no);
-              const ch = String(it.kunci || '').trim().toUpperCase();
-              if (no >= 1 && /^[A-E]$/.test(ch)) map[no] = ch;
-            }
-            const opsiPG = String(parsed.opsiMaks || '').toUpperCase() === 'ABCD' ? 'ABCD' : 'ABCDE';
-            const maxNo = Object.keys(map).reduce((m, k) => Math.max(m, Number(k)), 0) || 10;
-            res.json({
-              ok: true,
-              data: {
-                tipeSoal: 'pg',
-                opsiPG,
-                jumlahSoal: maxNo,
-                kunciJawaban: serializePgAnswers(map, maxNo, opsiPG)
-              }
-            });
-            return;
-          }
-
-          if (mode === 'akuntansi') {
-            parts.push({
-              text: 'Ekstrak seluruh kunci jawaban praktik akuntansi (Jurnal Umum, Penyesuaian, Neraca Saldo, Persamaan Dasar Akuntansi, atau Laporan Keuangan) dari dokumen ini menjadi daftar baris terstruktur: keterangan/tanggal, nama akun/item, posisi (D untuk Debit, K untuk Kredit, N jika hanya nominal/perhitungan), nominal angka bulat Rupiah, dan bobot.'
-            });
-            const resp = await generateContentFastWithFallback(aiClient, {
-              modeCepat: false,
-              contents: { parts },
-              systemInstruction:
-                'Anda ahli ekstraksi tabel dan jurnal akuntansi Indonesia. Pastikan nominal adalah angka bulat tanpa titik/Rp dan posisi D/K akurat.',
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  baris: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        no: { type: Type.INTEGER },
-                        keterangan: { type: Type.STRING },
-                        akun: { type: Type.STRING },
-                        posisi: { type: Type.STRING, description: 'D, K, atau N' },
-                        nominal: { type: Type.NUMBER },
-                        bobot: { type: Type.NUMBER }
-                      },
-                      required: ['akun', 'posisi', 'nominal']
-                    }
-                  }
-                },
-                required: ['baris']
-              }
-            });
-            const parsed = parseJsonSafe<any>(resp.text, {});
-            const rawRows = Array.isArray(parsed.baris) ? parsed.baris : [];
-            const kunciJson = serializeAkuntansiKunci(
-              rawRows.map((r: any, idx: number) => ({
-                no: idx + 1,
-                keterangan: String(r.keterangan || ''),
-                akun: String(r.akun || ''),
-                posisi: (String(r.posisi || 'N').toUpperCase() === 'D' ? 'D' : String(r.posisi || 'N').toUpperCase() === 'K' ? 'K' : 'N') as 'D' | 'K' | 'N',
-                nominal: Number(r.nominal) || 0,
-                bobot: Number(r.bobot) > 0 ? Number(r.bobot) : 10
+            const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+            const kunciJson = serializeUraianKunci(
+              rawItems.map((it: any, idx: number) => ({
+                no: Number(it.no) > 0 ? Number(it.no) : idx + 1,
+                pertanyaan: String(it.pertanyaan || ''),
+                kunci: String(it.kunci || ''),
+                bobot: Number(it.bobot) > 0 ? Number(it.bobot) : 10
               }))
             );
-            res.json({ ok: true, data: { tipeSoal: 'akuntansi', kunciJawaban: kunciJson } });
+            res.json({ ok: true, data: { tipeSoal: 'uraian', kunciJawaban: kunciJson } });
             return;
           }
-
-          // Uraian Teks
-          parts.push({
-            text: 'Ekstrak seluruh butir soal & kunci jawaban uraian dari dokumen ini: nomor soal, pertanyaan/indikator singkat, kunci jawaban/poin kunci (pisahkan poin penting dengan tanda ; jika ada beberapa poin), dan bobot poin.'
-          });
-          const resp = await generateContentFastWithFallback(aiClient, {
-            modeCepat: false,
-            contents: { parts },
-            systemInstruction:
-              'Anda mengekstrak kunci jawaban uraian dan rubrik penilaian guru Indonesia secara terstruktur.',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                items: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      no: { type: Type.INTEGER },
-                      pertanyaan: { type: Type.STRING },
-                      kunci: { type: Type.STRING },
-                      bobot: { type: Type.NUMBER }
-                    },
-                    required: ['no', 'kunci']
-                  }
-                }
-              },
-              required: ['items']
-            }
-          });
-          const parsed = parseJsonSafe<any>(resp.text, {});
-          const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
-          const kunciJson = serializeUraianKunci(
-            rawItems.map((it: any, idx: number) => ({
-              no: Number(it.no) > 0 ? Number(it.no) : idx + 1,
-              pertanyaan: String(it.pertanyaan || ''),
-              kunci: String(it.kunci || ''),
-              bobot: Number(it.bobot) > 0 ? Number(it.bobot) : 10
-            }))
-          );
-          res.json({ ok: true, data: { tipeSoal: 'uraian', kunciJawaban: kunciJson } });
-          return;
+        } catch (aiErr: any) {
+          console.warn('AI extraction warning (503/overload fallback):', aiErr?.message || aiErr);
         }
       }
 
