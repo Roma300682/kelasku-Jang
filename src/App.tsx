@@ -104,6 +104,12 @@ import {
   KoreksiPgSiswaModalBody
 } from './components/TugasPgModals';
 import {
+  KunciUraianQuickModalBody,
+  KunciAkuntansiQuickModalBody,
+  KoreksiUraianSiswaModalBody,
+  KoreksiAkuntansiSiswaModalBody
+} from './components/TugasUraianAkuntansiModals';
+import {
   parsePgAnswers,
   formatPgNumberedSummary,
   koreksiPgSiswa,
@@ -111,6 +117,16 @@ import {
   inferTotalSoal,
   normalizeOpsiPG
 } from './pgTugasUtils';
+import {
+  TugasTipeSoal,
+  formatRupiah,
+  koreksiAkuntansiSiswa,
+  koreksiUraianSiswa,
+  parseAkuntansiKunci,
+  parseAkuntansiSiswa,
+  parseUraianKunci,
+  parseUraianSiswa
+} from './uraianAkuntansiUtils';
 import {
   BookOpen,
   LayoutDashboard,
@@ -164,7 +180,10 @@ import {
   MapPin,
   Phone,
   HeartPulse,
-  Calendar
+  Calendar,
+  Calculator,
+  FileText,
+  FileUp
 } from 'lucide-react';
 
 const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
@@ -6352,6 +6371,71 @@ export default function App() {
         : filteredTugasK[0]?.ID || '';
     const curTug = filteredTugasK.find((t: any) => t.ID === activeId);
 
+    const getTugasTipe = (t: any): TugasTipeSoal => {
+      const raw = String(t?.TipeSoal || '').toLowerCase();
+      if (raw === 'pg') return 'pg';
+      if (raw === 'uraian') return 'uraian';
+      if (raw === 'akuntansi') return 'akuntansi';
+      if (Boolean(String(t?.KunciJawaban || '').trim())) return 'pg';
+      return 'umum';
+    };
+
+    const gradeSubmissionRow = (tugasRow: any, pRow: any) => {
+      const tipe = getTugasTipe(tugasRow);
+      if (!String(tugasRow?.KunciJawaban || '').trim()) return null;
+      if (!String(pRow?.JawabanSiswa || '').trim()) return null;
+
+      if (tipe === 'pg') {
+        const res = koreksiPgSiswa(
+          tugasRow.KunciJawaban,
+          pRow.JawabanSiswa,
+          tugasRow.JumlahSoal,
+          tugasRow.OpsiPG
+        );
+        if (!res.adaKunci) return null;
+        return {
+          ...pRow,
+          Nilai: String(res.nilai),
+          DetailKoreksi: JSON.stringify({
+            tipe: 'pg',
+            total: res.total,
+            jumlahKunci: res.jumlahKunci,
+            benar: res.benar,
+            salah: res.salah,
+            kosong: res.kosong,
+            nilai: res.nilai,
+            detail: res.detail
+          })
+        };
+      }
+
+      if (tipe === 'uraian') {
+        const kItems = parseUraianKunci(tugasRow.KunciJawaban, Number(tugasRow.JumlahSoal || 0));
+        const sMap = parseUraianSiswa(pRow.JawabanSiswa);
+        const res = koreksiUraianSiswa(kItems, sMap);
+        if (!res.adaKunci) return null;
+        return {
+          ...pRow,
+          Nilai: String(res.nilai),
+          DetailKoreksi: JSON.stringify(res)
+        };
+      }
+
+      if (tipe === 'akuntansi') {
+        const kRows = parseAkuntansiKunci(tugasRow.KunciJawaban);
+        const sRows = parseAkuntansiSiswa(pRow.JawabanSiswa);
+        const res = koreksiAkuntansiSiswa(kRows, sRows);
+        if (!res.adaKunci) return null;
+        return {
+          ...pRow,
+          Nilai: String(res.nilai),
+          DetailKoreksi: JSON.stringify(res)
+        };
+      }
+
+      return null;
+    };
+
     const openTambahTugas = (editRow?: any, defaultMapel?: string) => {
       const defaultMapelVal =
         editRow?.Mapel ||
@@ -6374,6 +6458,7 @@ export default function App() {
           <TugasFormModalBody
             key={editRow?.ID || `new-${defaultMapelVal}`}
             editRow={editRow}
+            token={token}
             kelasNama={kelasObj.Nama || ''}
             defaultMapel={defaultMapelVal}
             defaultTenggat={ymd(new Date())}
@@ -6411,9 +6496,9 @@ export default function App() {
                 FileID: fileId,
                 NamaFile: namaFile,
                 TipeSoal: payload.tipeSoal,
-                JumlahSoal: payload.tipeSoal === 'pg' ? String(payload.jumlahSoal) : '',
+                JumlahSoal: payload.tipeSoal === 'umum' ? '' : String(payload.jumlahSoal || ''),
                 OpsiPG: payload.tipeSoal === 'pg' ? payload.opsiPG : '',
-                KunciJawaban: payload.tipeSoal === 'pg' ? payload.kunciJawaban : ''
+                KunciJawaban: payload.tipeSoal === 'umum' ? '' : payload.kunciJawaban
               };
               const nextTugas = editRow
                 ? (db.Tugas || []).map((t: any) => (t.ID === editRow.ID ? record : t))
@@ -6423,32 +6508,15 @@ export default function App() {
               if (record.Mapel) setTugMapelFilter(record.Mapel);
               setModalContent(null);
 
-              // Auto-regrade existing PG submissions if this task is PG & has a key
-              if (record.TipeSoal === 'pg' && record.KunciJawaban) {
+              // Auto-regrade existing submissions if task is graded (PG / Uraian / Akuntansi) and has a key
+              if (record.TipeSoal !== 'umum' && record.KunciJawaban) {
                 let regraded = 0;
                 const nextPengumpulan = (db.Pengumpulan || []).map((p: any) => {
-                  if (p.TugasID !== idBaru || !String(p.JawabanSiswa || '').trim()) return p;
-                  const res = koreksiPgSiswa(
-                    record.KunciJawaban,
-                    p.JawabanSiswa,
-                    record.JumlahSoal,
-                    record.OpsiPG
-                  );
-                  if (!res.adaKunci) return p;
+                  if (p.TugasID !== idBaru) return p;
+                  const graded = gradeSubmissionRow(record, p);
+                  if (!graded) return p;
                   regraded++;
-                  return {
-                    ...p,
-                    Nilai: String(res.nilai),
-                    DetailKoreksi: JSON.stringify({
-                      total: res.total,
-                      jumlahKunci: res.jumlahKunci,
-                      benar: res.benar,
-                      salah: res.salah,
-                      kosong: res.kosong,
-                      nilai: res.nilai,
-                      detail: res.detail
-                    })
-                  };
+                  return graded;
                 });
                 if (regraded > 0) {
                   await persistSheets(
@@ -6473,41 +6541,32 @@ export default function App() {
       sourceTugasList?: any[],
       sourcePengumpulanList?: any[]
     ) => {
-      if (!String(tugasRow?.KunciJawaban || '').trim()) {
-        showToast('Atur Kunci Jawaban PG terlebih dahulu sebelum koreksi otomatis');
+      const tipe = getTugasTipe(tugasRow);
+      if (tipe === 'umum' || !String(tugasRow?.KunciJawaban || '').trim()) {
+        showToast('Atur Kunci Jawaban terlebih dahulu sebelum koreksi otomatis');
         return;
       }
       const basePengumpulan = sourcePengumpulanList || db.Pengumpulan || [];
       let gradedCount = 0;
       const nextPengumpulan = basePengumpulan.map((p: any) => {
-        if (p.TugasID !== tugasRow.ID || !String(p.JawabanSiswa || '').trim()) return p;
-        const res = koreksiPgSiswa(
-          tugasRow.KunciJawaban,
-          p.JawabanSiswa,
-          tugasRow.JumlahSoal,
-          tugasRow.OpsiPG
-        );
-        if (!res.adaKunci) return p;
+        if (p.TugasID !== tugasRow.ID) return p;
+        const graded = gradeSubmissionRow(tugasRow, p);
+        if (!graded) return p;
         gradedCount++;
-        return {
-          ...p,
-          Nilai: String(res.nilai),
-          DetailKoreksi: JSON.stringify({
-            total: res.total,
-            jumlahKunci: res.jumlahKunci,
-            benar: res.benar,
-            salah: res.salah,
-            kosong: res.kosong,
-            nilai: res.nilai,
-            detail: res.detail
-          })
-        };
+        return graded;
       });
       if (gradedCount === 0) {
         if (sourceTugasList) {
           await persistSheets({ ...db, Tugas: sourceTugasList }, 'Tugas');
         }
-        showToast('Belum ada jawaban PG siswa yang masuk untuk tugas ini');
+        const fileCount = basePengumpulan.filter(
+          (p: any) => p.TugasID === tugasRow.ID && p.FileID
+        ).length;
+        showToast(
+          fileCount > 0
+            ? `Belum ada jawaban teks terstruktur — klik "Koreksi Semua PDF (${fileCount})" untuk memeriksa berkas siswa`
+            : 'Belum ada jawaban siswa yang masuk untuk dikoreksi otomatis'
+        );
         return;
       }
       if (sourceTugasList) {
@@ -6522,7 +6581,158 @@ export default function App() {
       showToast(`Koreksi otomatis selesai: ${gradedCount} siswa dinilai!`);
     };
 
-    const openKunciPgModal = (tugasRow: any) => {
+    const runBatchKoreksiPdf = async (tugasRow: any) => {
+      const tipe = getTugasTipe(tugasRow);
+      if (tipe === 'umum' || !String(tugasRow?.KunciJawaban || '').trim()) {
+        showToast('Atur Kunci Jawaban terlebih dahulu sebelum mengoreksi PDF siswa');
+        return;
+      }
+      const targets = siswaK
+        .map((s: any) => {
+          const row = (db.Pengumpulan || []).find(
+            (q: any) => q.TugasID === tugasRow.ID && q.SiswaID === s.ID
+          );
+          return row && row.FileID ? { siswa: s, row } : null;
+        })
+        .filter(Boolean) as { siswa: any; row: any }[];
+
+      if (targets.length === 0) {
+        showToast('Belum ada siswa yang mengunggah file PDF/jawaban untuk tugas ini');
+        return;
+      }
+
+      let okCount = 0;
+      let errLast = '';
+      const updatedRows: any[] = [];
+      for (let i = 0; i < targets.length; i++) {
+        const { siswa, row } = targets[i];
+        showToast(`Mengkoreksi PDF ${i + 1}/${targets.length}: ${siswa.Nama}…`, 12000);
+        try {
+          const res = await fetchJson('/api/tugas/koreksi-pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              token,
+              tugasId: tugasRow.ID,
+              siswaId: siswa.ID,
+              fileId: row.FileID,
+              saveResult: true
+            })
+          });
+          if (res.ok && res.data?.pengumpulan) {
+            okCount++;
+            updatedRows.push(res.data.pengumpulan);
+          } else {
+            errLast = res.error || 'Gagal membaca file';
+          }
+        } catch (err: any) {
+          errLast = err?.message || 'Koneksi gagal';
+        }
+      }
+
+      if (updatedRows.length > 0) {
+        setDb(prev => {
+          const list = [...(prev.Pengumpulan || [])];
+          updatedRows.forEach(up => {
+            const idx = list.findIndex(
+              (q: any) => q.TugasID === up.TugasID && q.SiswaID === up.SiswaID
+            );
+            if (idx >= 0) list[idx] = { ...list[idx], ...up };
+            else list.push(up);
+          });
+          return { ...prev, Pengumpulan: list };
+        });
+      }
+
+      if (okCount === targets.length) {
+        showToast(`Koreksi PDF selesai: ${okCount}/${targets.length} berkas siswa dinilai!`);
+      } else if (okCount > 0) {
+        showToast(
+          `Selesai ${okCount}/${targets.length} PDF. Sebagian gagal: ${errLast}`,
+          5000
+        );
+      } else {
+        showToast(`Gagal koreksi PDF: ${errLast || 'Periksa format file / konfigurasi AI'}`, 5000);
+      }
+    };
+
+    const openKunciModal = (tugasRow: any, forceMode?: 'pg' | 'uraian' | 'akuntansi') => {
+      const curMode = getTugasTipe(tugasRow);
+      const targetMode: 'pg' | 'uraian' | 'akuntansi' =
+        forceMode || (curMode !== 'umum' ? curMode : 'pg');
+
+      if (targetMode === 'uraian') {
+        setModalContent({
+          title: 'Kunci Jawaban Uraian Teks',
+          wide: true,
+          render: () => (
+            <KunciUraianQuickModalBody
+              key={`kunci-uraian-${tugasRow.ID}`}
+              tugas={tugasRow}
+              token={token}
+              showToast={showToast}
+              onCancel={() => setModalContent(null)}
+              onSave={async payload => {
+                const updatedTugas = {
+                  ...tugasRow,
+                  TipeSoal: payload.tipeSoal,
+                  JumlahSoal: String(payload.jumlahSoal),
+                  OpsiPG: '',
+                  KunciJawaban: payload.kunciJawaban
+                };
+                const nextTugas = (db.Tugas || []).map((t: any) =>
+                  t.ID === tugasRow.ID ? updatedTugas : t
+                );
+                setModalContent(null);
+                if (payload.autoGradeExisting) {
+                  await runAutoKoreksiSemua(updatedTugas, nextTugas, db.Pengumpulan || []);
+                } else {
+                  await persistSheets({ ...db, Tugas: nextTugas }, 'Tugas');
+                  showToast('Kunci jawaban uraian disimpan');
+                }
+              }}
+            />
+          )
+        });
+        return;
+      }
+
+      if (targetMode === 'akuntansi') {
+        setModalContent({
+          title: 'Kunci Jawaban Praktik Akuntansi',
+          wide: true,
+          render: () => (
+            <KunciAkuntansiQuickModalBody
+              key={`kunci-ak-${tugasRow.ID}`}
+              tugas={tugasRow}
+              token={token}
+              showToast={showToast}
+              onCancel={() => setModalContent(null)}
+              onSave={async payload => {
+                const updatedTugas = {
+                  ...tugasRow,
+                  TipeSoal: payload.tipeSoal,
+                  JumlahSoal: String(payload.jumlahSoal),
+                  OpsiPG: '',
+                  KunciJawaban: payload.kunciJawaban
+                };
+                const nextTugas = (db.Tugas || []).map((t: any) =>
+                  t.ID === tugasRow.ID ? updatedTugas : t
+                );
+                setModalContent(null);
+                if (payload.autoGradeExisting) {
+                  await runAutoKoreksiSemua(updatedTugas, nextTugas, db.Pengumpulan || []);
+                } else {
+                  await persistSheets({ ...db, Tugas: nextTugas }, 'Tugas');
+                  showToast('Kunci jawaban praktik akuntansi disimpan');
+                }
+              }}
+            />
+          )
+        });
+        return;
+      }
+
       setModalContent({
         title: 'Kunci Jawaban Pilihan Ganda',
         wide: true,
@@ -6530,6 +6740,7 @@ export default function App() {
           <KunciPgQuickModalBody
             key={`kunci-${tugasRow.ID}`}
             tugas={tugasRow}
+            token={token}
             showToast={showToast}
             onCancel={() => setModalContent(null)}
             onSave={async payload => {
@@ -6556,7 +6767,7 @@ export default function App() {
       });
     };
 
-    const openKoreksiPgSiswa = (
+    const openKoreksiSiswaModal = (
       tugasRow: any,
       studentIdx: number,
       workingPengumpulan?: any[]
@@ -6579,47 +6790,101 @@ export default function App() {
         DetailKoreksi: ''
       };
 
+      const tipe = getTugasTipe(tugasRow);
+      const handleApply = (
+        payload: {
+          jawabanSiswa: string;
+          detailKoreksi: string;
+          nilai: string;
+          status: string;
+        },
+        goNext: boolean
+      ) => {
+        const nextPengumpulan = [...listNow];
+        const idx = nextPengumpulan.findIndex(
+          (q: any) => q.TugasID === tugasRow.ID && q.SiswaID === s.ID
+        );
+        const nextRow = {
+          ...(idx >= 0 ? nextPengumpulan[idx] : existing),
+          TugasID: tugasRow.ID,
+          SiswaID: s.ID,
+          Status: payload.status,
+          Nilai: payload.nilai,
+          JawabanSiswa: payload.jawabanSiswa,
+          DetailKoreksi: payload.detailKoreksi
+        };
+        if (idx >= 0) nextPengumpulan[idx] = nextRow;
+        else nextPengumpulan.push(nextRow);
+
+        const nextDb = { ...db, Pengumpulan: nextPengumpulan };
+        setDb(nextDb);
+
+        if (goNext && studentIdx + 1 < siswaK.length) {
+          openKoreksiSiswaModal(tugasRow, studentIdx + 1, nextPengumpulan);
+          void persistSheets(nextDb, 'Pengumpulan');
+        } else {
+          setModalContent(null);
+          void persistSheets(nextDb, 'Pengumpulan');
+          showToast(`Nilai ${s.Nama} diterapkan (${payload.nilai})`);
+        }
+      };
+
+      if (tipe === 'uraian') {
+        setModalContent({
+          title: `Koreksi Jawaban Uraian · ${s.Nama}`,
+          wide: true,
+          render: () => (
+            <KoreksiUraianSiswaModalBody
+              key={`${tugasRow.ID}:${s.ID}:uraian`}
+              tugas={tugasRow}
+              siswa={s}
+              submission={existing}
+              token={token}
+              hasNextStudent={studentIdx + 1 < siswaK.length}
+              showToast={showToast}
+              onCancel={() => setModalContent(null)}
+              onApply={handleApply}
+            />
+          )
+        });
+        return;
+      }
+
+      if (tipe === 'akuntansi') {
+        setModalContent({
+          title: `Koreksi Praktik Akuntansi · ${s.Nama}`,
+          wide: true,
+          render: () => (
+            <KoreksiAkuntansiSiswaModalBody
+              key={`${tugasRow.ID}:${s.ID}:akuntansi`}
+              tugas={tugasRow}
+              siswa={s}
+              submission={existing}
+              token={token}
+              hasNextStudent={studentIdx + 1 < siswaK.length}
+              showToast={showToast}
+              onCancel={() => setModalContent(null)}
+              onApply={handleApply}
+            />
+          )
+        });
+        return;
+      }
+
       setModalContent({
         title: `Koreksi Jawaban PG · ${s.Nama}`,
         wide: true,
         render: () => (
           <KoreksiPgSiswaModalBody
-            key={`${tugasRow.ID}:${s.ID}`}
+            key={`${tugasRow.ID}:${s.ID}:pg`}
             tugas={tugasRow}
             siswa={s}
             submission={existing}
+            token={token}
             hasNextStudent={studentIdx + 1 < siswaK.length}
             showToast={showToast}
             onCancel={() => setModalContent(null)}
-            onApply={(payload, goNext) => {
-              const nextPengumpulan = [...listNow];
-              const idx = nextPengumpulan.findIndex(
-                (q: any) => q.TugasID === tugasRow.ID && q.SiswaID === s.ID
-              );
-              const nextRow = {
-                ...(idx >= 0 ? nextPengumpulan[idx] : existing),
-                TugasID: tugasRow.ID,
-                SiswaID: s.ID,
-                Status: payload.status,
-                Nilai: payload.nilai,
-                JawabanSiswa: payload.jawabanSiswa,
-                DetailKoreksi: payload.detailKoreksi
-              };
-              if (idx >= 0) nextPengumpulan[idx] = nextRow;
-              else nextPengumpulan.push(nextRow);
-
-              const nextDb = { ...db, Pengumpulan: nextPengumpulan };
-              setDb(nextDb);
-
-              if (goNext && studentIdx + 1 < siswaK.length) {
-                openKoreksiPgSiswa(tugasRow, studentIdx + 1, nextPengumpulan);
-                void persistSheets(nextDb, 'Pengumpulan');
-              } else {
-                setModalContent(null);
-                void persistSheets(nextDb, 'Pengumpulan');
-                showToast(`Nilai PG ${s.Nama} diterapkan (${payload.nilai})`);
-              }
-            }}
+            onApply={handleApply}
           />
         )
       });
@@ -6631,7 +6896,7 @@ export default function App() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Tugas & Pengumpulan</h1>
             <p className="text-xs text-cyan-50 mt-1">
-              Unggah berkas tugas per mata pelajaran kelas <strong>{kelasObj.Nama || ''}</strong>, pantau pengumpulan siswa, dan nilai hasil unggahan siswa.
+              Unggah berkas tugas per mata pelajaran kelas <strong>{kelasObj.Nama || ''}</strong>, pantau pengumpulan siswa, dan koreksi otomatis PG, Uraian, Praktik Akuntansi, maupun file PDF siswa.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -6756,14 +7021,42 @@ export default function App() {
         </div>
 
         {curTug ? (() => {
-          const isPgTask =
-            String(curTug.TipeSoal || '').toLowerCase() === 'pg' ||
-            Boolean(String(curTug.KunciJawaban || '').trim());
+          const curTipe = getTugasTipe(curTug);
+          const isPgTask = curTipe === 'pg';
+          const isUraianTask = curTipe === 'uraian';
+          const isAkuntansiTask = curTipe === 'akuntansi';
+          const isGradedTask = curTipe !== 'umum';
+
           const curOpsiPG = normalizeOpsiPG(curTug.OpsiPG);
           const curTotalSoal = inferTotalSoal(curTug.KunciJawaban, curTug.JumlahSoal, undefined, curOpsiPG);
-          const kunciMap = parsePgAnswers(curTug.KunciJawaban, curTotalSoal, curOpsiPG);
-          const kunciCount = Object.keys(kunciMap).length;
-          const kunciRingkas = formatPgNumberedSummary(kunciMap, curTotalSoal);
+          const kunciMap = isPgTask ? parsePgAnswers(curTug.KunciJawaban, curTotalSoal, curOpsiPG) : {};
+          const pgKunciCount = Object.keys(kunciMap).length;
+          const kunciRingkas = isPgTask ? formatPgNumberedSummary(kunciMap, curTotalSoal) : '';
+
+          const uraianKunci = isUraianTask
+            ? parseUraianKunci(curTug.KunciJawaban, Number(curTug.JumlahSoal || 0))
+            : [];
+          const akuntansiKunci = isAkuntansiTask ? parseAkuntansiKunci(curTug.KunciJawaban) : [];
+          const akKunciDebit = akuntansiKunci
+            .filter(r => r.posisi === 'D')
+            .reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+          const akKunciKredit = akuntansiKunci
+            .filter(r => r.posisi === 'K')
+            .reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+
+          const hasKunci = isPgTask
+            ? pgKunciCount > 0
+            : isUraianTask
+            ? uraianKunci.length > 0
+            : isAkuntansiTask
+            ? akuntansiKunci.length > 0
+            : false;
+
+          const fileSubmissionCount = siswaK.filter((s: any) =>
+            (db.Pengumpulan || []).some(
+              (q: any) => q.TugasID === curTug.ID && q.SiswaID === s.ID && q.FileID
+            )
+          ).length;
 
           return (
           <div className="bg-white border border-teal-100 rounded-2xl p-6 space-y-4 shadow-sm">
@@ -6781,6 +7074,18 @@ export default function App() {
                       Pilihan Ganda · {curTotalSoal} Soal ({curOpsiPG === 'ABCD' ? 'A–D' : 'A–E'})
                     </span>
                   )}
+                  {isUraianTask && (
+                    <span className="px-2 py-0.5 text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200 rounded-md inline-flex items-center gap-1">
+                      <FileText className="w-3 h-3" />
+                      Uraian Teks · {uraianKunci.length || curTug.JumlahSoal || 0} Soal
+                    </span>
+                  )}
+                  {isAkuntansiTask && (
+                    <span className="px-2 py-0.5 text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md inline-flex items-center gap-1">
+                      <Calculator className="w-3 h-3" />
+                      Praktik Akuntansi · {akuntansiKunci.length || curTug.JumlahSoal || 0} Baris
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-slate-500">
                   Jenis: {curTug.Jenis} · Tenggat: {curTug.Tenggat || '-'}
@@ -6789,7 +7094,7 @@ export default function App() {
                   <p className="text-xs text-slate-600 max-w-2xl">{curTug.Deskripsi}</p>
                 )}
                 {curTug.FileID && (
-                  <div className="pt-1">
+                  <div className="pt-1 flex flex-wrap items-center gap-1.5">
                     <a
                       href={`/api/tugas/file/${curTug.FileID}`}
                       target="_blank"
@@ -6798,22 +7103,75 @@ export default function App() {
                     >
                       <Download className="w-3.5 h-3.5" /> Lampiran Guru: {curTug.NamaFile}
                     </a>
+                    {/\.(pdf|png|jpe?g|webp)$/i.test(curTug.NamaFile || '') && (
+                      <a
+                        href={`/api/tugas/file/${curTug.FileID}?inline=1`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold bg-white hover:bg-sky-50 text-sky-700 border border-sky-200 rounded-lg"
+                      >
+                        <Eye className="w-3.5 h-3.5" /> Preview
+                      </a>
+                    )}
                   </div>
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => openKunciPgModal(curTug)}
-                  className="px-3 py-2 text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl flex items-center gap-1.5 cursor-pointer"
-                >
-                  <KeyRound className="w-3.5 h-3.5" /> {isPgTask ? 'Atur Kunci PG' : 'Koreksi PG'}
-                </button>
-                {isPgTask && kunciCount > 0 && (
+                {curTipe === 'umum' ? (
+                  <>
+                    <button
+                      onClick={() => openKunciModal(curTug, 'pg')}
+                      className="px-2.5 py-2 text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl flex items-center gap-1 cursor-pointer"
+                    >
+                      <KeyRound className="w-3.5 h-3.5" /> Kunci PG
+                    </button>
+                    <button
+                      onClick={() => openKunciModal(curTug, 'uraian')}
+                      className="px-2.5 py-2 text-xs font-semibold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl flex items-center gap-1 cursor-pointer"
+                    >
+                      <FileText className="w-3.5 h-3.5" /> Kunci Uraian
+                    </button>
+                    <button
+                      onClick={() => openKunciModal(curTug, 'akuntansi')}
+                      className="px-2.5 py-2 text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl flex items-center gap-1 cursor-pointer"
+                    >
+                      <Calculator className="w-3.5 h-3.5" /> Kunci Akuntansi
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => openKunciModal(curTug)}
+                    className={`px-3 py-2 text-xs font-semibold rounded-xl border flex items-center gap-1.5 cursor-pointer ${
+                      isUraianTask
+                        ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
+                        : isAkuntansiTask
+                        ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                        : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'
+                    }`}
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />{' '}
+                    {isUraianTask
+                      ? 'Atur Kunci Uraian'
+                      : isAkuntansiTask
+                      ? 'Atur Kunci Akuntansi'
+                      : 'Atur Kunci PG'}
+                  </button>
+                )}
+
+                {isGradedTask && hasKunci && (
                   <button
                     onClick={() => runAutoKoreksiSemua(curTug)}
                     className="px-3 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer"
                   >
                     <Sparkles className="w-3.5 h-3.5" /> Koreksi Otomatis Semua
+                  </button>
+                )}
+                {isGradedTask && hasKunci && fileSubmissionCount > 0 && (
+                  <button
+                    onClick={() => runBatchKoreksiPdf(curTug)}
+                    className="px-3 py-2 text-xs font-semibold bg-violet-600 hover:bg-violet-500 text-white rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer"
+                  >
+                    <FileUp className="w-3.5 h-3.5" /> Koreksi Semua PDF ({fileSubmissionCount})
                   </button>
                 )}
                 <button
@@ -6842,18 +7200,94 @@ export default function App() {
                 <div className="space-y-0.5 min-w-0 flex-1">
                   <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
                     <KeyRound className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                    Kunci Jawaban PG ({kunciCount}/{curTotalSoal} nomor terisi)
+                    Kunci Jawaban PG ({pgKunciCount}/{curTotalSoal} nomor terisi)
                   </div>
                   <div className="text-[11px] font-mono text-indigo-800 break-words">
-                    {kunciRingkas || 'Kunci jawaban belum diisi. Klik "Atur Kunci PG" untuk memasukkan kunci jawaban.'}
+                    {kunciRingkas || 'Kunci jawaban belum diisi. Klik "Atur Kunci PG" atau impor dari file PDF kunci.'}
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => openKunciPgModal(curTug)}
+                  onClick={() => openKunciModal(curTug, 'pg')}
                   className="px-3 py-1.5 text-[11px] font-bold bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg shrink-0 cursor-pointer"
                 >
-                  {kunciCount > 0 ? 'Ubah Kunci' : 'Input Kunci PG'}
+                  {pgKunciCount > 0 ? 'Ubah Kunci' : 'Input Kunci PG'}
+                </button>
+              </div>
+            )}
+
+            {isUraianTask && (
+              <div className="bg-amber-50/70 border border-amber-200 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="space-y-1 min-w-0 flex-1">
+                  <div className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    Kunci Jawaban Uraian Teks ({uraianKunci.length} butir soal · Total Bobot{' '}
+                    {uraianKunci.reduce((s, it) => s + (Number(it.bobot) || 0), 0)})
+                  </div>
+                  {uraianKunci.length > 0 ? (
+                    <div className="text-[11px] text-amber-900 space-y-0.5">
+                      {uraianKunci.slice(0, 3).map(it => (
+                        <div key={it.no} className="truncate">
+                          <strong>#{it.no}</strong>
+                          {it.pertanyaan ? ` (${it.pertanyaan})` : ''}:{' '}
+                          <span className="text-amber-800">{it.kunci || '-'}</span>
+                        </div>
+                      ))}
+                      {uraianKunci.length > 3 && (
+                        <div className="text-[10px] text-amber-700">
+                          +{uraianKunci.length - 3} butir lainnya…
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-amber-800">
+                      Belum ada kunci uraian. Klik "Atur Kunci Uraian" untuk mengetik poin kunci atau impor dari file PDF.
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openKunciModal(curTug, 'uraian')}
+                  className="px-3 py-1.5 text-[11px] font-bold bg-white hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg shrink-0 cursor-pointer"
+                >
+                  {uraianKunci.length > 0 ? 'Ubah / Impor PDF Kunci' : 'Input Kunci Uraian'}
+                </button>
+              </div>
+            )}
+
+            {isAkuntansiTask && (
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="space-y-1 min-w-0 flex-1">
+                  <div className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                    <Calculator className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    Kunci Praktik Akuntansi ({akuntansiKunci.length} baris · Total D: Rp{' '}
+                    {formatRupiah(akKunciDebit)} · K: Rp {formatRupiah(akKunciKredit)})
+                  </div>
+                  {akuntansiKunci.length > 0 ? (
+                    <div className="text-[11px] text-emerald-900 flex flex-wrap gap-x-3 gap-y-0.5">
+                      {akuntansiKunci.slice(0, 4).map(r => (
+                        <span key={r.no}>
+                          <strong>#{r.no}</strong> {r.akun} ({r.posisi}) Rp {formatRupiah(r.nominal)}
+                        </span>
+                      ))}
+                      {akuntansiKunci.length > 4 && (
+                        <span className="text-emerald-700">
+                          +{akuntansiKunci.length - 4} baris lainnya…
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-emerald-800">
+                      Belum ada tabel kunci akuntansi. Klik "Atur Kunci Akuntansi" untuk menginput atau impor dari PDF.
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openKunciModal(curTug, 'akuntansi')}
+                  className="px-3 py-1.5 text-[11px] font-bold bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg shrink-0 cursor-pointer"
+                >
+                  {akuntansiKunci.length > 0 ? 'Ubah / Impor PDF Kunci' : 'Input Kunci Akuntansi'}
                 </button>
               </div>
             )}
@@ -6865,7 +7299,7 @@ export default function App() {
                     <th className="py-2.5 px-3 w-10">#</th>
                     <th className="py-2.5 px-3">Nama Siswa</th>
                     <th className="py-2.5 px-3">Berkas Unggahan Siswa</th>
-                    {isPgTask && <th className="py-2.5 px-3">Jawaban & Koreksi PG</th>}
+                    {isGradedTask && <th className="py-2.5 px-3">Jawaban & Koreksi</th>}
                     <th className="py-2.5 px-3">Status Pengumpulan</th>
                     <th className="py-2.5 px-3 text-right">Nilai (0–100)</th>
                   </tr>
@@ -6876,15 +7310,30 @@ export default function App() {
                       (q: any) => q.TugasID === curTug.ID && q.SiswaID === s.ID
                     ) || { Status: 'Belum', Nilai: '', FileID: '', NamaFile: '', TanggalKumpul: '', CatatanSiswa: '', JawabanSiswa: '', DetailKoreksi: '' };
 
-                    const parsedJawab = isPgTask
+                    const parsedPg = isPgTask
                       ? parsePgAnswers(r.JawabanSiswa, curTotalSoal, curOpsiPG)
                       : {};
-                    const jCount = Object.keys(parsedJawab).length;
-                    const detailObj = isPgTask ? parseDetailKoreksi(r.DetailKoreksi) : null;
-                    const liveKoreksi =
-                      isPgTask && jCount > 0 && kunciCount > 0
-                        ? koreksiPgSiswa(curTug.KunciJawaban, parsedJawab, curTotalSoal, curOpsiPG)
+                    const jPgCount = Object.keys(parsedPg).length;
+                    const parsedUraian = isUraianTask ? parseUraianSiswa(r.JawabanSiswa) : {};
+                    const jUraianCount = Object.keys(parsedUraian).filter(k =>
+                      Boolean(String(parsedUraian[Number(k)] || '').trim())
+                    ).length;
+                    const parsedAk = isAkuntansiTask ? parseAkuntansiSiswa(r.JawabanSiswa) : [];
+
+                    const detailObj = isGradedTask ? parseDetailKoreksi(r.DetailKoreksi) : null;
+                    const livePg =
+                      isPgTask && jPgCount > 0 && hasKunci
+                        ? koreksiPgSiswa(curTug.KunciJawaban, parsedPg, curTotalSoal, curOpsiPG)
                         : null;
+                    const liveUraian =
+                      isUraianTask && jUraianCount > 0 && hasKunci
+                        ? koreksiUraianSiswa(uraianKunci, parsedUraian)
+                        : null;
+                    const liveAk =
+                      isAkuntansiTask && parsedAk.length > 0 && hasKunci
+                        ? koreksiAkuntansiSiswa(akuntansiKunci, parsedAk)
+                        : null;
+                    const isPreviewableFile = /\.(pdf|png|jpe?g|webp)$/i.test(r.NamaFile || '');
 
                     return (
                       <tr key={s.ID} className="hover:bg-slate-50/70">
@@ -6898,50 +7347,134 @@ export default function App() {
                         <td className="py-2 px-3">
                           {r.FileID ? (
                             <div className="space-y-0.5">
-                              <a
-                                href={`/api/tugas/file/${r.FileID}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg max-w-[200px] truncate"
-                                title={r.NamaFile}
-                              >
-                                <Paperclip className="w-3 h-3 shrink-0" />
-                                <span className="truncate">{r.NamaFile || 'Unduh Berkas'}</span>
-                              </a>
+                              <div className="flex items-center gap-1">
+                                <a
+                                  href={`/api/tugas/file/${r.FileID}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg max-w-[180px] truncate"
+                                  title={r.NamaFile}
+                                >
+                                  <Paperclip className="w-3 h-3 shrink-0" />
+                                  <span className="truncate">{r.NamaFile || 'Unduh Berkas'}</span>
+                                </a>
+                                {isPreviewableFile && (
+                                  <a
+                                    href={`/api/tugas/file/${r.FileID}?inline=1`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title="Lihat PDF / Gambar"
+                                    className="inline-flex items-center justify-center p-1 text-emerald-700 bg-white hover:bg-emerald-50 border border-emerald-200 rounded-lg"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                  </a>
+                                )}
+                              </div>
                               {r.TanggalKumpul && (
                                 <div className="text-[10px] text-slate-400 tabular-nums">{r.TanggalKumpul}</div>
                               )}
                             </div>
                           ) : (
                             <span className="text-slate-400">
-                              {jCount > 0 ? 'Dikumpulkan via LJK PG' : 'Belum upload'}
+                              {jPgCount > 0
+                                ? 'Dikumpulkan via LJK PG'
+                                : jUraianCount > 0
+                                ? 'Dikumpulkan via Form Uraian'
+                                : parsedAk.length > 0
+                                ? 'Dikumpulkan via Tabel Akuntansi'
+                                : 'Belum upload'}
                             </span>
                           )}
                         </td>
-                        {isPgTask && (
+                        {isGradedTask && (
                           <td className="py-2 px-3">
                             <div className="flex flex-wrap items-center gap-1.5">
-                              {liveKoreksi ? (
-                                <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md tabular-nums">
-                                  B:{liveKoreksi.benar} · S:{liveKoreksi.salah}
-                                  {liveKoreksi.kosong > 0 ? ` · K:${liveKoreksi.kosong}` : ''}
-                                </span>
-                              ) : detailObj && typeof detailObj.benar === 'number' ? (
-                                <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md tabular-nums">
-                                  B:{detailObj.benar} · S:{detailObj.salah ?? 0}
-                                </span>
-                              ) : jCount > 0 ? (
-                                <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md tabular-nums">
-                                  Terisi {jCount}/{curTotalSoal}
-                                </span>
-                              ) : null}
+                              {isPgTask && (
+                                livePg ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md tabular-nums">
+                                    B:{livePg.benar} · S:{livePg.salah}
+                                    {livePg.kosong > 0 ? ` · K:${livePg.kosong}` : ''}
+                                  </span>
+                                ) : detailObj && typeof detailObj.benar === 'number' ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md tabular-nums">
+                                    B:{detailObj.benar} · S:{detailObj.salah ?? 0}
+                                  </span>
+                                ) : jPgCount > 0 ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md tabular-nums">
+                                    Terisi {jPgCount}/{curTotalSoal}
+                                  </span>
+                                ) : r.FileID ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-semibold bg-violet-50 text-violet-700 border border-violet-200 rounded-md">
+                                    PDF siap dikoreksi
+                                  </span>
+                                ) : null
+                              )}
+
+                              {isUraianTask && (
+                                liveUraian ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 rounded-md tabular-nums">
+                                    Sesuai:{liveUraian.sesuai} · Sebagian:{liveUraian.sebagian}
+                                  </span>
+                                ) : detailObj && typeof detailObj.sesuai === 'number' ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 rounded-md tabular-nums">
+                                    Sesuai:{detailObj.sesuai} · Sebagian:{detailObj.sebagian ?? 0}
+                                  </span>
+                                ) : jUraianCount > 0 ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-md tabular-nums">
+                                    Terisi {jUraianCount}/{uraianKunci.length || jUraianCount}
+                                  </span>
+                                ) : r.FileID ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-semibold bg-violet-50 text-violet-700 border border-violet-200 rounded-md">
+                                    PDF siap dikoreksi
+                                  </span>
+                                ) : null
+                              )}
+
+                              {isAkuntansiTask && (
+                                liveAk ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md tabular-nums">
+                                    Benar:{liveAk.benar} · {liveAk.seimbangSiswa ? 'Balance' : 'Selisih D/K'}
+                                  </span>
+                                ) : detailObj && typeof detailObj.benar === 'number' ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md tabular-nums">
+                                    Benar:{detailObj.benar}/{detailObj.totalBaris ?? akuntansiKunci.length}
+                                  </span>
+                                ) : parsedAk.length > 0 ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md tabular-nums">
+                                    {parsedAk.length} baris diisi
+                                  </span>
+                                ) : r.FileID ? (
+                                  <span className="px-2 py-0.5 text-[10px] font-semibold bg-violet-50 text-violet-700 border border-violet-200 rounded-md">
+                                    PDF siap dikoreksi
+                                  </span>
+                                ) : null
+                              )}
+
                               <button
                                 type="button"
-                                onClick={() => openKoreksiPgSiswa(curTug, i)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg cursor-pointer"
+                                onClick={() => openKoreksiSiswaModal(curTug, i)}
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-lg border cursor-pointer ${
+                                  isUraianTask
+                                    ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
+                                    : isAkuntansiTask
+                                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'
+                                }`}
                               >
                                 <ClipboardCheck className="w-3 h-3" />
-                                {jCount > 0 ? 'Lihat / Koreksi' : 'Input & Koreksi PG'}
+                                {r.FileID && !r.JawabanSiswa
+                                  ? 'Koreksi PDF'
+                                  : isUraianTask
+                                  ? jUraianCount > 0
+                                    ? 'Lihat / Koreksi'
+                                    : 'Input & Koreksi Uraian'
+                                  : isAkuntansiTask
+                                  ? parsedAk.length > 0
+                                    ? 'Lihat / Koreksi'
+                                    : 'Input & Koreksi Jurnal'
+                                  : jPgCount > 0
+                                  ? 'Lihat / Koreksi'
+                                  : 'Input & Koreksi PG'}
                               </button>
                             </div>
                           </td>

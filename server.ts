@@ -9,6 +9,19 @@ import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { getKaldikJabarEvents, KALDIK_JABAR_REF } from './src/data/kaldikJabar.ts';
 import { parsePgAnswers, serializePgAnswers, koreksiPgSiswa } from './src/pgTugasUtils.ts';
 import {
+  buildStudentTugasSafeMeta,
+  koreksiAkuntansiSiswa,
+  koreksiUraianSiswa,
+  parseAkuntansiQuickText,
+  parseAkuntansiSiswa,
+  parseUraianKunciQuickText,
+  parseUraianSiswa,
+  serializeAkuntansiKunci,
+  serializeAkuntansiSiswa,
+  serializeUraianKunci,
+  serializeUraianSiswa
+} from './src/uraianAkuntansiUtils.ts';
+import {
   clearAllRemoteFiles,
   deleteRemoteFile,
   deleteRemoteSession,
@@ -116,6 +129,71 @@ function extractOfficeXmlText(buf: Buffer): string {
     }
   } catch {}
   return chunks.join('\n\n').trim();
+}
+
+function detectMimeForFilename(fname: string): string {
+  const lower = String(fname || '').toLowerCase();
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.txt') || lower.endsWith('.csv') || lower.endsWith('.tsv')) return 'text/plain; charset=utf-8';
+  return 'application/octet-stream';
+}
+
+function extractBasicPdfText(buf: Buffer): string {
+  try {
+    const raw = buf.toString('latin1');
+    const chunks: string[] = [];
+    const decodePdfString = (s: string) =>
+      s
+        .replace(/\\([()\\])/g, '$1')
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t');
+
+    const collectTextOps = (content: string) => {
+      const tjRegex = /\(([^()\\]*(?:\\.[^()\\]*)*)\)\s*Tj/g;
+      let m: RegExpExecArray | null;
+      while ((m = tjRegex.exec(content)) !== null) {
+        const t = decodePdfString(m[1]).trim();
+        if (t) chunks.push(t);
+      }
+      const tjArrRegex = /\[([^\]]+)\]\s*TJ/g;
+      while ((m = tjArrRegex.exec(content)) !== null) {
+        const inner = m[1];
+        const parts: string[] = [];
+        const pRegex = /\(([^()\\]*(?:\\.[^()\\]*)*)\)/g;
+        let pm: RegExpExecArray | null;
+        while ((pm = pRegex.exec(inner)) !== null) {
+          parts.push(decodePdfString(pm[1]));
+        }
+        const joined = parts.join('').trim();
+        if (joined) chunks.push(joined);
+      }
+    };
+
+    const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    let sm: RegExpExecArray | null;
+    while ((sm = streamRegex.exec(raw)) !== null) {
+      const streamBytes = Buffer.from(sm[1], 'latin1');
+      let textContent = '';
+      try {
+        textContent = zlib.inflateSync(streamBytes).toString('latin1');
+      } catch {
+        textContent = sm[1];
+      }
+      if (textContent.includes('Tj') || textContent.includes('TJ')) {
+        collectTextOps(textContent);
+      }
+    }
+    if (chunks.length === 0) {
+      collectTextOps(raw);
+    }
+    return chunks.join(' ').replace(/\s+/g, ' ').trim();
+  } catch {
+    return '';
+  }
 }
 
 const SKEMA: Record<string, string[]> = {
@@ -2296,6 +2374,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
         .map(a => ({ Tanggal: a.Tanggal, Kode: a.Kode, Keterangan: a.Keterangan })),
       tugas: tugas.map(t => {
         const p = pg.find(x => x.TugasID === t.ID);
+        const safeMeta = buildStudentTugasSafeMeta(t);
         return {
           ID: t.ID,
           Judul: t.Judul,
@@ -2309,6 +2388,8 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
           JumlahSoal: Number(t.JumlahSoal || 0),
           OpsiPG: t.OpsiPG || 'ABCDE',
           SudahAdaKunci: Boolean(String(t.KunciJawaban || '').trim()),
+          SoalUraianMeta: safeMeta.SoalUraianMeta,
+          AkuntansiMeta: safeMeta.AkuntansiMeta,
           Status: p ? p.Status : 'Belum',
           Nilai: p ? p.Nilai : '',
           FileSiswaID: p ? p.FileID || '' : '',
@@ -3997,22 +4078,36 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
       const existing = idx >= 0 ? semuaPg[idx] : null;
 
       const hasNewFile = Boolean(namaFile && base64Data);
-      const parsedJawaban = parsePgAnswers(
-        jawabanSiswa,
-        Number(tugas.JumlahSoal || 0) || 200,
-        tugas.OpsiPG || 'ABCDE'
-      );
-      const serializedJawaban = serializePgAnswers(
-        parsedJawaban,
-        Number(tugas.JumlahSoal || 0) || 200,
-        tugas.OpsiPG || 'ABCDE'
-      );
-      const hasPgAnswer = Object.keys(parsedJawaban).length > 0;
+      const tipeSoal = String(tugas.TipeSoal || 'umum').toLowerCase();
 
-      if (!hasNewFile && !hasPgAnswer && !existing?.FileID) {
+      let serializedJawaban = '';
+      let hasTextOrStructuredAnswer = false;
+      if (tipeSoal === 'uraian') {
+        const parsedUraian = parseUraianSiswa(jawabanSiswa);
+        serializedJawaban = serializeUraianSiswa(parsedUraian);
+        hasTextOrStructuredAnswer = Object.keys(parsedUraian).length > 0;
+      } else if (tipeSoal === 'akuntansi') {
+        const parsedAk = parseAkuntansiSiswa(jawabanSiswa);
+        serializedJawaban = serializeAkuntansiSiswa(parsedAk);
+        hasTextOrStructuredAnswer = parsedAk.some(r => r.akun.trim() || r.nominal !== 0);
+      } else {
+        const parsedJawaban = parsePgAnswers(
+          jawabanSiswa,
+          Number(tugas.JumlahSoal || 0) || 200,
+          tugas.OpsiPG || 'ABCDE'
+        );
+        serializedJawaban = serializePgAnswers(
+          parsedJawaban,
+          Number(tugas.JumlahSoal || 0) || 200,
+          tugas.OpsiPG || 'ABCDE'
+        );
+        hasTextOrStructuredAnswer = Object.keys(parsedJawaban).length > 0;
+      }
+
+      if (!hasNewFile && !hasTextOrStructuredAnswer && !existing?.FileID) {
         res.status(400).json({
           ok: false,
-          error: 'Pilih berkas hasil tugas atau isi jawaban Pilihan Ganda terlebih dahulu.'
+          error: 'Pilih berkas hasil tugas (mis. PDF) atau isi lembar jawaban terlebih dahulu.'
         });
         return;
       }
@@ -4034,7 +4129,7 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
             id: fileId,
             kind: 'tugas',
             filename: finalNamaFile,
-            mime: 'application/octet-stream',
+            mime: detectMimeForFilename(finalNamaFile),
             contentBase64: String(base64Data)
           });
         }
@@ -4049,28 +4144,38 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
       let detailKoreksi = existing?.DetailKoreksi || '';
       const finalJawabanSiswa = jawabanSiswa !== undefined ? serializedJawaban : existing?.JawabanSiswa || '';
 
-      if (
-        String(tugas.TipeSoal || '').toLowerCase() === 'pg' &&
-        String(tugas.KunciJawaban || '').trim() &&
-        finalJawabanSiswa
-      ) {
-        const koreksi = koreksiPgSiswa(
-          tugas.KunciJawaban,
-          finalJawabanSiswa,
-          tugas.JumlahSoal,
-          tugas.OpsiPG
-        );
-        if (koreksi.adaKunci) {
-          nilai = String(koreksi.nilai);
-          detailKoreksi = JSON.stringify({
-            total: koreksi.total,
-            jumlahKunci: koreksi.jumlahKunci,
-            benar: koreksi.benar,
-            salah: koreksi.salah,
-            kosong: koreksi.kosong,
-            nilai: koreksi.nilai,
-            detail: koreksi.detail
-          });
+      if (String(tugas.KunciJawaban || '').trim() && finalJawabanSiswa) {
+        if (tipeSoal === 'pg') {
+          const koreksi = koreksiPgSiswa(
+            tugas.KunciJawaban,
+            finalJawabanSiswa,
+            tugas.JumlahSoal,
+            tugas.OpsiPG
+          );
+          if (koreksi.adaKunci) {
+            nilai = String(koreksi.nilai);
+            detailKoreksi = JSON.stringify({
+              total: koreksi.total,
+              jumlahKunci: koreksi.jumlahKunci,
+              benar: koreksi.benar,
+              salah: koreksi.salah,
+              kosong: koreksi.kosong,
+              nilai: koreksi.nilai,
+              detail: koreksi.detail
+            });
+          }
+        } else if (tipeSoal === 'uraian') {
+          const koreksi = koreksiUraianSiswa(tugas.KunciJawaban, finalJawabanSiswa);
+          if (koreksi.adaKunci) {
+            nilai = String(koreksi.nilai);
+            detailKoreksi = JSON.stringify(koreksi);
+          }
+        } else if (tipeSoal === 'akuntansi') {
+          const koreksi = koreksiAkuntansiSiswa(tugas.KunciJawaban, finalJawabanSiswa);
+          if (koreksi.adaKunci) {
+            nilai = String(koreksi.nilai);
+            detailKoreksi = JSON.stringify(koreksi);
+          }
         }
       }
 
@@ -4097,10 +4202,36 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
     }
   });
 
-  // Download Tugas / Student Submission File
+  // Helper to read uploaded Tugas file buffer
+  async function readTugasFileBuffer(fileId: string): Promise<{ buffer: Buffer; filename: string; mimeType: string } | null> {
+    const safeId = String(fileId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!safeId) return null;
+    if (fs.existsSync(TUGAS_DIR)) {
+      const match = fs.readdirSync(TUGAS_DIR).find(f => f.startsWith(safeId + '__'));
+      if (match) {
+        const origName = match.slice((safeId + '__').length);
+        const buf = fs.readFileSync(path.join(TUGAS_DIR, match));
+        return { buffer: buf, filename: origName, mimeType: detectMimeForFilename(origName) };
+      }
+    }
+    if (detectStorageEngine().isVercelCloud) {
+      const remote = await loadRemoteFile(safeId);
+      if (remote) {
+        return {
+          buffer: Buffer.from(remote.contentBase64, 'base64'),
+          filename: remote.filename,
+          mimeType: detectMimeForFilename(remote.filename)
+        };
+      }
+    }
+    return null;
+  }
+
+  // Download or Inline Preview Tugas / Student Submission File
   app.get('/api/tugas/file/:fileId', async (req, res) => {
     try {
       const fileId = String(req.params.fileId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      const inline = String(req.query.inline || '') === '1';
       if (!fileId) {
         res.status(404).send('Berkas tugas tidak ditemukan');
         return;
@@ -4109,7 +4240,13 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
         const match = fs.readdirSync(TUGAS_DIR).find(f => f.startsWith(fileId + '__'));
         if (match) {
           const origName = match.slice((fileId + '__').length);
-          res.setHeader('Content-Disposition', `attachment; filename="${origName}"`);
+          const mime = detectMimeForFilename(origName);
+          if (inline) {
+            res.setHeader('Content-Type', mime);
+            res.setHeader('Content-Disposition', `inline; filename="${origName}"`);
+          } else {
+            res.setHeader('Content-Disposition', `attachment; filename="${origName}"`);
+          }
           res.sendFile(path.join(TUGAS_DIR, match));
           return;
         }
@@ -4117,7 +4254,13 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
       if (detectStorageEngine().isVercelCloud) {
         const remote = await loadRemoteFile(fileId);
         if (remote) {
-          res.setHeader('Content-Disposition', `attachment; filename="${remote.filename}"`);
+          const mime = detectMimeForFilename(remote.filename);
+          if (inline) {
+            res.setHeader('Content-Type', mime);
+            res.setHeader('Content-Disposition', `inline; filename="${remote.filename}"`);
+          } else {
+            res.setHeader('Content-Disposition', `attachment; filename="${remote.filename}"`);
+          }
           res.send(Buffer.from(remote.contentBase64, 'base64'));
           return;
         }
@@ -4125,6 +4268,539 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
       res.status(404).send('Berkas tugas tidak ditemukan');
     } catch {
       res.status(500).send('Gagal mengunduh berkas tugas');
+    }
+  });
+
+  // Extract Teacher Answer Key from PDF / Image / DOCX / TXT
+  app.post('/api/tugas/ekstrak-kunci-pdf', async (req, res) => {
+    try {
+      const { token, tipeSoal, namaFile, base64Data } = req.body || {};
+      staf_(token);
+      if (!namaFile || !base64Data) {
+        res.status(400).json({ ok: false, error: 'Pilih berkas PDF kunci jawaban terlebih dahulu.' });
+        return;
+      }
+      const mode = String(tipeSoal || 'uraian').toLowerCase();
+      const fname = String(namaFile);
+      const mime = detectMimeForFilename(fname);
+      const buf = Buffer.from(String(base64Data), 'base64');
+
+      let plainText = '';
+      if (/\.(txt|csv|tsv|md|json)$/i.test(fname)) {
+        plainText = buf.toString('utf8').slice(0, 45000);
+      } else if (/\.(docx|xlsx|pptx)$/i.test(fname)) {
+        plainText = extractOfficeXmlText(buf).slice(0, 45000);
+      } else if (/\.pdf$/i.test(fname)) {
+        plainText = extractBasicPdfText(buf).slice(0, 45000);
+      }
+
+      const hasAiKey = Boolean((process.env.GEMINI_API_KEY || '').trim() && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
+      if (hasAiKey) {
+        const aiClient = getAiClient();
+        const isInline = mime === 'application/pdf' || mime.startsWith('image/');
+        const parts: any[] = [];
+        if (isInline) {
+          parts.push({ inlineData: { mimeType: mime, data: String(base64Data) } });
+        } else if (plainText) {
+          parts.push({ text: `ISI DOKUMEN KUNCI (${fname}):\n${plainText}` });
+        }
+
+        if (parts.length > 0) {
+          if (mode === 'pg') {
+            parts.push({
+              text: 'Ekstrak seluruh kunci jawaban Pilihan Ganda dari dokumen ini. Kembalikan nomor soal (mulai 1) dan huruf kunci (A/B/C/D/E).'
+            });
+            const resp = await generateContentFastWithFallback(aiClient, {
+              modeCepat: false,
+              contents: { parts },
+              systemInstruction:
+                'Anda mengekstrak kunci jawaban pilihan ganda secara akurat dari dokumen guru Indonesia.',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  opsiMaks: { type: Type.STRING, description: 'ABCD atau ABCDE' },
+                  items: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        no: { type: Type.INTEGER },
+                        kunci: { type: Type.STRING }
+                      },
+                      required: ['no', 'kunci']
+                    }
+                  }
+                },
+                required: ['items']
+              }
+            });
+            const parsed = parseJsonSafe<any>(resp.text, {});
+            const map: Record<number, string> = {};
+            for (const it of parsed.items || []) {
+              const no = Number(it.no);
+              const ch = String(it.kunci || '').trim().toUpperCase();
+              if (no >= 1 && /^[A-E]$/.test(ch)) map[no] = ch;
+            }
+            const opsiPG = String(parsed.opsiMaks || '').toUpperCase() === 'ABCD' ? 'ABCD' : 'ABCDE';
+            const maxNo = Object.keys(map).reduce((m, k) => Math.max(m, Number(k)), 0) || 10;
+            res.json({
+              ok: true,
+              data: {
+                tipeSoal: 'pg',
+                opsiPG,
+                jumlahSoal: maxNo,
+                kunciJawaban: serializePgAnswers(map, maxNo, opsiPG)
+              }
+            });
+            return;
+          }
+
+          if (mode === 'akuntansi') {
+            parts.push({
+              text: 'Ekstrak seluruh kunci jawaban praktik akuntansi (Jurnal Umum, Penyesuaian, Neraca Saldo, Persamaan Dasar Akuntansi, atau Laporan Keuangan) dari dokumen ini menjadi daftar baris terstruktur: keterangan/tanggal, nama akun/item, posisi (D untuk Debit, K untuk Kredit, N jika hanya nominal/perhitungan), nominal angka bulat Rupiah, dan bobot.'
+            });
+            const resp = await generateContentFastWithFallback(aiClient, {
+              modeCepat: false,
+              contents: { parts },
+              systemInstruction:
+                'Anda ahli ekstraksi tabel dan jurnal akuntansi Indonesia. Pastikan nominal adalah angka bulat tanpa titik/Rp dan posisi D/K akurat.',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  baris: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        no: { type: Type.INTEGER },
+                        keterangan: { type: Type.STRING },
+                        akun: { type: Type.STRING },
+                        posisi: { type: Type.STRING, description: 'D, K, atau N' },
+                        nominal: { type: Type.NUMBER },
+                        bobot: { type: Type.NUMBER }
+                      },
+                      required: ['akun', 'posisi', 'nominal']
+                    }
+                  }
+                },
+                required: ['baris']
+              }
+            });
+            const parsed = parseJsonSafe<any>(resp.text, {});
+            const rawRows = Array.isArray(parsed.baris) ? parsed.baris : [];
+            const kunciJson = serializeAkuntansiKunci(
+              rawRows.map((r: any, idx: number) => ({
+                no: idx + 1,
+                keterangan: String(r.keterangan || ''),
+                akun: String(r.akun || ''),
+                posisi: (String(r.posisi || 'N').toUpperCase() === 'D' ? 'D' : String(r.posisi || 'N').toUpperCase() === 'K' ? 'K' : 'N') as 'D' | 'K' | 'N',
+                nominal: Number(r.nominal) || 0,
+                bobot: Number(r.bobot) > 0 ? Number(r.bobot) : 10
+              }))
+            );
+            res.json({ ok: true, data: { tipeSoal: 'akuntansi', kunciJawaban: kunciJson } });
+            return;
+          }
+
+          // Uraian Teks
+          parts.push({
+            text: 'Ekstrak seluruh butir soal & kunci jawaban uraian dari dokumen ini: nomor soal, pertanyaan/indikator singkat, kunci jawaban/poin kunci (pisahkan poin penting dengan tanda ; jika ada beberapa poin), dan bobot poin.'
+          });
+          const resp = await generateContentFastWithFallback(aiClient, {
+            modeCepat: false,
+            contents: { parts },
+            systemInstruction:
+              'Anda mengekstrak kunci jawaban uraian dan rubrik penilaian guru Indonesia secara terstruktur.',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                items: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      no: { type: Type.INTEGER },
+                      pertanyaan: { type: Type.STRING },
+                      kunci: { type: Type.STRING },
+                      bobot: { type: Type.NUMBER }
+                    },
+                    required: ['no', 'kunci']
+                  }
+                }
+              },
+              required: ['items']
+            }
+          });
+          const parsed = parseJsonSafe<any>(resp.text, {});
+          const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+          const kunciJson = serializeUraianKunci(
+            rawItems.map((it: any, idx: number) => ({
+              no: Number(it.no) > 0 ? Number(it.no) : idx + 1,
+              pertanyaan: String(it.pertanyaan || ''),
+              kunci: String(it.kunci || ''),
+              bobot: Number(it.bobot) > 0 ? Number(it.bobot) : 10
+            }))
+          );
+          res.json({ ok: true, data: { tipeSoal: 'uraian', kunciJawaban: kunciJson } });
+          return;
+        }
+      }
+
+      // Non-AI fallback when plain text was readable
+      if (plainText) {
+        if (mode === 'pg') {
+          const map = parsePgAnswers(plainText, 200, 'ABCDE');
+          const maxNo = Object.keys(map).reduce((m, k) => Math.max(m, Number(k)), 0) || 10;
+          res.json({
+            ok: true,
+            data: { tipeSoal: 'pg', opsiPG: 'ABCDE', jumlahSoal: maxNo, kunciJawaban: serializePgAnswers(map, maxNo, 'ABCDE') }
+          });
+          return;
+        }
+        if (mode === 'akuntansi') {
+          const rows = parseAkuntansiQuickText(plainText);
+          res.json({ ok: true, data: { tipeSoal: 'akuntansi', kunciJawaban: serializeAkuntansiKunci(rows) } });
+          return;
+        }
+        const items = parseUraianKunciQuickText(plainText);
+        res.json({ ok: true, data: { tipeSoal: 'uraian', kunciJawaban: serializeUraianKunci(items) } });
+        return;
+      }
+
+      res.status(200).json({
+        ok: false,
+        error: 'Ekstraksi kunci otomatis dari PDF/Gambar membutuhkan GEMINI_API_KEY di server, atau silakan ketik/tempel kunci secara manual.'
+      });
+    } catch (e: any) {
+      res.status(200).json({ ok: false, error: e?.message || 'Gagal mengekstrak kunci jawaban dari PDF.' });
+    }
+  });
+
+  // Grade Student Uploaded PDF / Image / Office File Against Answer Key
+  app.post('/api/tugas/koreksi-pdf', async (req, res) => {
+    try {
+      const { token, tugasId, siswaId, fileId, namaFile, base64Data, saveResult } = req.body || {};
+      staf_(token);
+
+      const tugas = baca_('Tugas').find(t => t.ID === tugasId);
+      if (!tugas) {
+        res.status(404).json({ ok: false, error: 'Tugas tidak ditemukan.' });
+        return;
+      }
+      const siswa = baca_('Siswa').find(s => s.ID === siswaId);
+      if (!siswa) {
+        res.status(404).json({ ok: false, error: 'Siswa tidak ditemukan.' });
+        return;
+      }
+
+      const tipeSoal = String(tugas.TipeSoal || 'umum').toLowerCase();
+      if (!['pg', 'uraian', 'akuntansi'].includes(tipeSoal)) {
+        res.status(400).json({ ok: false, error: 'Atur format soal (PG / Uraian / Praktik Akuntansi) dan kunci jawaban terlebih dahulu.' });
+        return;
+      }
+
+      const semuaPg = baca_('Pengumpulan');
+      const idx = semuaPg.findIndex(p => p.TugasID === tugasId && p.SiswaID === siswaId);
+      const existing = idx >= 0 ? semuaPg[idx] : null;
+
+      let fileBuf: Buffer | null = null;
+      let fname = String(namaFile || '');
+      let mime = '';
+
+      if (base64Data && fname) {
+        fileBuf = Buffer.from(String(base64Data), 'base64');
+        mime = detectMimeForFilename(fname);
+      } else {
+        const targetFileId = String(fileId || existing?.FileID || '');
+        if (!targetFileId) {
+          res.status(400).json({ ok: false, error: 'Siswa belum mengunggah berkas PDF/jawaban untuk dikoreksi.' });
+          return;
+        }
+        const loaded = await readTugasFileBuffer(targetFileId);
+        if (!loaded) {
+          res.status(404).json({ ok: false, error: 'Berkas unggahan siswa tidak ditemukan di server.' });
+          return;
+        }
+        fileBuf = loaded.buffer;
+        fname = loaded.filename;
+        mime = loaded.mimeType;
+      }
+
+      let plainText = '';
+      if (/\.(txt|csv|tsv|md|json)$/i.test(fname)) {
+        plainText = fileBuf.toString('utf8').slice(0, 45000);
+      } else if (/\.(docx|xlsx|pptx)$/i.test(fname)) {
+        plainText = extractOfficeXmlText(fileBuf).slice(0, 45000);
+      } else if (/\.pdf$/i.test(fname)) {
+        plainText = extractBasicPdfText(fileBuf).slice(0, 45000);
+      }
+
+      const hasAiKey = Boolean((process.env.GEMINI_API_KEY || '').trim() && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
+      const isInline = mime === 'application/pdf' || mime.startsWith('image/');
+
+      let finalJawabanSiswa = '';
+      let finalNilai = '';
+      let finalDetailKoreksi = '';
+      let ringkasan = '';
+
+      if (hasAiKey && (isInline || plainText)) {
+        const aiClient = getAiClient();
+        const fileParts: any[] = isInline
+          ? [{ inlineData: { mimeType: mime, data: fileBuf.toString('base64') } }]
+          : [{ text: `ISI BERKAS JAWABAN SISWA (${fname}):\n${plainText}` }];
+
+        if (tipeSoal === 'pg') {
+          const resp = await generateContentFastWithFallback(aiClient, {
+            modeCepat: true,
+            contents: {
+              parts: [
+                ...fileParts,
+                {
+                  text: `Tugas: ${tugas.Judul}\nJumlah Soal: ${tugas.JumlahSoal || 'sesuai berkas'}\nEkstrak seluruh jawaban pilihan ganda siswa dari berkas ini (nomor soal dan pilihan huruf A/B/C/D/E).`
+                }
+              ]
+            },
+            systemInstruction:
+              'Anda membaca lembar jawaban pilihan ganda siswa (PDF/gambar/tulisan tangan) dengan teliti dan hanya mengembalikan nomor serta huruf pilihan siswa.',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                jawaban: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      no: { type: Type.INTEGER },
+                      pilihan: { type: Type.STRING }
+                    },
+                    required: ['no', 'pilihan']
+                  }
+                }
+              },
+              required: ['jawaban']
+            }
+          });
+          const parsed = parseJsonSafe<any>(resp.text, {});
+          const map: Record<number, string> = {};
+          for (const j of parsed.jawaban || []) {
+            const no = Number(j.no);
+            const ch = String(j.pilihan || '').trim().toUpperCase();
+            if (no >= 1 && /^[A-E]$/.test(ch)) map[no] = ch;
+          }
+          finalJawabanSiswa = serializePgAnswers(map, Number(tugas.JumlahSoal || 0) || 200, tugas.OpsiPG || 'ABCDE');
+          const koreksi = koreksiPgSiswa(tugas.KunciJawaban, finalJawabanSiswa, tugas.JumlahSoal, tugas.OpsiPG);
+          finalNilai = koreksi.adaKunci ? String(koreksi.nilai) : existing?.Nilai || '';
+          finalDetailKoreksi = JSON.stringify({
+            total: koreksi.total,
+            jumlahKunci: koreksi.jumlahKunci,
+            benar: koreksi.benar,
+            salah: koreksi.salah,
+            kosong: koreksi.kosong,
+            nilai: koreksi.nilai,
+            detail: koreksi.detail
+          });
+          ringkasan = `PG terbaca: Benar ${koreksi.benar}, Salah ${koreksi.salah}, Nilai ${koreksi.nilai}`;
+        } else if (tipeSoal === 'akuntansi') {
+          const resp = await generateContentFastWithFallback(aiClient, {
+            modeCepat: false,
+            contents: {
+              parts: [
+                ...fileParts,
+                {
+                  text: `Tugas Praktik Akuntansi: ${tugas.Judul}\nReferensi Kunci Guru (untuk memahami struktur format): ${String(tugas.KunciJawaban || '').slice(0, 6000)}\n\nEkstrak seluruh baris jawaban akuntansi siswa dari berkas PDF/gambar ini apa adanya (jangan mengarang atau mengubah nominal siswa!). Kembalikan tiap baris dengan keterangan/tanggal, nama akun/item, posisi ('D' untuk Debit, 'K' untuk Kredit, atau 'N' untuk nominal/perhitungan non-DK), dan nominal angka bulat.`
+                }
+              ]
+            },
+            systemInstruction:
+              'Anda membaca lembar kerja praktik akuntansi siswa (jurnal umum, penyesuaian, neraca saldo, buku besar, atau laporan keuangan) secara akurat dan jujur tanpa mengubah jawaban siswa.',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                baris: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      no: { type: Type.INTEGER },
+                      keterangan: { type: Type.STRING },
+                      akun: { type: Type.STRING },
+                      posisi: { type: Type.STRING },
+                      nominal: { type: Type.NUMBER }
+                    },
+                    required: ['akun', 'posisi', 'nominal']
+                  }
+                },
+                catatan: { type: Type.STRING }
+              },
+              required: ['baris']
+            }
+          });
+          const parsed = parseJsonSafe<any>(resp.text, {});
+          const extractedRows = (Array.isArray(parsed.baris) ? parsed.baris : []).map((r: any, i: number) => ({
+            no: i + 1,
+            keterangan: String(r.keterangan || '').trim(),
+            akun: String(r.akun || '').trim(),
+            posisi: (String(r.posisi || 'N').toUpperCase() === 'D' ? 'D' : String(r.posisi || 'N').toUpperCase() === 'K' ? 'K' : 'N') as 'D' | 'K' | 'N',
+            nominal: Number(r.nominal) || 0
+          }));
+          finalJawabanSiswa = serializeAkuntansiSiswa(extractedRows);
+          const koreksi = koreksiAkuntansiSiswa(tugas.KunciJawaban, finalJawabanSiswa);
+          finalNilai = koreksi.adaKunci ? String(koreksi.nilai) : existing?.Nilai || '';
+          finalDetailKoreksi = JSON.stringify(koreksi);
+          ringkasan = `Akuntansi terbaca (${extractedRows.length} baris): Benar ${koreksi.benar}, Sebagian ${koreksi.sebagian}, Nilai ${koreksi.nilai}`;
+        } else {
+          // Uraian Teks: AI extracts per-number student answers AND evaluates semantic accuracy against teacher's key!
+          const resp = await generateContentFastWithFallback(aiClient, {
+            modeCepat: false,
+            contents: {
+              parts: [
+                ...fileParts,
+                {
+                  text: `Tugas Uraian: ${tugas.Judul}\nKunci Jawaban & Bobot Guru:\n${String(tugas.KunciJawaban || '').slice(0, 8000)}\n\n1. Ekstrak jawaban siswa untuk setiap nomor soal dari berkas PDF/dokumen ini.\n2. Nilai setiap nomor jawaban siswa secara objektif berdasarkan kunci jawaban dan bobot maksimal masing-masing nomor (skor 0 sampai bobot).`
+                }
+              ]
+            },
+            systemInstruction:
+              'Anda asisten koreksi soal uraian guru Indonesia yang akurat, objektif, dan adil. Ekstrak teks jawaban siswa dari PDF lalu bandingkan makna dan ketepatan konsepnya dengan kunci jawaban guru.',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                detail: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      no: { type: Type.INTEGER },
+                      jawabanSiswa: { type: Type.STRING },
+                      skor: { type: Type.NUMBER },
+                      bobot: { type: Type.NUMBER },
+                      poinCocok: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      poinKurang: { type: Type.ARRAY, items: { type: Type.STRING } }
+                    },
+                    required: ['no', 'jawabanSiswa', 'skor', 'bobot']
+                  }
+                },
+                ringkasan: { type: Type.STRING }
+              },
+              required: ['detail']
+            }
+          });
+          const parsed = parseJsonSafe<any>(resp.text, {});
+          const aiDetails = Array.isArray(parsed.detail) ? parsed.detail : [];
+          const ansMap: Record<number, string> = {};
+          for (const d of aiDetails) {
+            const no = Number(d.no);
+            if (no >= 1 && String(d.jawabanSiswa || '').trim()) {
+              ansMap[no] = String(d.jawabanSiswa).trim();
+            }
+          }
+          finalJawabanSiswa = serializeUraianSiswa(ansMap);
+          const detBase = koreksiUraianSiswa(tugas.KunciJawaban, finalJawabanSiswa);
+          // Merge AI semantic scores with key items cleanly
+          let totSkor = 0;
+          let totBobot = 0;
+          let sesuai = 0;
+          let sebagian = 0;
+          let belum = 0;
+          const mergedDetail = detBase.detail.map(item => {
+            const aiMatch = aiDetails.find((a: any) => Number(a.no) === item.no);
+            const bobot = item.bobot;
+            const skor = aiMatch
+              ? Math.min(bobot, Math.max(0, Math.round(Number(aiMatch.skor || 0) * 10) / 10))
+              : item.skor;
+            const persen = bobot > 0 ? Math.min(100, Math.round((skor / bobot) * 100)) : 0;
+            const status: 'sesuai' | 'sebagian' | 'belum' | 'kosong' = !item.jawaban
+              ? 'kosong'
+              : persen >= 75
+              ? 'sesuai'
+              : persen >= 25
+              ? 'sebagian'
+              : 'belum';
+            if (status === 'sesuai') sesuai++;
+            else if (status === 'sebagian') sebagian++;
+            else if (status === 'belum') belum++;
+            totSkor += skor;
+            totBobot += bobot;
+            return {
+              ...item,
+              skor,
+              persen,
+              status,
+              poinCocok: Array.isArray(aiMatch?.poinCocok) && aiMatch.poinCocok.length > 0 ? aiMatch.poinCocok : item.poinCocok,
+              poinKurang: Array.isArray(aiMatch?.poinKurang) ? aiMatch.poinKurang : item.poinKurang
+            };
+          });
+          const nilaiFinal = totBobot > 0 ? Math.min(100, Math.round((totSkor / totBobot) * 100)) : 0;
+          finalNilai = detBase.adaKunci ? String(nilaiFinal) : existing?.Nilai || '';
+          finalDetailKoreksi = JSON.stringify({
+            ...detBase,
+            totalSkor: Math.round(totSkor * 10) / 10,
+            nilai: nilaiFinal,
+            sesuai,
+            sebagian,
+            belum,
+            detail: mergedDetail
+          });
+          ringkasan = String(parsed.ringkasan || `Uraian dikoreksi dari PDF: Nilai ${nilaiFinal}`);
+        }
+      } else if (plainText) {
+        // Offline / No-API-Key plain-text fallback
+        if (tipeSoal === 'pg') {
+          const map = parsePgAnswers(plainText, Number(tugas.JumlahSoal || 0) || 200, tugas.OpsiPG || 'ABCDE');
+          finalJawabanSiswa = serializePgAnswers(map, Number(tugas.JumlahSoal || 0) || 200, tugas.OpsiPG || 'ABCDE');
+          const koreksi = koreksiPgSiswa(tugas.KunciJawaban, finalJawabanSiswa, tugas.JumlahSoal, tugas.OpsiPG);
+          finalNilai = koreksi.adaKunci ? String(koreksi.nilai) : existing?.Nilai || '';
+          finalDetailKoreksi = JSON.stringify(koreksi);
+          ringkasan = `PG teks PDF terbaca: Nilai ${koreksi.nilai}`;
+        } else if (tipeSoal === 'akuntansi') {
+          const rows = parseAkuntansiSiswa(plainText);
+          finalJawabanSiswa = serializeAkuntansiSiswa(rows);
+          const koreksi = koreksiAkuntansiSiswa(tugas.KunciJawaban, finalJawabanSiswa);
+          finalNilai = koreksi.adaKunci ? String(koreksi.nilai) : existing?.Nilai || '';
+          finalDetailKoreksi = JSON.stringify(koreksi);
+          ringkasan = `Akuntansi teks PDF terbaca: Nilai ${koreksi.nilai}`;
+        } else {
+          const map = parseUraianSiswa(plainText);
+          finalJawabanSiswa = serializeUraianSiswa(map);
+          const koreksi = koreksiUraianSiswa(tugas.KunciJawaban, finalJawabanSiswa);
+          finalNilai = koreksi.adaKunci ? String(koreksi.nilai) : existing?.Nilai || '';
+          finalDetailKoreksi = JSON.stringify(koreksi);
+          ringkasan = `Uraian teks PDF terbaca: Nilai ${koreksi.nilai}`;
+        }
+      } else {
+        res.status(200).json({
+          ok: false,
+          error: 'PDF hasil scan/gambar membutuhkan GEMINI_API_KEY di server agar dapat dibaca otomatis. Anda tetap dapat melihat preview PDF dan menilai manual.'
+        });
+        return;
+      }
+
+      const now = new Date();
+      const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const tanggalKumpul = existing?.TanggalKumpul || `${todayYmd} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const updated = {
+        TugasID: tugasId,
+        SiswaID: siswaId,
+        Status: existing?.Status && existing.Status !== 'Belum' ? existing.Status : 'Tepat Waktu',
+        Nilai: finalNilai,
+        FileID: existing?.FileID || String(fileId || ''),
+        NamaFile: existing?.NamaFile || fname,
+        TanggalKumpul: tanggalKumpul,
+        CatatanSiswa: existing?.CatatanSiswa || '',
+        JawabanSiswa: finalJawabanSiswa,
+        DetailKoreksi: finalDetailKoreksi
+      };
+
+      if (saveResult !== false) {
+        if (idx >= 0) semuaPg[idx] = updated;
+        else semuaPg.push(updated);
+        tulis_('Pengumpulan', semuaPg);
+        await flushWrites();
+      }
+
+      res.json({ ok: true, data: { pengumpulan: updated, ringkasan } });
+    } catch (e: any) {
+      res.status(200).json({ ok: false, error: e?.message || 'Gagal membaca & mengoreksi PDF siswa.' });
     }
   });
 

@@ -1,6 +1,15 @@
 import { getKaldikJabarEvents, KALDIK_JABAR_REF } from './data/kaldikJabar';
 import { ekstrakTingkatanKelas } from './constants';
 import { parsePgAnswers, serializePgAnswers, koreksiPgSiswa } from './pgTugasUtils';
+import {
+  buildStudentTugasSafeMeta,
+  koreksiAkuntansiSiswa,
+  koreksiUraianSiswa,
+  parseAkuntansiSiswa,
+  parseUraianSiswa,
+  serializeAkuntansiSiswa,
+  serializeUraianSiswa
+} from './uraianAkuntansiUtils';
 
 const STORAGE_KEY = 'mk_local_db_v1';
 const SESSION_KEY = 'mk_local_sessions_v1';
@@ -1287,6 +1296,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
         .filter(t => t.Kelas === siswa.Kelas)
         .map(t => {
           const p = pg.find(x => x.TugasID === t.ID);
+          const safeMeta = buildStudentTugasSafeMeta(t);
           return {
             ID: t.ID,
             Judul: t.Judul,
@@ -1300,6 +1310,8 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
             JumlahSoal: Number(t.JumlahSoal || 0),
             OpsiPG: t.OpsiPG || 'ABCDE',
             SudahAdaKunci: Boolean(String(t.KunciJawaban || '').trim()),
+            SoalUraianMeta: safeMeta.SoalUraianMeta,
+            AkuntansiMeta: safeMeta.AkuntansiMeta,
             Status: p ? p.Status : 'Belum',
             Nilai: p ? p.Nilai : '',
             FileSiswaID: p ? p.FileID || '' : '',
@@ -1959,44 +1971,61 @@ export async function runLocalHttpFallback(
     const nowStr = fmtYmd(new Date());
     const status = tRow?.Tenggat && nowStr > tRow.Tenggat ? 'Terlambat' : 'Tepat Waktu';
 
-    const parsedJawaban = parsePgAnswers(
-      body.jawabanSiswa,
-      Number(tRow?.JumlahSoal || 0) || 200,
-      tRow?.OpsiPG || 'ABCDE'
-    );
-    const serializedJawaban = serializePgAnswers(
-      parsedJawaban,
-      Number(tRow?.JumlahSoal || 0) || 200,
-      tRow?.OpsiPG || 'ABCDE'
-    );
+    const tipeSoal = String(tRow?.TipeSoal || 'umum').toLowerCase();
+    let serializedJawaban = '';
+    if (tipeSoal === 'uraian') {
+      serializedJawaban = serializeUraianSiswa(parseUraianSiswa(body.jawabanSiswa));
+    } else if (tipeSoal === 'akuntansi') {
+      serializedJawaban = serializeAkuntansiSiswa(parseAkuntansiSiswa(body.jawabanSiswa));
+    } else {
+      const parsedJawaban = parsePgAnswers(
+        body.jawabanSiswa,
+        Number(tRow?.JumlahSoal || 0) || 200,
+        tRow?.OpsiPG || 'ABCDE'
+      );
+      serializedJawaban = serializePgAnswers(
+        parsedJawaban,
+        Number(tRow?.JumlahSoal || 0) || 200,
+        tRow?.OpsiPG || 'ABCDE'
+      );
+    }
     const finalJawabanSiswa =
       body.jawabanSiswa !== undefined ? serializedJawaban : existing?.JawabanSiswa || '';
 
     let nilai = existing?.Nilai || '';
     let detailKoreksi = existing?.DetailKoreksi || '';
-    if (
-      tRow &&
-      String(tRow.TipeSoal || '').toLowerCase() === 'pg' &&
-      String(tRow.KunciJawaban || '').trim() &&
-      finalJawabanSiswa
-    ) {
-      const koreksi = koreksiPgSiswa(
-        tRow.KunciJawaban,
-        finalJawabanSiswa,
-        tRow.JumlahSoal,
-        tRow.OpsiPG
-      );
-      if (koreksi.adaKunci) {
-        nilai = String(koreksi.nilai);
-        detailKoreksi = JSON.stringify({
-          total: koreksi.total,
-          jumlahKunci: koreksi.jumlahKunci,
-          benar: koreksi.benar,
-          salah: koreksi.salah,
-          kosong: koreksi.kosong,
-          nilai: koreksi.nilai,
-          detail: koreksi.detail
-        });
+    if (tRow && String(tRow.KunciJawaban || '').trim() && finalJawabanSiswa) {
+      if (tipeSoal === 'pg') {
+        const koreksi = koreksiPgSiswa(
+          tRow.KunciJawaban,
+          finalJawabanSiswa,
+          tRow.JumlahSoal,
+          tRow.OpsiPG
+        );
+        if (koreksi.adaKunci) {
+          nilai = String(koreksi.nilai);
+          detailKoreksi = JSON.stringify({
+            total: koreksi.total,
+            jumlahKunci: koreksi.jumlahKunci,
+            benar: koreksi.benar,
+            salah: koreksi.salah,
+            kosong: koreksi.kosong,
+            nilai: koreksi.nilai,
+            detail: koreksi.detail
+          });
+        }
+      } else if (tipeSoal === 'uraian') {
+        const koreksi = koreksiUraianSiswa(tRow.KunciJawaban, finalJawabanSiswa);
+        if (koreksi.adaKunci) {
+          nilai = String(koreksi.nilai);
+          detailKoreksi = JSON.stringify(koreksi);
+        }
+      } else if (tipeSoal === 'akuntansi') {
+        const koreksi = koreksiAkuntansiSiswa(tRow.KunciJawaban, finalJawabanSiswa);
+        if (koreksi.adaKunci) {
+          nilai = String(koreksi.nilai);
+          detailKoreksi = JSON.stringify(koreksi);
+        }
       }
     }
 

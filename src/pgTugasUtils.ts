@@ -244,12 +244,18 @@ export function koreksiPgSiswa(
   };
 }
 
-export function parseDetailKoreksi(raw: any): Partial<PgKoreksiResult> | null {
+export function parseDetailKoreksi(
+  raw: any
+): (Partial<PgKoreksiResult> & Record<string, any>) | null {
   if (!raw) return null;
-  if (typeof raw === 'object') return raw as Partial<PgKoreksiResult>;
+  if (typeof raw === 'object') {
+    return raw as Partial<PgKoreksiResult> & Record<string, any>;
+  }
   try {
     const parsed = JSON.parse(String(raw));
-    if (parsed && typeof parsed === 'object') return parsed as Partial<PgKoreksiResult>;
+    if (parsed && typeof parsed === 'object') {
+      return parsed as Partial<PgKoreksiResult> & Record<string, any>;
+    }
   } catch {
     return null;
   }

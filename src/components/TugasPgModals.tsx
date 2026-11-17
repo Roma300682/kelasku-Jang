@@ -6,8 +6,12 @@ import {
   ChevronRight,
   Trash2,
   ClipboardCheck,
-  KeyRound
+  KeyRound,
+  FileUp,
+  Eye,
+  ExternalLink
 } from 'lucide-react';
+import { fetchJson } from '../api';
 import {
   PgOpsiType,
   getOpsiList,
@@ -18,9 +22,20 @@ import {
   inferTotalSoal,
   koreksiPgSiswa
 } from '../pgTugasUtils';
+import {
+  AkuntansiKunciRow,
+  TugasTipeSoal,
+  UraianKunciItem,
+  parseAkuntansiKunci,
+  parseUraianKunci,
+  serializeAkuntansiKunci,
+  serializeUraianKunci
+} from '../uraianAkuntansiUtils';
+import { AkuntansiKunciEditor, UraianKunciEditor } from './TugasUraianAkuntansiModals';
 
 interface TugasFormModalBodyProps {
   editRow?: any;
+  token?: string;
   kelasNama: string;
   defaultMapel: string;
   defaultTenggat: string;
@@ -32,7 +47,7 @@ interface TugasFormModalBodyProps {
     jenis: string;
     deskripsi: string;
     tenggat: string;
-    tipeSoal: 'umum' | 'pg';
+    tipeSoal: TugasTipeSoal;
     jumlahSoal: number;
     opsiPG: PgOpsiType;
     kunciJawaban: string;
@@ -43,6 +58,7 @@ interface TugasFormModalBodyProps {
 
 export const TugasFormModalBody: React.FC<TugasFormModalBodyProps> = ({
   editRow,
+  token,
   kelasNama,
   defaultMapel,
   defaultTenggat,
@@ -51,31 +67,58 @@ export const TugasFormModalBody: React.FC<TugasFormModalBodyProps> = ({
   onSave,
   showToast
 }) => {
-  const initialIsPg =
-    String(editRow?.TipeSoal || '').toLowerCase() === 'pg' ||
-    Boolean(String(editRow?.KunciJawaban || '').trim());
+  const rawTipe = String(editRow?.TipeSoal || '').toLowerCase();
+  const initialTipe: TugasTipeSoal =
+    rawTipe === 'pg'
+      ? 'pg'
+      : rawTipe === 'uraian'
+      ? 'uraian'
+      : rawTipe === 'akuntansi'
+      ? 'akuntansi'
+      : Boolean(String(editRow?.KunciJawaban || '').trim())
+      ? 'pg'
+      : 'umum';
+
   const initialOpsi = normalizeOpsiPG(editRow?.OpsiPG);
-  const initialTotal = initialIsPg
-    ? inferTotalSoal(editRow?.KunciJawaban, editRow?.JumlahSoal, undefined, initialOpsi)
-    : 10;
+  const initialTotal =
+    initialTipe === 'pg'
+      ? inferTotalSoal(editRow?.KunciJawaban, editRow?.JumlahSoal, undefined, initialOpsi)
+      : 10;
 
   const [judul, setJudul] = useState<string>(editRow?.Judul || '');
   const [mapel, setMapel] = useState<string>(editRow?.Mapel || defaultMapel);
   const [jenis, setJenis] = useState<string>(editRow?.Jenis || 'Tugas');
   const [deskripsi, setDeskripsi] = useState<string>(editRow?.Deskripsi || '');
   const [tenggat, setTenggat] = useState<string>(editRow?.Tenggat || defaultTenggat);
-  const [tipeSoal, setTipeSoal] = useState<'umum' | 'pg'>(initialIsPg ? 'pg' : 'umum');
+  const [tipeSoal, setTipeSoal] = useState<TugasTipeSoal>(initialTipe);
   const [jumlahSoal, setJumlahSoal] = useState<number>(initialTotal);
   const [opsiPG, setOpsiPG] = useState<PgOpsiType>(initialOpsi);
   const [kunciMap, setKunciMap] = useState<Record<number, string>>(() =>
-    parsePgAnswers(editRow?.KunciJawaban, initialTotal, initialOpsi)
+    initialTipe === 'pg' ? parsePgAnswers(editRow?.KunciJawaban, initialTotal, initialOpsi) : {}
   );
   const [quickKeyText, setQuickKeyText] = useState<string>(() =>
-    formatPgCompactString(parsePgAnswers(editRow?.KunciJawaban, initialTotal, initialOpsi), initialTotal).replace(
-      /-+$/,
-      ''
-    )
+    initialTipe === 'pg'
+      ? formatPgCompactString(parsePgAnswers(editRow?.KunciJawaban, initialTotal, initialOpsi), initialTotal).replace(/-+$/, '')
+      : ''
   );
+  const [uraianItems, setUraianItems] = useState<UraianKunciItem[]>(() => {
+    if (initialTipe === 'uraian') {
+      const parsed = parseUraianKunci(editRow?.KunciJawaban, Number(editRow?.JumlahSoal || 0));
+      if (parsed.length > 0) return parsed;
+    }
+    return [{ no: 1, pertanyaan: '', kunci: '', bobot: 25 }];
+  });
+  const [akuntansiRows, setAkuntansiRows] = useState<AkuntansiKunciRow[]>(() => {
+    if (initialTipe === 'akuntansi') {
+      const parsed = parseAkuntansiKunci(editRow?.KunciJawaban);
+      if (parsed.length > 0) return parsed;
+    }
+    return [
+      { no: 1, keterangan: '', akun: '', posisi: 'D', nominal: 0, bobot: 10 },
+      { no: 2, keterangan: '', akun: '', posisi: 'K', nominal: 0, bobot: 10 }
+    ];
+  });
+  const [importingPgPdf, setImportingPgPdf] = useState(false);
   const [pendingFile, setPendingFile] = useState<{ namaFile: string; base64Data: string } | null>(
     null
   );
@@ -106,6 +149,40 @@ export const TugasFormModalBody: React.FC<TugasFormModalBodyProps> = ({
     );
   };
 
+  const handleImportPgPdf = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f || !token) return;
+    setImportingPgPdf(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const resStr = String(reader.result || '');
+        const base64Data = resStr.includes(',') ? resStr.split(',')[1] : resStr;
+        const res = await fetchJson('/api/tugas/ekstrak-kunci-pdf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, tipeSoal: 'pg', namaFile: f.name, base64Data })
+        });
+        if (!res.ok) {
+          showToast(res.error || 'Gagal membaca kunci PG dari PDF', 4000);
+          return;
+        }
+        const nextOpsi = normalizeOpsiPG(res.data?.opsiPG || opsiPG);
+        const nextTotal = Math.max(1, Math.min(200, Number(res.data?.jumlahSoal) || safeJumlah));
+        const parsed = parsePgAnswers(res.data?.kunciJawaban, nextTotal, nextOpsi);
+        setOpsiPG(nextOpsi);
+        setJumlahSoal(nextTotal);
+        setKunciMap(parsed);
+        setQuickKeyText(formatPgCompactString(parsed, nextTotal).replace(/-+$/, ''));
+        showToast(`${Object.keys(parsed).length} kunci PG diimpor dari ${f.name}`);
+      } finally {
+        setImportingPgPdf(false);
+      }
+    };
+    reader.readAsDataURL(f);
+  };
+
   const handleSubmit = async () => {
     if (!judul.trim()) {
       showToast('Judul tugas wajib diisi');
@@ -113,6 +190,19 @@ export const TugasFormModalBody: React.FC<TugasFormModalBodyProps> = ({
     }
     setSaving(true);
     try {
+      let outJumlah = 0;
+      let outKunci = '';
+      if (tipeSoal === 'pg') {
+        outJumlah = safeJumlah;
+        outKunci = serializePgAnswers(kunciMap, safeJumlah, opsiPG);
+      } else if (tipeSoal === 'uraian') {
+        outJumlah = uraianItems.length;
+        outKunci = serializeUraianKunci(uraianItems);
+      } else if (tipeSoal === 'akuntansi') {
+        outJumlah = akuntansiRows.filter(r => r.akun.trim() || r.nominal !== 0).length;
+        outKunci = serializeAkuntansiKunci(akuntansiRows);
+      }
+
       await onSave({
         judul: judul.trim(),
         mapel: mapel.trim(),
@@ -120,9 +210,9 @@ export const TugasFormModalBody: React.FC<TugasFormModalBodyProps> = ({
         deskripsi: deskripsi.trim(),
         tenggat,
         tipeSoal,
-        jumlahSoal: tipeSoal === 'pg' ? safeJumlah : 0,
+        jumlahSoal: outJumlah,
         opsiPG,
-        kunciJawaban: tipeSoal === 'pg' ? serializePgAnswers(kunciMap, safeJumlah, opsiPG) : '',
+        kunciJawaban: outKunci,
         pendingFile
       });
     } finally {
@@ -173,7 +263,7 @@ export const TugasFormModalBody: React.FC<TugasFormModalBodyProps> = ({
         </label>
       </div>
 
-      {/* Tipe Soal Selector */}
+      {/* Tipe Soal Selector (4 modes) */}
       <div className="space-y-1.5">
         <div className="text-xs font-semibold text-slate-700">Format & Mode Koreksi</div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -186,7 +276,7 @@ export const TugasFormModalBody: React.FC<TugasFormModalBodyProps> = ({
                 : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
             }`}
           >
-            <div className="text-xs font-bold">Umum / Esai / Berkas</div>
+            <div className="text-xs font-bold">Umum / Berkas Bebas</div>
             <div className="text-[10px] text-slate-500">Siswa unggah berkas, guru input nilai manual</div>
           </button>
           <button
@@ -199,9 +289,37 @@ export const TugasFormModalBody: React.FC<TugasFormModalBodyProps> = ({
             }`}
           >
             <div className="text-xs font-bold flex items-center gap-1">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-600" /> Pilihan Ganda (Koreksi Otomatis)
+              <Sparkles className="w-3.5 h-3.5 text-indigo-600" /> Pilihan Ganda (PG)
             </div>
-            <div className="text-[10px] text-slate-500">Input kunci jawaban A–E & koreksi skor otomatis</div>
+            <div className="text-[10px] text-slate-500">Kunci jawaban A–E & koreksi LJK / PDF</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTipeSoal('uraian')}
+            className={`px-3 py-2 rounded-xl border text-left transition-colors cursor-pointer ${
+              tipeSoal === 'uraian'
+                ? 'bg-amber-50 border-amber-500 text-amber-950 ring-1 ring-amber-400'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <div className="text-xs font-bold flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" /> Uraian Teks / Esai
+            </div>
+            <div className="text-[10px] text-slate-500">Input kunci/poin rubrik & koreksi teks/PDF siswa</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTipeSoal('akuntansi')}
+            className={`px-3 py-2 rounded-xl border text-left transition-colors cursor-pointer ${
+              tipeSoal === 'akuntansi'
+                ? 'bg-emerald-50 border-emerald-500 text-emerald-950 ring-1 ring-emerald-400'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <div className="text-xs font-bold flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600" /> Praktik Akuntansi
+            </div>
+            <div className="text-[10px] text-slate-500">Kunci Jurnal / Neraca D-K & koreksi tabel/PDF</div>
           </button>
         </div>
       </div>
@@ -213,9 +331,24 @@ export const TugasFormModalBody: React.FC<TugasFormModalBodyProps> = ({
               <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
               Pengaturan & Kunci Jawaban PG
             </div>
-            <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-100 text-indigo-800 rounded-md tabular-nums">
-              Terisi {filledCount} / {safeJumlah} Soal
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-100 text-indigo-800 rounded-md tabular-nums">
+                Terisi {filledCount} / {safeJumlah} Soal
+              </span>
+              {token && (
+                <label className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-md cursor-pointer">
+                  <FileUp className="w-3 h-3" />
+                  {importingPgPdf ? 'Membaca…' : 'Impor Kunci PDF'}
+                  <input
+                    type="file"
+                    accept=".pdf,.txt,.docx,image/*"
+                    disabled={importingPgPdf}
+                    onChange={handleImportPgPdf}
+                    className="hidden"
+                  />
+                </label>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -347,6 +480,24 @@ export const TugasFormModalBody: React.FC<TugasFormModalBodyProps> = ({
         </div>
       )}
 
+      {tipeSoal === 'uraian' && (
+        <UraianKunciEditor
+          items={uraianItems}
+          onChange={setUraianItems}
+          showToast={showToast}
+          token={token}
+        />
+      )}
+
+      {tipeSoal === 'akuntansi' && (
+        <AkuntansiKunciEditor
+          rows={akuntansiRows}
+          onChange={setAkuntansiRows}
+          showToast={showToast}
+          token={token}
+        />
+      )}
+
       <label className="block text-xs font-semibold text-slate-700">
         Deskripsi / Instruksi Tugas
         <textarea
@@ -421,6 +572,7 @@ export const TugasFormModalBody: React.FC<TugasFormModalBodyProps> = ({
 
 interface KunciPgQuickModalBodyProps {
   tugas: any;
+  token?: string;
   onCancel: () => void;
   onSave: (payload: {
     tipeSoal: 'pg' | 'umum';
@@ -434,6 +586,7 @@ interface KunciPgQuickModalBodyProps {
 
 export const KunciPgQuickModalBody: React.FC<KunciPgQuickModalBodyProps> = ({
   tugas,
+  token,
   onCancel,
   onSave,
   showToast
@@ -452,6 +605,7 @@ export const KunciPgQuickModalBody: React.FC<KunciPgQuickModalBodyProps> = ({
     )
   );
   const [saving, setSaving] = useState(false);
+  const [importingPdf, setImportingPdf] = useState(false);
 
   const safeJumlah = Math.max(1, Math.min(200, Number(jumlahSoal) || 10));
   const opsiList = getOpsiList(opsiPG);
@@ -470,6 +624,58 @@ export const KunciPgQuickModalBody: React.FC<KunciPgQuickModalBodyProps> = ({
         ? `${cnt} kunci jawaban diterapkan`
         : 'Format kunci tidak dikenali. Contoh: ABCDE atau 1.A 2.B 3.C'
     );
+  };
+
+  const handleImportPdf = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f || !token) return;
+    if (f.size > 15 * 1024 * 1024) {
+      showToast('Ukuran berkas maksimal 15 MB');
+      return;
+    }
+    setImportingPdf(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const resStr = String(reader.result || '');
+        const base64Data = resStr.includes(',') ? resStr.split(',')[1] : resStr;
+        const res = await fetchJson('/api/tugas/ekstrak-kunci-pdf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token,
+            tipeSoal: 'pg',
+            opsiPG,
+            jumlahSoal: safeJumlah,
+            namaFile: f.name,
+            base64Data
+          })
+        });
+        if (!res.ok) {
+          showToast('Gagal ekstrak PDF: ' + (res.error || 'Error'), 4500);
+          return;
+        }
+        const rawKey = String(res.data?.kunciJawaban || '');
+        const nextOpsi = res.data?.opsiPG ? normalizeOpsiPG(res.data.opsiPG) : opsiPG;
+        const parsed = parsePgAnswers(rawKey, 200, nextOpsi);
+        const maxNo = Object.keys(parsed).reduce((mx, k) => Math.max(mx, Number(k) || 0), 0);
+        if (nextOpsi !== opsiPG) setOpsiPG(nextOpsi);
+        if (maxNo > safeJumlah) setJumlahSoal(Math.min(200, maxNo));
+        setKunciMap(parsed);
+        setQuickKeyText(formatPgCompactString(parsed, Math.max(safeJumlah, maxNo)).replace(/-+$/, ''));
+        showToast(
+          Object.keys(parsed).length > 0
+            ? `${Object.keys(parsed).length} kunci PG diekstrak dari PDF!`
+            : 'Tidak ditemukan nomor kunci PG pada PDF tersebut'
+        );
+      } catch (err: any) {
+        showToast('Gagal ekstrak PDF: ' + (err?.message || err), 4000);
+      } finally {
+        setImportingPdf(false);
+      }
+    };
+    reader.readAsDataURL(f);
   };
 
   const handleSave = async (autoGradeExisting: boolean) => {
@@ -498,12 +704,27 @@ export const KunciPgQuickModalBody: React.FC<KunciPgQuickModalBodyProps> = ({
         <div>
           <div className="text-xs font-bold text-indigo-950">{tugas?.Judul}</div>
           <div className="text-[11px] text-indigo-700">
-            Atur jumlah soal dan kunci jawaban A–{opsiPG === 'ABCD' ? 'D' : 'E'} untuk koreksi otomatis.
+            Atur jumlah soal dan kunci jawaban A–{opsiPG === 'ABCD' ? 'D' : 'E'} atau impor dari file PDF kunci.
           </div>
         </div>
-        <span className="px-2.5 py-1 text-[11px] font-bold bg-white text-indigo-700 border border-indigo-200 rounded-lg tabular-nums">
-          Terisi: {filledCount} / {safeJumlah}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="px-2.5 py-1 text-[11px] font-bold bg-white text-indigo-700 border border-indigo-200 rounded-lg tabular-nums">
+            Terisi: {filledCount} / {safeJumlah}
+          </span>
+          {token && (
+            <label className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg cursor-pointer">
+              <FileUp className="w-3 h-3" />
+              {importingPdf ? 'Membaca…' : 'Impor Kunci PDF'}
+              <input
+                type="file"
+                accept=".pdf,.txt,.docx,image/*"
+                disabled={importingPdf}
+                onChange={handleImportPdf}
+                className="hidden"
+              />
+            </label>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -664,6 +885,7 @@ interface KoreksiPgSiswaModalBodyProps {
   tugas: any;
   siswa: any;
   submission: any;
+  token?: string;
   hasNextStudent?: boolean;
   onCancel: () => void;
   onApply: (
@@ -682,6 +904,7 @@ export const KoreksiPgSiswaModalBody: React.FC<KoreksiPgSiswaModalBodyProps> = (
   tugas,
   siswa,
   submission,
+  token,
   hasNextStudent,
   onCancel,
   onApply,
@@ -706,6 +929,8 @@ export const KoreksiPgSiswaModalBody: React.FC<KoreksiPgSiswaModalBodyProps> = (
     ).replace(/-+$/, '')
   );
   const [manualOverride, setManualOverride] = useState<string>('');
+  const [gradingPdf, setGradingPdf] = useState(false);
+  const [showPdfPreview, setShowPdfPreview] = useState(false);
 
   const hasil = useMemo(
     () => koreksiPgSiswa(tugas?.KunciJawaban, jawabanMap, totalSoal, opsiPG),
@@ -718,6 +943,51 @@ export const KoreksiPgSiswaModalBody: React.FC<KoreksiPgSiswaModalBodyProps> = (
       : hasil.adaKunci
       ? String(hasil.nilai)
       : String(submission?.Nilai || '');
+
+  const handleGradeFromPdf = async (localFile?: File) => {
+    if (!token) return;
+    setGradingPdf(true);
+    try {
+      let bodyPayload: any = {
+        token,
+        tugasId: tugas.ID,
+        siswaId: siswa.ID,
+        fileId: submission?.FileID || '',
+        saveResult: false
+      };
+      if (localFile) {
+        const base64Data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const s = String(reader.result || '');
+            resolve(s.includes(',') ? s.split(',')[1] : s);
+          };
+          reader.onerror = () => reject(new Error('Gagal membaca file'));
+          reader.readAsDataURL(localFile);
+        });
+        bodyPayload = { ...bodyPayload, namaFile: localFile.name, base64Data };
+      }
+      const res = await fetchJson('/api/tugas/koreksi-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyPayload)
+      });
+      if (!res.ok) {
+        showToast(res.error || 'Gagal membaca & mengoreksi PDF PG', 4500);
+        return;
+      }
+      const pg = res.data?.pengumpulan;
+      if (pg?.JawabanSiswa) {
+        const parsed = parsePgAnswers(pg.JawabanSiswa, totalSoal, opsiPG);
+        setJawabanMap(parsed);
+        setQuickAnswerText(formatPgCompactString(parsed, totalSoal).replace(/-+$/, ''));
+      }
+      setManualOverride('');
+      showToast(res.data?.ringkasan || 'Jawaban PG dari PDF berhasil dibaca & dikoreksi!');
+    } finally {
+      setGradingPdf(false);
+    }
+  };
 
   const handleApplyQuickAnswer = () => {
     const parsed = parsePgAnswers(quickAnswerText, totalSoal, opsiPG);
@@ -756,6 +1026,9 @@ export const KoreksiPgSiswaModalBody: React.FC<KoreksiPgSiswaModalBodyProps> = (
     );
   };
 
+  const isPdfFile = /\.pdf$/i.test(String(submission?.NamaFile || ''));
+  const isImageFile = /\.(png|jpe?g|webp|gif)$/i.test(String(submission?.NamaFile || ''));
+
   return (
     <div className="space-y-3.5">
       {/* Header Summary */}
@@ -784,6 +1057,85 @@ export const KoreksiPgSiswaModalBody: React.FC<KoreksiPgSiswaModalBodyProps> = (
           </div>
         </div>
       </div>
+
+      {(submission?.FileID || token) && (
+        <div className="bg-sky-50/70 border border-sky-200 rounded-xl p-2.5 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-[11px] font-semibold text-sky-950 truncate">
+              {submission?.FileID
+                ? `Berkas Siswa: ${submission.NamaFile || 'Unggahan Siswa'}`
+                : 'Atau unggah berkas PDF/foto LJK siswa untuk dibaca otomatis'}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {submission?.FileID && (isPdfFile || isImageFile) && (
+                <button
+                  type="button"
+                  onClick={() => setShowPdfPreview(v => !v)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-white hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-lg cursor-pointer"
+                >
+                  <Eye className="w-3 h-3" /> {showPdfPreview ? 'Tutup Preview' : 'Lihat PDF'}
+                </button>
+              )}
+              {submission?.FileID && (
+                <a
+                  href={`/api/tugas/file/${submission.FileID}?inline=1`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-white hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg"
+                >
+                  <ExternalLink className="w-3 h-3" /> Tab Baru
+                </a>
+              )}
+              {submission?.FileID && token && (
+                <button
+                  type="button"
+                  disabled={gradingPdf}
+                  onClick={() => handleGradeFromPdf()}
+                  className="inline-flex items-center gap-1 px-3 py-1 text-[11px] font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg cursor-pointer disabled:opacity-50"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  {gradingPdf ? 'Membaca PDF…' : 'Baca & Koreksi PDF'}
+                </button>
+              )}
+              {token && (
+                <label className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-white hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-lg cursor-pointer">
+                  <FileUp className="w-3 h-3" />
+                  Koreksi File PDF
+                  <input
+                    type="file"
+                    accept=".pdf,.txt,.docx,image/*"
+                    disabled={gradingPdf}
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      e.target.value = '';
+                      if (f) void handleGradeFromPdf(f);
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              )}
+            </div>
+          </div>
+
+          {showPdfPreview && submission?.FileID && (
+            <div className="border border-sky-200 rounded-lg overflow-hidden bg-white">
+              {isPdfFile ? (
+                <iframe
+                  src={`/api/tugas/file/${submission.FileID}?inline=1`}
+                  title={submission.NamaFile || 'Preview PDF'}
+                  className="w-full h-56"
+                />
+              ) : isImageFile ? (
+                <img
+                  src={`/api/tugas/file/${submission.FileID}?inline=1`}
+                  alt={submission.NamaFile || 'Preview Gambar'}
+                  className="max-h-56 mx-auto object-contain"
+                />
+              ) : null}
+            </div>
+          )}
+        </div>
+      )}
 
       {!hasil.adaKunci && (
         <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800">

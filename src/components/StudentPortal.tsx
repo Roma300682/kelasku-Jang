@@ -27,6 +27,16 @@ import {
   parseDetailKoreksi
 } from '../pgTugasUtils';
 import {
+  AkuntansiSiswaRow,
+  formatRupiah,
+  parseAkuntansiNominal,
+  parseAkuntansiQuickText,
+  parseAkuntansiSiswa,
+  parseUraianSiswa,
+  serializeAkuntansiSiswa,
+  serializeUraianSiswa
+} from '../uraianAkuntansiUtils';
+import {
   LogOut,
   RefreshCw,
   CheckCircle2,
@@ -57,7 +67,10 @@ import {
   Edit3,
   HeartPulse,
   Camera,
-  Trash2
+  Trash2,
+  Plus,
+  Calculator,
+  FileText
 } from 'lucide-react';
 
 interface StudentPortalProps {
@@ -105,6 +118,10 @@ export default function StudentPortal({
   const [tugasCatatan, setTugasCatatan] = useState('');
   const [tugasJawabanPG, setTugasJawabanPG] = useState<Record<number, string>>({});
   const [tugasPgQuickText, setTugasPgQuickText] = useState('');
+  const [tugasJawabanUraian, setTugasJawabanUraian] = useState<Record<number, string>>({});
+  const [tugasAkuntansiRows, setTugasAkuntansiRows] = useState<AkuntansiSiswaRow[]>([]);
+  const [tugasAkQuickOpen, setTugasAkQuickOpen] = useState(false);
+  const [tugasAkQuickText, setTugasAkQuickText] = useState('');
   const [uploadingTugas, setUploadingTugas] = useState(false);
 
   // Secretary Attendance State
@@ -230,15 +247,50 @@ export default function StudentPortal({
     setUploadTugasModal(t);
     setTugasFile(null);
     setTugasCatatan(t.CatatanSiswa || '');
-    const isPg = String(t.TipeSoal || '').toLowerCase() === 'pg';
-    if (isPg) {
+    setTugasAkQuickOpen(false);
+    setTugasAkQuickText('');
+
+    const tipe = String(t.TipeSoal || '').toLowerCase();
+    if (tipe === 'pg') {
       const total = inferTotalSoal(undefined, t.JumlahSoal, t.JawabanSiswa, t.OpsiPG);
       const parsed = parsePgAnswers(t.JawabanSiswa, total, t.OpsiPG);
       setTugasJawabanPG(parsed);
       setTugasPgQuickText(formatPgCompactString(parsed, total).replace(/-+$/, ''));
+      setTugasJawabanUraian({});
+      setTugasAkuntansiRows([]);
+    } else if (tipe === 'uraian') {
+      setTugasJawabanPG({});
+      setTugasPgQuickText('');
+      setTugasJawabanUraian(parseUraianSiswa(t.JawabanSiswa));
+      setTugasAkuntansiRows([]);
+    } else if (tipe === 'akuntansi') {
+      setTugasJawabanPG({});
+      setTugasPgQuickText('');
+      setTugasJawabanUraian({});
+      const parsedAk = parseAkuntansiSiswa(t.JawabanSiswa);
+      if (parsedAk.length > 0) {
+        setTugasAkuntansiRows(parsedAk);
+      } else if (Array.isArray(t.AkuntansiMeta) && t.AkuntansiMeta.length > 0) {
+        setTugasAkuntansiRows(
+          t.AkuntansiMeta.map((m: any, idx: number) => ({
+            no: Number(m.no) || idx + 1,
+            keterangan: String(m.keterangan || ''),
+            akun: '',
+            posisi: m.posisi === 'K' || m.posisi === 'N' ? m.posisi : 'D',
+            nominal: 0
+          }))
+        );
+      } else {
+        setTugasAkuntansiRows([
+          { no: 1, keterangan: '', akun: '', posisi: 'D', nominal: 0 },
+          { no: 2, keterangan: '', akun: '', posisi: 'K', nominal: 0 }
+        ]);
+      }
     } else {
       setTugasJawabanPG({});
       setTugasPgQuickText('');
+      setTugasJawabanUraian({});
+      setTugasAkuntansiRows([]);
     }
   }
 
@@ -260,19 +312,38 @@ export default function StudentPortal({
 
   async function handleSubmitTugasFile() {
     if (!uploadTugasModal) return;
-    const isPg = String(uploadTugasModal.TipeSoal || '').toLowerCase() === 'pg';
+    const tipe = String(uploadTugasModal.TipeSoal || '').toLowerCase();
+    const isPg = tipe === 'pg';
+    const isUraian = tipe === 'uraian';
+    const isAkuntansi = tipe === 'akuntansi';
+
     const total = isPg
       ? inferTotalSoal(undefined, uploadTugasModal.JumlahSoal, uploadTugasModal.JawabanSiswa, uploadTugasModal.OpsiPG)
       : 0;
-    const serializedPg = isPg
+    const serializedJawaban = isPg
       ? serializePgAnswers(tugasJawabanPG, total, uploadTugasModal.OpsiPG)
+      : isUraian
+      ? serializeUraianSiswa(tugasJawabanUraian)
+      : isAkuntansi
+      ? serializeAkuntansiSiswa(tugasAkuntansiRows)
       : '';
-    const hasPg = Object.keys(tugasJawabanPG).length > 0;
 
-    if (!tugasFile && !(isPg && hasPg) && !uploadTugasModal.FileSiswaID) {
+    const hasInteractive = isPg
+      ? Object.keys(tugasJawabanPG).length > 0
+      : isUraian
+      ? Object.values(tugasJawabanUraian).some(v => String(v || '').trim().length > 0)
+      : isAkuntansi
+      ? tugasAkuntansiRows.some(r => r.akun.trim() !== '' || r.nominal !== 0)
+      : false;
+
+    if (!tugasFile && !hasInteractive && !uploadTugasModal.FileSiswaID) {
       showToast(
         isPg
-          ? 'Isi jawaban Pilihan Ganda atau pilih berkas tugas terlebih dahulu'
+          ? 'Isi jawaban Pilihan Ganda atau unggah file PDF/berkas tugas terlebih dahulu'
+          : isUraian
+          ? 'Tulis jawaban Uraian atau unggah file PDF jawaban terlebih dahulu'
+          : isAkuntansi
+          ? 'Isi tabel Praktik Akuntansi atau unggah file PDF jawaban terlebih dahulu'
           : 'Pilih berkas tugas yang akan diunggah terlebih dahulu'
       );
       return;
@@ -288,7 +359,7 @@ export default function StudentPortal({
           ...(tugasFile
             ? { namaFile: tugasFile.namaFile, base64Data: tugasFile.base64Data }
             : {}),
-          ...(isPg ? { jawabanSiswa: serializedPg } : {}),
+          ...(isPg || isUraian || isAkuntansi ? { jawabanSiswa: serializedJawaban } : {}),
           catatan: tugasCatatan
         })
       });
@@ -298,8 +369,8 @@ export default function StudentPortal({
       }
       const autoNilai = json.data?.Nilai;
       showToast(
-        isPg && autoNilai
-          ? `Jawaban PG dikumpulkan! Nilai otomatis: ${autoNilai}`
+        (isPg || isUraian || isAkuntansi) && autoNilai
+          ? `Tugas dikumpulkan! Nilai otomatis sementara: ${autoNilai}`
           : 'Tugas berhasil dikumpulkan!'
       );
       setUploadTugasModal(null);
@@ -1381,11 +1452,28 @@ export default function StudentPortal({
                       </tr>
                     ) : (
                       visibleTasks.map((t: any, i: number) => {
-                        const isPg = String(t.TipeSoal || '').toLowerCase() === 'pg';
-                        const detailKoreksi = isPg ? parseDetailKoreksi(t.DetailKoreksi) : null;
+                        const tipe = String(t.TipeSoal || '').toLowerCase();
+                        const isPg = tipe === 'pg';
+                        const isUraian = tipe === 'uraian';
+                        const isAkuntansi = tipe === 'akuntansi';
+                        const detailKoreksi =
+                          isPg || isUraian || isAkuntansi
+                            ? parseDetailKoreksi(t.DetailKoreksi)
+                            : null;
                         const pgAnsweredCount = isPg
                           ? Object.keys(parsePgAnswers(t.JawabanSiswa, t.JumlahSoal || 200, t.OpsiPG)).length
                           : 0;
+                        const uraianAnsweredCount = isUraian
+                          ? Object.values(parseUraianSiswa(t.JawabanSiswa)).filter(v =>
+                              Boolean(String(v || '').trim())
+                            ).length
+                          : 0;
+                        const akRowCount = isAkuntansi
+                          ? parseAkuntansiSiswa(t.JawabanSiswa).filter(
+                              r => r.akun.trim() !== '' || r.nominal !== 0
+                            ).length
+                          : 0;
+
                         return (
                         <tr key={t.ID || i} className="hover:bg-amber-50/30">
                           <td className="py-2.5 px-3">
@@ -1399,6 +1487,16 @@ export default function StudentPortal({
                               {isPg && (
                                 <span className="px-1.5 py-0.5 text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-200 rounded">
                                   PG {t.JumlahSoal || ''} Soal
+                                </span>
+                              )}
+                              {isUraian && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 rounded">
+                                  Uraian {t.JumlahSoal || t.SoalUraianMeta?.length || ''} Soal
+                                </span>
+                              )}
+                              {isAkuntansi && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded">
+                                  Praktik Akuntansi
                                 </span>
                               )}
                               <span className="text-[10px] text-slate-500">({t.Jenis})</span>
@@ -1447,6 +1545,16 @@ export default function StudentPortal({
                                   PG: {pgAnsweredCount}/{t.JumlahSoal || pgAnsweredCount}
                                 </span>
                               )}
+                              {isUraian && uraianAnsweredCount > 0 && (
+                                <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 rounded-md tabular-nums">
+                                  Uraian: {uraianAnsweredCount}/{t.JumlahSoal || uraianAnsweredCount}
+                                </span>
+                              )}
+                              {isAkuntansi && akRowCount > 0 && (
+                                <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md tabular-nums">
+                                  Jurnal: {akRowCount} baris
+                                </span>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => openUploadTugas(t)}
@@ -1454,9 +1562,17 @@ export default function StudentPortal({
                               >
                                 <Upload className="w-3 h-3" />{' '}
                                 {isPg
-                                  ? pgAnsweredCount > 0
-                                    ? 'Edit LJK / File'
-                                    : 'Jawab PG / Upload'
+                                  ? pgAnsweredCount > 0 || t.FileSiswaID
+                                    ? 'Edit LJK / PDF'
+                                    : 'Jawab PG / Upload PDF'
+                                  : isUraian
+                                  ? uraianAnsweredCount > 0 || t.FileSiswaID
+                                    ? 'Edit Uraian / PDF'
+                                    : 'Jawab Uraian / Upload PDF'
+                                  : isAkuntansi
+                                  ? akRowCount > 0 || t.FileSiswaID
+                                    ? 'Edit Jurnal / PDF'
+                                    : 'Kerjakan Akuntansi / PDF'
                                   : t.FileSiswaID
                                   ? 'Ganti File'
                                   : 'Upload Tugas'}
@@ -1465,9 +1581,20 @@ export default function StudentPortal({
                           </td>
                           <td className="py-2.5 px-3 text-right tabular-nums">
                             <div className="font-bold text-indigo-700">{t.Nilai || '-'}</div>
-                            {detailKoreksi && typeof detailKoreksi.benar === 'number' && (
+                            {detailKoreksi && isPg && typeof detailKoreksi.benar === 'number' && (
                               <div className="text-[10px] text-emerald-700 font-semibold">
                                 B:{detailKoreksi.benar} S:{detailKoreksi.salah ?? 0}
+                              </div>
+                            )}
+                            {detailKoreksi && isUraian && typeof detailKoreksi.sesuai === 'number' && (
+                              <div className="text-[10px] text-amber-700 font-semibold">
+                                Sesuai:{detailKoreksi.sesuai} · Sebagian:{detailKoreksi.sebagian ?? 0}
+                              </div>
+                            )}
+                            {detailKoreksi && isAkuntansi && typeof detailKoreksi.benar === 'number' && (
+                              <div className="text-[10px] text-emerald-700 font-semibold">
+                                Benar:{detailKoreksi.benar}/{detailKoreksi.totalBaris ?? '-'} ·{' '}
+                                {detailKoreksi.seimbangSiswa ? 'Balance' : 'Selisih'}
                               </div>
                             )}
                           </td>
@@ -2112,9 +2239,13 @@ export default function StudentPortal({
         );
       })()}
 
-      {/* UPLOAD TUGAS / JAWABAN PG SISWA MODAL */}
+      {/* UPLOAD TUGAS / JAWABAN PG, URAIAN & AKUNTANSI SISWA MODAL */}
       {uploadTugasModal && (() => {
-        const isPg = String(uploadTugasModal.TipeSoal || '').toLowerCase() === 'pg';
+        const tipe = String(uploadTugasModal.TipeSoal || '').toLowerCase();
+        const isPg = tipe === 'pg';
+        const isUraian = tipe === 'uraian';
+        const isAkuntansi = tipe === 'akuntansi';
+
         const opsiPG = normalizeOpsiPG(uploadTugasModal.OpsiPG);
         const opsiList = getOpsiList(opsiPG);
         const totalSoal = isPg
@@ -2123,15 +2254,59 @@ export default function StudentPortal({
         const filledPgCount = isPg
           ? Array.from({ length: totalSoal }, (_, idx) => idx + 1).filter(no => Boolean(tugasJawabanPG[no])).length
           : 0;
-        const canSubmit = Boolean(tugasFile) || (isPg && filledPgCount > 0) || Boolean(uploadTugasModal.FileSiswaID);
+
+        const uraianMeta: { no: number; pertanyaan?: string; bobot?: number }[] = isUraian
+          ? Array.isArray(uploadTugasModal.SoalUraianMeta) && uploadTugasModal.SoalUraianMeta.length > 0
+            ? uploadTugasModal.SoalUraianMeta
+            : Array.from(
+                { length: Math.max(1, Number(uploadTugasModal.JumlahSoal || 1)) },
+                (_, idx) => ({ no: idx + 1, pertanyaan: '' })
+              )
+          : [];
+        const filledUraianCount = isUraian
+          ? uraianMeta.filter(m => Boolean(String(tugasJawabanUraian[m.no] || '').trim())).length
+          : 0;
+
+        const akDebit = isAkuntansi
+          ? tugasAkuntansiRows
+              .filter(r => r.posisi === 'D')
+              .reduce((s, r) => s + (Number(r.nominal) || 0), 0)
+          : 0;
+        const akKredit = isAkuntansi
+          ? tugasAkuntansiRows
+              .filter(r => r.posisi === 'K')
+              .reduce((s, r) => s + (Number(r.nominal) || 0), 0)
+          : 0;
+        const akHasDK = isAkuntansi && (akDebit > 0 || akKredit > 0);
+        const akBalanced = akHasDK && Math.abs(akDebit - akKredit) <= 1;
+        const filledAkCount = isAkuntansi
+          ? tugasAkuntansiRows.filter(r => r.akun.trim() !== '' || r.nominal !== 0).length
+          : 0;
+
+        const canSubmit =
+          Boolean(tugasFile) ||
+          (isPg && filledPgCount > 0) ||
+          (isUraian && filledUraianCount > 0) ||
+          (isAkuntansi && filledAkCount > 0) ||
+          Boolean(uploadTugasModal.FileSiswaID);
 
         return (
         <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
-          <div className={`bg-white rounded-2xl border border-amber-200 p-6 w-full ${isPg ? 'max-w-lg' : 'max-w-md'} max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl`}>
+          <div
+            className={`bg-white rounded-2xl border border-amber-200 p-6 w-full ${
+              isAkuntansi || isUraian ? 'max-w-2xl' : isPg ? 'max-w-lg' : 'max-w-md'
+            } max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl`}
+          >
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  {isPg ? 'Lembar Jawaban Pilihan Ganda & Tugas' : 'Upload Hasil Tugas'}
+                  {isPg
+                    ? 'Lembar Jawaban Pilihan Ganda & Upload PDF'
+                    : isUraian
+                    ? 'Lembar Jawaban Uraian Teks & Upload PDF'
+                    : isAkuntansi
+                    ? 'Lembar Kerja Praktik Akuntansi & Upload PDF'
+                    : 'Upload Hasil Tugas'}
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {uploadTugasModal.Judul} {uploadTugasModal.Mapel ? `· ${uploadTugasModal.Mapel}` : ''}
@@ -2214,20 +2389,267 @@ export default function StudentPortal({
               </div>
             )}
 
+            {isUraian && (
+              <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-amber-600" />
+                    Jawaban Uraian ({uraianMeta.length} Nomor)
+                  </div>
+                  <span className="px-2 py-0.5 text-[10px] font-bold bg-white text-amber-800 border border-amber-200 rounded-md tabular-nums">
+                    Terjawab: {filledUraianCount}/{uraianMeta.length}
+                  </span>
+                </div>
+                <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                  {uraianMeta.map(m => (
+                    <div key={m.no} className="bg-white border border-amber-200/80 rounded-xl p-2.5 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-amber-950">
+                          Soal #{m.no}
+                          {m.pertanyaan ? ` — ${m.pertanyaan}` : ''}
+                        </span>
+                        {m.bobot ? (
+                          <span className="text-[10px] text-amber-700 font-semibold shrink-0">
+                            Bobot {m.bobot}
+                          </span>
+                        ) : null}
+                      </div>
+                      <textarea
+                        rows={2}
+                        value={tugasJawabanUraian[m.no] || ''}
+                        onChange={e =>
+                          setTugasJawabanUraian(prev => ({ ...prev, [m.no]: e.target.value }))
+                        }
+                        placeholder={`Ketik jawaban soal #${m.no} (atau kosongkan jika mengunggah file PDF di bawah)`}
+                        className="w-full p-2 border border-slate-300 rounded-lg text-xs"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {isAkuntansi && (
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3.5 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                    <Calculator className="w-3.5 h-3.5 text-emerald-600" />
+                    Lembar Jurnal / Tabel Akuntansi
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setTugasAkQuickOpen(v => !v)}
+                      className="px-2 py-1 text-[10px] font-semibold bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-md cursor-pointer"
+                    >
+                      Tempel Excel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextNo =
+                          tugasAkuntansiRows.length > 0
+                            ? Math.max(...tugasAkuntansiRows.map(r => r.no)) + 1
+                            : 1;
+                        setTugasAkuntansiRows([
+                          ...tugasAkuntansiRows,
+                          { no: nextNo, keterangan: '', akun: '', posisi: 'D', nominal: 0 }
+                        ]);
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-md cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" /> Baris
+                    </button>
+                  </div>
+                </div>
+
+                {tugasAkQuickOpen && (
+                  <div className="bg-white border border-emerald-200 rounded-xl p-2.5 space-y-1.5">
+                    <div className="text-[11px] text-slate-600">
+                      Tempel baris dari Excel/teks: <code className="bg-slate-100 px-1 rounded">Akun | D/K | Nominal</code>
+                    </div>
+                    <textarea
+                      rows={3}
+                      value={tugasAkQuickText}
+                      onChange={e => setTugasAkQuickText(e.target.value)}
+                      placeholder={'Kas | D | 5.000.000\nModal | K | 5.000.000'}
+                      className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono"
+                    />
+                    <div className="flex justify-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setTugasAkQuickOpen(false)}
+                        className="px-2.5 py-1 text-[11px] bg-slate-100 rounded-md cursor-pointer"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const parsed = parseAkuntansiQuickText(tugasAkQuickText);
+                          if (parsed.length === 0) {
+                            showToast('Tempel minimal 1 baris akun/nominal');
+                            return;
+                          }
+                          setTugasAkuntansiRows(
+                            parsed.map(r => ({
+                              no: r.no,
+                              keterangan: r.keterangan,
+                              akun: r.akun,
+                              posisi: r.posisi,
+                              nominal: r.nominal
+                            }))
+                          );
+                          setTugasAkQuickOpen(false);
+                          setTugasAkQuickText('');
+                          showToast(`${parsed.length} baris diterapkan`);
+                        }}
+                        className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-600 text-white rounded-md cursor-pointer"
+                      >
+                        Terapkan
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="max-h-60 overflow-y-auto overflow-x-auto bg-white border border-emerald-200 rounded-xl">
+                  <table className="w-full text-left border-collapse text-[11px]">
+                    <thead className="bg-emerald-50 text-emerald-900 border-b border-emerald-100">
+                      <tr>
+                        <th className="py-1.5 px-2 w-8">#</th>
+                        <th className="py-1.5 px-2">Tanggal / Ket</th>
+                        <th className="py-1.5 px-2">Nama Akun</th>
+                        <th className="py-1.5 px-2 w-16">D / K</th>
+                        <th className="py-1.5 px-2 w-28 text-right">Nominal (Rp)</th>
+                        <th className="py-1.5 px-1 w-7"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {tugasAkuntansiRows.map((r, idx) => (
+                        <tr key={idx}>
+                          <td className="py-1 px-2 font-bold text-slate-500 tabular-nums">{r.no}</td>
+                          <td className="py-1 px-1">
+                            <input
+                              value={r.keterangan}
+                              onChange={e =>
+                                setTugasAkuntansiRows(
+                                  tugasAkuntansiRows.map((row, j) =>
+                                    j === idx ? { ...row, keterangan: e.target.value } : row
+                                  )
+                                )
+                              }
+                              placeholder="Tgl/Ref"
+                              className="w-full px-1.5 py-1 border border-slate-200 rounded text-[11px]"
+                            />
+                          </td>
+                          <td className="py-1 px-1">
+                            <input
+                              value={r.akun}
+                              onChange={e =>
+                                setTugasAkuntansiRows(
+                                  tugasAkuntansiRows.map((row, j) =>
+                                    j === idx ? { ...row, akun: e.target.value } : row
+                                  )
+                                )
+                              }
+                              placeholder="Mis. Kas / Beban Gaji"
+                              className="w-full px-1.5 py-1 border border-slate-200 rounded text-[11px] font-medium"
+                            />
+                          </td>
+                          <td className="py-1 px-1">
+                            <select
+                              value={r.posisi}
+                              onChange={e =>
+                                setTugasAkuntansiRows(
+                                  tugasAkuntansiRows.map((row, j) =>
+                                    j === idx
+                                      ? { ...row, posisi: e.target.value as 'D' | 'K' | 'N' }
+                                      : row
+                                  )
+                                )
+                              }
+                              className="w-full px-1 py-1 border border-slate-200 rounded text-[11px] font-bold"
+                            >
+                              <option value="D">D</option>
+                              <option value="K">K</option>
+                              <option value="N">N</option>
+                            </select>
+                          </td>
+                          <td className="py-1 px-1">
+                            <input
+                              type="text"
+                              value={r.nominal ? String(r.nominal) : ''}
+                              onChange={e =>
+                                setTugasAkuntansiRows(
+                                  tugasAkuntansiRows.map((row, j) =>
+                                    j === idx
+                                      ? { ...row, nominal: parseAkuntansiNominal(e.target.value) }
+                                      : row
+                                  )
+                                )
+                              }
+                              placeholder="0"
+                              className="w-full px-1.5 py-1 border border-slate-200 rounded text-[11px] text-right font-mono"
+                            />
+                          </td>
+                          <td className="py-1 px-1 text-center">
+                            {tugasAkuntansiRows.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setTugasAkuntansiRows(
+                                    tugasAkuntansiRows.filter((_, j) => j !== idx)
+                                  )
+                                }
+                                className="text-rose-500 hover:text-rose-700 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {akHasDK && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums pt-0.5">
+                    <div className="flex items-center gap-3 text-slate-700">
+                      <span>D: Rp {formatRupiah(akDebit)}</span>
+                      <span>K: Rp {formatRupiah(akKredit)}</span>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded font-sans font-bold text-[10px] ${
+                        akBalanced
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-rose-100 text-rose-800'
+                      }`}
+                    >
+                      {akBalanced
+                        ? 'Seimbang (Balance)'
+                        : `Selisih Rp ${formatRupiah(Math.abs(akDebit - akKredit))}`}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
             <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-amber-300 bg-amber-50/40 hover:bg-amber-50 rounded-xl cursor-pointer text-center">
               <Upload className="w-5 h-5 text-amber-600 mb-1" />
               <span className="text-xs font-bold text-amber-950">
                 {tugasFile
                   ? tugasFile.namaFile
-                  : isPg
-                  ? 'Lampiran Berkas Tambahan (Opsional untuk Tugas PG)'
+                  : isPg || isUraian || isAkuntansi
+                  ? 'Unggah File PDF / Berkas Jawaban (Opsional jika sudah mengisi form di atas)'
                   : 'Pilih Berkas Tugas (PDF, DOCX, Gambar, ZIP)'}
               </span>
               <span className="text-[11px] text-slate-500 mt-1">
-                {tugasFile ? `${(tugasFile.size / 1024).toFixed(1)} KB siap diunggah` : 'Maksimal ukuran file 15 MB'}
+                {tugasFile ? `${(tugasFile.size / 1024).toFixed(1)} KB siap diunggah` : 'Maksimal ukuran file 15 MB (disarankan PDF)'}
               </span>
               <input
                 type="file"
+                accept={isPg || isUraian || isAkuntansi ? '.pdf,.docx,.xlsx,image/*,*/*' : undefined}
                 onChange={handleSelectTugasFile}
                 className="hidden"
               />
