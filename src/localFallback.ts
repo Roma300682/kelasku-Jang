@@ -1,5 +1,6 @@
 import { getKaldikJabarEvents, KALDIK_JABAR_REF } from './data/kaldikJabar';
 import { ekstrakTingkatanKelas } from './constants';
+import { parsePgAnswers, serializePgAnswers, koreksiPgSiswa } from './pgTugasUtils';
 
 const STORAGE_KEY = 'mk_local_db_v1';
 const SESSION_KEY = 'mk_local_sessions_v1';
@@ -1295,12 +1296,18 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
             Tenggat: t.Tenggat,
             FileID: t.FileID || '',
             NamaFile: t.NamaFile || '',
+            TipeSoal: t.TipeSoal || 'umum',
+            JumlahSoal: Number(t.JumlahSoal || 0),
+            OpsiPG: t.OpsiPG || 'ABCDE',
+            SudahAdaKunci: Boolean(String(t.KunciJawaban || '').trim()),
             Status: p ? p.Status : 'Belum',
             Nilai: p ? p.Nilai : '',
             FileSiswaID: p ? p.FileID || '' : '',
             NamaFileSiswa: p ? p.NamaFile || '' : '',
             TanggalKumpul: p ? p.TanggalKumpul || '' : '',
-            CatatanSiswa: p ? p.CatatanSiswa || '' : ''
+            CatatanSiswa: p ? p.CatatanSiswa || '' : '',
+            JawabanSiswa: p ? p.JawabanSiswa || '' : '',
+            DetailKoreksi: p ? p.DetailKoreksi || '' : ''
           };
         }),
       nilai: (db.sheets.Nilai || []).find(n => n.Kelas === siswa.Kelas && n.SiswaID === siswa.ID) || null,
@@ -1947,18 +1954,63 @@ export async function runLocalHttpFallback(
     const tugasId = String(body.tugasId || '').trim();
     const list = db.sheets.Pengumpulan || [];
     const idx = list.findIndex(p => p.TugasID === tugasId && p.SiswaID === sesi.sid);
+    const existing = idx >= 0 ? list[idx] : null;
     const tRow = (db.sheets.Tugas || []).find(t => t.ID === tugasId);
     const nowStr = fmtYmd(new Date());
     const status = tRow?.Tenggat && nowStr > tRow.Tenggat ? 'Terlambat' : 'Tepat Waktu';
+
+    const parsedJawaban = parsePgAnswers(
+      body.jawabanSiswa,
+      Number(tRow?.JumlahSoal || 0) || 200,
+      tRow?.OpsiPG || 'ABCDE'
+    );
+    const serializedJawaban = serializePgAnswers(
+      parsedJawaban,
+      Number(tRow?.JumlahSoal || 0) || 200,
+      tRow?.OpsiPG || 'ABCDE'
+    );
+    const finalJawabanSiswa =
+      body.jawabanSiswa !== undefined ? serializedJawaban : existing?.JawabanSiswa || '';
+
+    let nilai = existing?.Nilai || '';
+    let detailKoreksi = existing?.DetailKoreksi || '';
+    if (
+      tRow &&
+      String(tRow.TipeSoal || '').toLowerCase() === 'pg' &&
+      String(tRow.KunciJawaban || '').trim() &&
+      finalJawabanSiswa
+    ) {
+      const koreksi = koreksiPgSiswa(
+        tRow.KunciJawaban,
+        finalJawabanSiswa,
+        tRow.JumlahSoal,
+        tRow.OpsiPG
+      );
+      if (koreksi.adaKunci) {
+        nilai = String(koreksi.nilai);
+        detailKoreksi = JSON.stringify({
+          total: koreksi.total,
+          jumlahKunci: koreksi.jumlahKunci,
+          benar: koreksi.benar,
+          salah: koreksi.salah,
+          kosong: koreksi.kosong,
+          nilai: koreksi.nilai,
+          detail: koreksi.detail
+        });
+      }
+    }
+
     const rec = {
       TugasID: tugasId,
       SiswaID: sesi.sid,
       Status: status,
-      Nilai: idx >= 0 ? list[idx].Nilai || '' : '',
-      FileID: String(body.fileId || ''),
-      NamaFile: String(body.namaFile || ''),
+      Nilai: nilai,
+      FileID: body.namaFile ? String(body.fileId || existing?.FileID || 'local_file') : existing?.FileID || '',
+      NamaFile: body.namaFile ? String(body.namaFile) : existing?.NamaFile || '',
       TanggalKumpul: nowStr,
-      CatatanSiswa: String(body.catatanSiswa || '')
+      CatatanSiswa: String(body.catatan ?? body.catatanSiswa ?? '').trim(),
+      JawabanSiswa: finalJawabanSiswa,
+      DetailKoreksi: detailKoreksi
     };
     if (idx >= 0) list[idx] = rec;
     else list.push(rec);

@@ -7,6 +7,7 @@ import zlib from 'zlib';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { getKaldikJabarEvents, KALDIK_JABAR_REF } from './src/data/kaldikJabar.ts';
+import { parsePgAnswers, serializePgAnswers, koreksiPgSiswa } from './src/pgTugasUtils.ts';
 import {
   clearAllRemoteFiles,
   deleteRemoteFile,
@@ -122,8 +123,8 @@ const SKEMA: Record<string, string[]> = {
   Kelas: ['ID', 'Nama', 'Jurusan', 'Mapel'],
   Siswa: ['ID', 'Kelas', 'Nama', 'NIS', 'TempatLahir', 'TanggalLahir', 'JenisKelamin', 'NoSiswa', 'NoOrtu', 'Alamat', 'Kesehatan', 'Foto'],
   Absensi: ['Kelas', 'Tanggal', 'SiswaID', 'Kode', 'Keterangan', 'Sumber'],
-  Tugas: ['ID', 'Kelas', 'Judul', 'Mapel', 'Deskripsi', 'Tenggat', 'Jenis', 'FileID', 'NamaFile'],
-  Pengumpulan: ['TugasID', 'SiswaID', 'Status', 'Nilai', 'FileID', 'NamaFile', 'TanggalKumpul', 'CatatanSiswa'],
+  Tugas: ['ID', 'Kelas', 'Judul', 'Mapel', 'Deskripsi', 'Tenggat', 'Jenis', 'FileID', 'NamaFile', 'TipeSoal', 'JumlahSoal', 'OpsiPG', 'KunciJawaban'],
+  Pengumpulan: ['TugasID', 'SiswaID', 'Status', 'Nilai', 'FileID', 'NamaFile', 'TanggalKumpul', 'CatatanSiswa', 'JawabanSiswa', 'DetailKoreksi'],
   Nilai: ['Kelas', 'SiswaID', 'Sikap', 'Tugas', 'Proyek', 'UTS', 'UAS'],
   Perilaku: ['ID', 'Kelas', 'Tanggal', 'SiswaID', 'Jenis', 'Level', 'Catatan', 'TindakLanjut'],
   Checklist: ['Kelas', 'Item', 'Selesai'],
@@ -2304,12 +2305,18 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
           Tenggat: t.Tenggat,
           FileID: t.FileID || '',
           NamaFile: t.NamaFile || '',
+          TipeSoal: t.TipeSoal || 'umum',
+          JumlahSoal: Number(t.JumlahSoal || 0),
+          OpsiPG: t.OpsiPG || 'ABCDE',
+          SudahAdaKunci: Boolean(String(t.KunciJawaban || '').trim()),
           Status: p ? p.Status : 'Belum',
           Nilai: p ? p.Nilai : '',
           FileSiswaID: p ? p.FileID || '' : '',
           NamaFileSiswa: p ? p.NamaFile || '' : '',
           TanggalKumpul: p ? p.TanggalKumpul || '' : '',
-          CatatanSiswa: p ? p.CatatanSiswa || '' : ''
+          CatatanSiswa: p ? p.CatatanSiswa || '' : '',
+          JawabanSiswa: p ? p.JawabanSiswa || '' : '',
+          DetailKoreksi: p ? p.DetailKoreksi || '' : ''
         };
       }),
       nilai: baca_('Nilai').find(n => n.Kelas === siswa.Kelas && n.SiswaID === siswa.ID) || null,
@@ -3971,10 +3978,10 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
     }
   });
 
-  // Student Submits Assignment File
+  // Student Submits Assignment File and/or PG Answers
   app.post('/api/tugas/submit', async (req, res) => {
     try {
-      const { token, tugasId, namaFile, base64Data, catatan } = req.body || {};
+      const { token, tugasId, namaFile, base64Data, catatan, jawabanSiswa } = req.body || {};
       const sesi = sesi_(token, 'siswa');
       const siswa = baca_('Siswa').find(s => s.ID === sesi.sid);
       if (!siswa) throw new Error('SESI_HABIS');
@@ -3984,27 +3991,53 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
         res.status(404).json({ ok: false, error: 'Tugas tidak ditemukan.' });
         return;
       }
-      if (!namaFile || !base64Data) {
-        res.status(400).json({ ok: false, error: 'Pilih berkas hasil tugas untuk diunggah.' });
+
+      const semuaPg = baca_('Pengumpulan');
+      const idx = semuaPg.findIndex(p => p.TugasID === tugasId && p.SiswaID === siswa.ID);
+      const existing = idx >= 0 ? semuaPg[idx] : null;
+
+      const hasNewFile = Boolean(namaFile && base64Data);
+      const parsedJawaban = parsePgAnswers(
+        jawabanSiswa,
+        Number(tugas.JumlahSoal || 0) || 200,
+        tugas.OpsiPG || 'ABCDE'
+      );
+      const serializedJawaban = serializePgAnswers(
+        parsedJawaban,
+        Number(tugas.JumlahSoal || 0) || 200,
+        tugas.OpsiPG || 'ABCDE'
+      );
+      const hasPgAnswer = Object.keys(parsedJawaban).length > 0;
+
+      if (!hasNewFile && !hasPgAnswer && !existing?.FileID) {
+        res.status(400).json({
+          ok: false,
+          error: 'Pilih berkas hasil tugas atau isi jawaban Pilihan Ganda terlebih dahulu.'
+        });
         return;
       }
 
-      const fileId = 'tsis_' + uidShort();
-      const cleanName = String(namaFile).replace(/[^a-zA-Z0-9._-]/g, '_');
-      const diskName = `${fileId}__${cleanName}`;
-      const buf = Buffer.from(String(base64Data), 'base64');
-      try {
-        if (!fs.existsSync(TUGAS_DIR)) fs.mkdirSync(TUGAS_DIR, { recursive: true });
-        fs.writeFileSync(path.join(TUGAS_DIR, diskName), buf);
-      } catch (_) {}
-      if (detectStorageEngine().isVercelCloud) {
-        await saveRemoteFile({
-          id: fileId,
-          kind: 'tugas',
-          filename: String(namaFile),
-          mime: 'application/octet-stream',
-          contentBase64: String(base64Data)
-        });
+      let fileId = existing?.FileID || '';
+      let finalNamaFile = existing?.NamaFile || '';
+      if (hasNewFile) {
+        fileId = 'tsis_' + uidShort();
+        finalNamaFile = String(namaFile);
+        const cleanName = finalNamaFile.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const diskName = `${fileId}__${cleanName}`;
+        const buf = Buffer.from(String(base64Data), 'base64');
+        try {
+          if (!fs.existsSync(TUGAS_DIR)) fs.mkdirSync(TUGAS_DIR, { recursive: true });
+          fs.writeFileSync(path.join(TUGAS_DIR, diskName), buf);
+        } catch (_) {}
+        if (detectStorageEngine().isVercelCloud) {
+          await saveRemoteFile({
+            id: fileId,
+            kind: 'tugas',
+            filename: finalNamaFile,
+            mime: 'application/octet-stream',
+            contentBase64: String(base64Data)
+          });
+        }
       }
 
       const now = new Date();
@@ -4012,17 +4045,46 @@ ${task.focusHint ? `- ${task.focusHint}\n` : ''}${task.nPG > 0 ? `- Buat TEPAT $
       const tanggalKumpul = `${todayYmd} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       const statusWaktu = !tugas.Tenggat || todayYmd <= String(tugas.Tenggat) ? 'Tepat Waktu' : 'Terlambat';
 
-      const semuaPg = baca_('Pengumpulan');
-      const idx = semuaPg.findIndex(p => p.TugasID === tugasId && p.SiswaID === siswa.ID);
+      let nilai = existing?.Nilai || '';
+      let detailKoreksi = existing?.DetailKoreksi || '';
+      const finalJawabanSiswa = jawabanSiswa !== undefined ? serializedJawaban : existing?.JawabanSiswa || '';
+
+      if (
+        String(tugas.TipeSoal || '').toLowerCase() === 'pg' &&
+        String(tugas.KunciJawaban || '').trim() &&
+        finalJawabanSiswa
+      ) {
+        const koreksi = koreksiPgSiswa(
+          tugas.KunciJawaban,
+          finalJawabanSiswa,
+          tugas.JumlahSoal,
+          tugas.OpsiPG
+        );
+        if (koreksi.adaKunci) {
+          nilai = String(koreksi.nilai);
+          detailKoreksi = JSON.stringify({
+            total: koreksi.total,
+            jumlahKunci: koreksi.jumlahKunci,
+            benar: koreksi.benar,
+            salah: koreksi.salah,
+            kosong: koreksi.kosong,
+            nilai: koreksi.nilai,
+            detail: koreksi.detail
+          });
+        }
+      }
+
       const updated = {
         TugasID: tugasId,
         SiswaID: siswa.ID,
         Status: statusWaktu,
-        Nilai: idx >= 0 ? semuaPg[idx].Nilai || '' : '',
+        Nilai: nilai,
         FileID: fileId,
-        NamaFile: String(namaFile),
+        NamaFile: finalNamaFile,
         TanggalKumpul: tanggalKumpul,
-        CatatanSiswa: String(catatan || '').trim()
+        CatatanSiswa: String(catatan || '').trim(),
+        JawabanSiswa: finalJawabanSiswa,
+        DetailKoreksi: detailKoreksi
       };
       if (idx >= 0) semuaPg[idx] = updated;
       else semuaPg.push(updated);

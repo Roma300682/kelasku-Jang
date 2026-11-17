@@ -99,6 +99,19 @@ import {
   extractUrlsFromText
 } from './components/PerangkatAjarModals';
 import {
+  TugasFormModalBody,
+  KunciPgQuickModalBody,
+  KoreksiPgSiswaModalBody
+} from './components/TugasPgModals';
+import {
+  parsePgAnswers,
+  formatPgNumberedSummary,
+  koreksiPgSiswa,
+  parseDetailKoreksi,
+  inferTotalSoal,
+  normalizeOpsiPG
+} from './pgTugasUtils';
+import {
   BookOpen,
   LayoutDashboard,
   CloudUpload,
@@ -109,6 +122,7 @@ import {
   Network,
   CalendarClock,
   ClipboardList,
+  ClipboardCheck,
   BarChart3,
   Award,
   CalendarDays,
@@ -6339,168 +6353,274 @@ export default function App() {
     const curTug = filteredTugasK.find((t: any) => t.ID === activeId);
 
     const openTambahTugas = (editRow?: any, defaultMapel?: string) => {
-      let judul = editRow?.Judul || '';
-      let mapel =
+      const defaultMapelVal =
         editRow?.Mapel ||
         defaultMapel ||
         (activeMapelFilter !== 'ALL' ? activeMapelFilter : '') ||
         classMapelList[0] ||
         db.Mapel?.[0]?.Nama ||
         'Umum';
-      let deskripsi = editRow?.Deskripsi || '';
-      let jenis = editRow?.Jenis || 'Tugas';
-      let tenggat = editRow?.Tenggat || ymd(new Date());
       let fileId = editRow?.FileID || '';
       let namaFile = editRow?.NamaFile || '';
-      let pendingFile: { namaFile: string; base64Data: string } | null = null;
 
       const modalSubjectOptions = Array.from(
         new Set([...classMapelList, ...(db.Mapel || []).map((m: any) => String(m.Nama || '').trim()).filter(Boolean)])
       );
 
       setModalContent({
-        title: editRow ? 'Edit Tugas & Lampiran' : 'Tambah Tugas / Asesmen Formatif',
+        title: editRow ? 'Edit Tugas & Kunci Jawaban' : 'Tambah Tugas / Asesmen Formatif',
+        wide: true,
         render: () => (
-          <div className="space-y-3">
-            <label className="block text-xs font-semibold text-slate-700">
-              Judul Tugas
-              <input
-                defaultValue={judul}
-                onChange={e => (judul = e.target.value)}
-                placeholder="Contoh: Latihan Soal Vektor"
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-              />
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="block text-xs font-semibold text-slate-700">
-                Mata Pelajaran (Kelas {kelasObj.Nama || ''})
-                <input
-                  list="tugas-mapel-list"
-                  defaultValue={mapel}
-                  onChange={e => (mapel = e.target.value)}
-                  className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                />
-                <datalist id="tugas-mapel-list">
-                  {modalSubjectOptions.map(m => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
-              </label>
-              <label className="block text-xs font-semibold text-slate-700">
-                Jenis Asesmen
-                <select
-                  defaultValue={jenis}
-                  onChange={e => (jenis = e.target.value)}
-                  className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                >
-                  <option>Tugas</option>
-                  <option>Kuis harian</option>
-                  <option>Exit ticket</option>
-                  <option>Proyek</option>
-                  <option>Praktik</option>
-                </select>
-              </label>
-            </div>
-            <label className="block text-xs font-semibold text-slate-700">
-              Deskripsi / Instruksi Tugas
-              <textarea
-                rows={3}
-                defaultValue={deskripsi}
-                onChange={e => (deskripsi = e.target.value)}
-                placeholder="Petunjuk pengerjaan untuk siswa..."
-                className="mt-1 w-full p-2.5 border border-slate-300 rounded-lg text-xs"
-              />
-            </label>
-            <label className="block text-xs font-semibold text-slate-700">
-              Tenggat Pengumpulan
-              <input
-                type="date"
-                defaultValue={tenggat}
-                onChange={e => (tenggat = e.target.value)}
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-              />
-            </label>
-            <label className="block text-xs font-semibold text-slate-700">
-              Upload Berkas Soal / Lampiran Tugas (Opsional)
-              <input
-                type="file"
-                onChange={e => {
-                  const f = e.target.files?.[0];
-                  if (!f) return;
-                  if (f.size > 15 * 1024 * 1024) {
-                    showToast('Ukuran lampiran maksimal 15 MB');
-                    return;
-                  }
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                    const res = String(reader.result || '');
-                    const base64Data = res.includes(',') ? res.split(',')[1] : res;
-                    pendingFile = { namaFile: f.name, base64Data };
-                    showToast(`Lampiran "${f.name}" siap diunggah`);
+          <TugasFormModalBody
+            key={editRow?.ID || `new-${defaultMapelVal}`}
+            editRow={editRow}
+            kelasNama={kelasObj.Nama || ''}
+            defaultMapel={defaultMapelVal}
+            defaultTenggat={ymd(new Date())}
+            subjectOptions={modalSubjectOptions}
+            showToast={showToast}
+            onCancel={() => setModalContent(null)}
+            onSave={async payload => {
+              if (payload.pendingFile) {
+                showToast('Mengunggah berkas tugas…', 5000);
+                const upRes = await fetchJson('/api/tugas/upload-soal', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    token,
+                    namaFile: payload.pendingFile.namaFile,
+                    base64Data: payload.pendingFile.base64Data
+                  })
+                });
+                if (!upRes.ok) {
+                  showToast('Gagal unggah lampiran: ' + (upRes.error || 'Error'), 4000);
+                  return;
+                }
+                fileId = upRes.data.fileId;
+                namaFile = upRes.data.namaFile;
+              }
+              const idBaru = editRow?.ID || uid();
+              const record = {
+                ID: idBaru,
+                Kelas: K,
+                Judul: payload.judul,
+                Mapel: payload.mapel,
+                Deskripsi: payload.deskripsi,
+                Jenis: payload.jenis,
+                Tenggat: payload.tenggat,
+                FileID: fileId,
+                NamaFile: namaFile,
+                TipeSoal: payload.tipeSoal,
+                JumlahSoal: payload.tipeSoal === 'pg' ? String(payload.jumlahSoal) : '',
+                OpsiPG: payload.tipeSoal === 'pg' ? payload.opsiPG : '',
+                KunciJawaban: payload.tipeSoal === 'pg' ? payload.kunciJawaban : ''
+              };
+              const nextTugas = editRow
+                ? (db.Tugas || []).map((t: any) => (t.ID === editRow.ID ? record : t))
+                : [...(db.Tugas || []), record];
+
+              setTugSel(idBaru);
+              if (record.Mapel) setTugMapelFilter(record.Mapel);
+              setModalContent(null);
+
+              // Auto-regrade existing PG submissions if this task is PG & has a key
+              if (record.TipeSoal === 'pg' && record.KunciJawaban) {
+                let regraded = 0;
+                const nextPengumpulan = (db.Pengumpulan || []).map((p: any) => {
+                  if (p.TugasID !== idBaru || !String(p.JawabanSiswa || '').trim()) return p;
+                  const res = koreksiPgSiswa(
+                    record.KunciJawaban,
+                    p.JawabanSiswa,
+                    record.JumlahSoal,
+                    record.OpsiPG
+                  );
+                  if (!res.adaKunci) return p;
+                  regraded++;
+                  return {
+                    ...p,
+                    Nilai: String(res.nilai),
+                    DetailKoreksi: JSON.stringify({
+                      total: res.total,
+                      jumlahKunci: res.jumlahKunci,
+                      benar: res.benar,
+                      salah: res.salah,
+                      kosong: res.kosong,
+                      nilai: res.nilai,
+                      detail: res.detail
+                    })
                   };
-                  reader.readAsDataURL(f);
-                }}
-                className="mt-1 w-full text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-teal-50 file:text-teal-700 file:font-semibold hover:file:bg-teal-100"
-              />
-              {namaFile && (
-                <div className="text-[11px] text-emerald-700 mt-1">
-                  Lampiran saat ini: <strong>{namaFile}</strong>
-                </div>
-              )}
-            </label>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setModalContent(null)}
-                className="px-4 py-2 text-xs font-semibold bg-slate-100 rounded-lg"
-              >
-                Batal
-              </button>
-              <button
-                onClick={async () => {
-                  if (!judul.trim()) return showToast('Judul tugas wajib diisi');
-                  if (pendingFile) {
-                    showToast('Mengunggah berkas tugas…', 5000);
-                    const upRes = await fetchJson('/api/tugas/upload-soal', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        token,
-                        namaFile: pendingFile.namaFile,
-                        base64Data: pendingFile.base64Data
-                      })
-                    });
-                    if (!upRes.ok) {
-                      return showToast('Gagal unggah lampiran: ' + (upRes.error || 'Error'), 4000);
-                    }
-                    fileId = upRes.data.fileId;
-                    namaFile = upRes.data.namaFile;
-                  }
-                  const idBaru = editRow?.ID || uid();
-                  const record = {
-                    ID: idBaru,
-                    Kelas: K,
-                    Judul: judul.trim(),
-                    Mapel: mapel.trim(),
-                    Deskripsi: deskripsi.trim(),
-                    Jenis: jenis,
-                    Tenggat: tenggat,
-                    FileID: fileId,
-                    NamaFile: namaFile
-                  };
-                  const next = editRow
-                    ? (db.Tugas || []).map((t: any) => (t.ID === editRow.ID ? record : t))
-                    : [...(db.Tugas || []), record];
-                  setTugSel(idBaru);
-                  if (record.Mapel) setTugMapelFilter(record.Mapel);
-                  setModalContent(null);
-                  await persistSheets({ ...db, Tugas: next }, 'Tugas');
-                }}
-                className="px-4 py-2 text-xs font-semibold bg-slate-900 text-white rounded-lg"
-              >
-                Simpan
-              </button>
-            </div>
-          </div>
+                });
+                if (regraded > 0) {
+                  await persistSheets(
+                    { ...db, Tugas: nextTugas, Pengumpulan: nextPengumpulan },
+                    'Tugas',
+                    'Pengumpulan'
+                  );
+                  showToast(`Tugas disimpan & ${regraded} jawaban siswa dikoreksi ulang`);
+                  return;
+                }
+              }
+
+              await persistSheets({ ...db, Tugas: nextTugas }, 'Tugas');
+            }}
+          />
+        )
+      });
+    };
+
+    const runAutoKoreksiSemua = async (
+      tugasRow: any,
+      sourceTugasList?: any[],
+      sourcePengumpulanList?: any[]
+    ) => {
+      if (!String(tugasRow?.KunciJawaban || '').trim()) {
+        showToast('Atur Kunci Jawaban PG terlebih dahulu sebelum koreksi otomatis');
+        return;
+      }
+      const basePengumpulan = sourcePengumpulanList || db.Pengumpulan || [];
+      let gradedCount = 0;
+      const nextPengumpulan = basePengumpulan.map((p: any) => {
+        if (p.TugasID !== tugasRow.ID || !String(p.JawabanSiswa || '').trim()) return p;
+        const res = koreksiPgSiswa(
+          tugasRow.KunciJawaban,
+          p.JawabanSiswa,
+          tugasRow.JumlahSoal,
+          tugasRow.OpsiPG
+        );
+        if (!res.adaKunci) return p;
+        gradedCount++;
+        return {
+          ...p,
+          Nilai: String(res.nilai),
+          DetailKoreksi: JSON.stringify({
+            total: res.total,
+            jumlahKunci: res.jumlahKunci,
+            benar: res.benar,
+            salah: res.salah,
+            kosong: res.kosong,
+            nilai: res.nilai,
+            detail: res.detail
+          })
+        };
+      });
+      if (gradedCount === 0) {
+        if (sourceTugasList) {
+          await persistSheets({ ...db, Tugas: sourceTugasList }, 'Tugas');
+        }
+        showToast('Belum ada jawaban PG siswa yang masuk untuk tugas ini');
+        return;
+      }
+      if (sourceTugasList) {
+        await persistSheets(
+          { ...db, Tugas: sourceTugasList, Pengumpulan: nextPengumpulan },
+          'Tugas',
+          'Pengumpulan'
+        );
+      } else {
+        await persistSheets({ ...db, Pengumpulan: nextPengumpulan }, 'Pengumpulan');
+      }
+      showToast(`Koreksi otomatis selesai: ${gradedCount} siswa dinilai!`);
+    };
+
+    const openKunciPgModal = (tugasRow: any) => {
+      setModalContent({
+        title: 'Kunci Jawaban Pilihan Ganda',
+        wide: true,
+        render: () => (
+          <KunciPgQuickModalBody
+            key={`kunci-${tugasRow.ID}`}
+            tugas={tugasRow}
+            showToast={showToast}
+            onCancel={() => setModalContent(null)}
+            onSave={async payload => {
+              const updatedTugas = {
+                ...tugasRow,
+                TipeSoal: payload.tipeSoal,
+                JumlahSoal: String(payload.jumlahSoal),
+                OpsiPG: payload.opsiPG,
+                KunciJawaban: payload.kunciJawaban
+              };
+              const nextTugas = (db.Tugas || []).map((t: any) =>
+                t.ID === tugasRow.ID ? updatedTugas : t
+              );
+              setModalContent(null);
+              if (payload.autoGradeExisting) {
+                await runAutoKoreksiSemua(updatedTugas, nextTugas, db.Pengumpulan || []);
+              } else {
+                await persistSheets({ ...db, Tugas: nextTugas }, 'Tugas');
+                showToast('Kunci jawaban PG disimpan');
+              }
+            }}
+          />
+        )
+      });
+    };
+
+    const openKoreksiPgSiswa = (
+      tugasRow: any,
+      studentIdx: number,
+      workingPengumpulan?: any[]
+    ) => {
+      const s = siswaK[studentIdx];
+      if (!s) return;
+      const listNow = workingPengumpulan || db.Pengumpulan || [];
+      const existing = listNow.find(
+        (q: any) => q.TugasID === tugasRow.ID && q.SiswaID === s.ID
+      ) || {
+        TugasID: tugasRow.ID,
+        SiswaID: s.ID,
+        Status: 'Belum',
+        Nilai: '',
+        FileID: '',
+        NamaFile: '',
+        TanggalKumpul: '',
+        CatatanSiswa: '',
+        JawabanSiswa: '',
+        DetailKoreksi: ''
+      };
+
+      setModalContent({
+        title: `Koreksi Jawaban PG · ${s.Nama}`,
+        wide: true,
+        render: () => (
+          <KoreksiPgSiswaModalBody
+            key={`${tugasRow.ID}:${s.ID}`}
+            tugas={tugasRow}
+            siswa={s}
+            submission={existing}
+            hasNextStudent={studentIdx + 1 < siswaK.length}
+            showToast={showToast}
+            onCancel={() => setModalContent(null)}
+            onApply={(payload, goNext) => {
+              const nextPengumpulan = [...listNow];
+              const idx = nextPengumpulan.findIndex(
+                (q: any) => q.TugasID === tugasRow.ID && q.SiswaID === s.ID
+              );
+              const nextRow = {
+                ...(idx >= 0 ? nextPengumpulan[idx] : existing),
+                TugasID: tugasRow.ID,
+                SiswaID: s.ID,
+                Status: payload.status,
+                Nilai: payload.nilai,
+                JawabanSiswa: payload.jawabanSiswa,
+                DetailKoreksi: payload.detailKoreksi
+              };
+              if (idx >= 0) nextPengumpulan[idx] = nextRow;
+              else nextPengumpulan.push(nextRow);
+
+              const nextDb = { ...db, Pengumpulan: nextPengumpulan };
+              setDb(nextDb);
+
+              if (goNext && studentIdx + 1 < siswaK.length) {
+                openKoreksiPgSiswa(tugasRow, studentIdx + 1, nextPengumpulan);
+                void persistSheets(nextDb, 'Pengumpulan');
+              } else {
+                setModalContent(null);
+                void persistSheets(nextDb, 'Pengumpulan');
+                showToast(`Nilai PG ${s.Nama} diterapkan (${payload.nilai})`);
+              }
+            }}
+          />
         )
       });
     };
@@ -6635,7 +6755,17 @@ export default function App() {
           )}
         </div>
 
-        {curTug ? (
+        {curTug ? (() => {
+          const isPgTask =
+            String(curTug.TipeSoal || '').toLowerCase() === 'pg' ||
+            Boolean(String(curTug.KunciJawaban || '').trim());
+          const curOpsiPG = normalizeOpsiPG(curTug.OpsiPG);
+          const curTotalSoal = inferTotalSoal(curTug.KunciJawaban, curTug.JumlahSoal, undefined, curOpsiPG);
+          const kunciMap = parsePgAnswers(curTug.KunciJawaban, curTotalSoal, curOpsiPG);
+          const kunciCount = Object.keys(kunciMap).length;
+          const kunciRingkas = formatPgNumberedSummary(kunciMap, curTotalSoal);
+
+          return (
           <div className="bg-white border border-teal-100 rounded-2xl p-6 space-y-4 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="space-y-1">
@@ -6644,6 +6774,11 @@ export default function App() {
                   {curTug.Mapel && (
                     <span className="px-2 py-0.5 text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md">
                       {curTug.Mapel}
+                    </span>
+                  )}
+                  {isPgTask && (
+                    <span className="px-2 py-0.5 text-[11px] font-bold bg-violet-50 text-violet-700 border border-violet-200 rounded-md">
+                      Pilihan Ganda · {curTotalSoal} Soal ({curOpsiPG === 'ABCD' ? 'A–D' : 'A–E'})
                     </span>
                   )}
                 </div>
@@ -6668,6 +6803,20 @@ export default function App() {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  onClick={() => openKunciPgModal(curTug)}
+                  className="px-3 py-2 text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl flex items-center gap-1.5 cursor-pointer"
+                >
+                  <KeyRound className="w-3.5 h-3.5" /> {isPgTask ? 'Atur Kunci PG' : 'Koreksi PG'}
+                </button>
+                {isPgTask && kunciCount > 0 && (
+                  <button
+                    onClick={() => runAutoKoreksiSemua(curTug)}
+                    className="px-3 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" /> Koreksi Otomatis Semua
+                  </button>
+                )}
+                <button
                   onClick={() => openTambahTugas(curTug)}
                   className="px-3 py-2 text-xs font-semibold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl flex items-center gap-1 cursor-pointer"
                 >
@@ -6688,6 +6837,27 @@ export default function App() {
               </div>
             </div>
 
+            {isPgTask && (
+              <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="space-y-0.5 min-w-0 flex-1">
+                  <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    Kunci Jawaban PG ({kunciCount}/{curTotalSoal} nomor terisi)
+                  </div>
+                  <div className="text-[11px] font-mono text-indigo-800 break-words">
+                    {kunciRingkas || 'Kunci jawaban belum diisi. Klik "Atur Kunci PG" untuk memasukkan kunci jawaban.'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openKunciPgModal(curTug)}
+                  className="px-3 py-1.5 text-[11px] font-bold bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg shrink-0 cursor-pointer"
+                >
+                  {kunciCount > 0 ? 'Ubah Kunci' : 'Input Kunci PG'}
+                </button>
+              </div>
+            )}
+
             <div className="overflow-x-auto border border-teal-100 rounded-xl">
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="bg-teal-50/70 border-b border-teal-100 text-teal-800">
@@ -6695,6 +6865,7 @@ export default function App() {
                     <th className="py-2.5 px-3 w-10">#</th>
                     <th className="py-2.5 px-3">Nama Siswa</th>
                     <th className="py-2.5 px-3">Berkas Unggahan Siswa</th>
+                    {isPgTask && <th className="py-2.5 px-3">Jawaban & Koreksi PG</th>}
                     <th className="py-2.5 px-3">Status Pengumpulan</th>
                     <th className="py-2.5 px-3 text-right">Nilai (0–100)</th>
                   </tr>
@@ -6703,7 +6874,18 @@ export default function App() {
                   {siswaK.map((s: any, i: number) => {
                     const r = (db.Pengumpulan || []).find(
                       (q: any) => q.TugasID === curTug.ID && q.SiswaID === s.ID
-                    ) || { Status: 'Belum', Nilai: '', FileID: '', NamaFile: '', TanggalKumpul: '', CatatanSiswa: '' };
+                    ) || { Status: 'Belum', Nilai: '', FileID: '', NamaFile: '', TanggalKumpul: '', CatatanSiswa: '', JawabanSiswa: '', DetailKoreksi: '' };
+
+                    const parsedJawab = isPgTask
+                      ? parsePgAnswers(r.JawabanSiswa, curTotalSoal, curOpsiPG)
+                      : {};
+                    const jCount = Object.keys(parsedJawab).length;
+                    const detailObj = isPgTask ? parseDetailKoreksi(r.DetailKoreksi) : null;
+                    const liveKoreksi =
+                      isPgTask && jCount > 0 && kunciCount > 0
+                        ? koreksiPgSiswa(curTug.KunciJawaban, parsedJawab, curTotalSoal, curOpsiPG)
+                        : null;
+
                     return (
                       <tr key={s.ID} className="hover:bg-slate-50/70">
                         <td className="py-2 px-3 tabular-nums text-slate-400">{i + 1}</td>
@@ -6731,9 +6913,39 @@ export default function App() {
                               )}
                             </div>
                           ) : (
-                            <span className="text-slate-400">Belum upload</span>
+                            <span className="text-slate-400">
+                              {jCount > 0 ? 'Dikumpulkan via LJK PG' : 'Belum upload'}
+                            </span>
                           )}
                         </td>
+                        {isPgTask && (
+                          <td className="py-2 px-3">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {liveKoreksi ? (
+                                <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md tabular-nums">
+                                  B:{liveKoreksi.benar} · S:{liveKoreksi.salah}
+                                  {liveKoreksi.kosong > 0 ? ` · K:${liveKoreksi.kosong}` : ''}
+                                </span>
+                              ) : detailObj && typeof detailObj.benar === 'number' ? (
+                                <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md tabular-nums">
+                                  B:{detailObj.benar} · S:{detailObj.salah ?? 0}
+                                </span>
+                              ) : jCount > 0 ? (
+                                <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md tabular-nums">
+                                  Terisi {jCount}/{curTotalSoal}
+                                </span>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => openKoreksiPgSiswa(curTug, i)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg cursor-pointer"
+                              >
+                                <ClipboardCheck className="w-3 h-3" />
+                                {jCount > 0 ? 'Lihat / Koreksi' : 'Input & Koreksi PG'}
+                              </button>
+                            </div>
+                          </td>
+                        )}
                         <td className="py-2 px-3">
                           <select
                             value={r.Status}
@@ -6752,7 +6964,9 @@ export default function App() {
                                   FileID: '',
                                   NamaFile: '',
                                   TanggalKumpul: '',
-                                  CatatanSiswa: ''
+                                  CatatanSiswa: '',
+                                  JawabanSiswa: '',
+                                  DetailKoreksi: ''
                                 });
                               setDb({ ...db, Pengumpulan: next });
                             }}
@@ -6782,7 +6996,9 @@ export default function App() {
                                   FileID: '',
                                   NamaFile: '',
                                   TanggalKumpul: '',
-                                  CatatanSiswa: ''
+                                  CatatanSiswa: '',
+                                  JawabanSiswa: '',
+                                  DetailKoreksi: ''
                                 });
                               setDb({ ...db, Pengumpulan: next });
                             }}
@@ -6796,7 +7012,8 @@ export default function App() {
               </table>
             </div>
           </div>
-        ) : (
+          );
+        })() : (
           <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-3">
             <div className="text-xs text-slate-500">
               {activeMapelFilter !== 'ALL'

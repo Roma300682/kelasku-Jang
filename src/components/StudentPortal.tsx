@@ -18,6 +18,15 @@ import { parseSumberLinks } from './PerangkatAjarModals';
 import { ClassChatDrawer } from './ClassChatDrawer';
 import { PWAInstallButton, OfflineModeTogglePill } from './PwaOfflineControls';
 import {
+  getOpsiList,
+  normalizeOpsiPG,
+  parsePgAnswers,
+  serializePgAnswers,
+  formatPgCompactString,
+  inferTotalSoal,
+  parseDetailKoreksi
+} from '../pgTugasUtils';
+import {
   LogOut,
   RefreshCw,
   CheckCircle2,
@@ -94,6 +103,8 @@ export default function StudentPortal({
   const [uploadTugasModal, setUploadTugasModal] = useState<any | null>(null);
   const [tugasFile, setTugasFile] = useState<{ namaFile: string; base64Data: string; size: number } | null>(null);
   const [tugasCatatan, setTugasCatatan] = useState('');
+  const [tugasJawabanPG, setTugasJawabanPG] = useState<Record<number, string>>({});
+  const [tugasPgQuickText, setTugasPgQuickText] = useState('');
   const [uploadingTugas, setUploadingTugas] = useState(false);
 
   // Secretary Attendance State
@@ -219,6 +230,16 @@ export default function StudentPortal({
     setUploadTugasModal(t);
     setTugasFile(null);
     setTugasCatatan(t.CatatanSiswa || '');
+    const isPg = String(t.TipeSoal || '').toLowerCase() === 'pg';
+    if (isPg) {
+      const total = inferTotalSoal(undefined, t.JumlahSoal, t.JawabanSiswa, t.OpsiPG);
+      const parsed = parsePgAnswers(t.JawabanSiswa, total, t.OpsiPG);
+      setTugasJawabanPG(parsed);
+      setTugasPgQuickText(formatPgCompactString(parsed, total).replace(/-+$/, ''));
+    } else {
+      setTugasJawabanPG({});
+      setTugasPgQuickText('');
+    }
   }
 
   function handleSelectTugasFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -239,8 +260,21 @@ export default function StudentPortal({
 
   async function handleSubmitTugasFile() {
     if (!uploadTugasModal) return;
-    if (!tugasFile) {
-      showToast('Pilih berkas tugas yang akan diunggah terlebih dahulu');
+    const isPg = String(uploadTugasModal.TipeSoal || '').toLowerCase() === 'pg';
+    const total = isPg
+      ? inferTotalSoal(undefined, uploadTugasModal.JumlahSoal, uploadTugasModal.JawabanSiswa, uploadTugasModal.OpsiPG)
+      : 0;
+    const serializedPg = isPg
+      ? serializePgAnswers(tugasJawabanPG, total, uploadTugasModal.OpsiPG)
+      : '';
+    const hasPg = Object.keys(tugasJawabanPG).length > 0;
+
+    if (!tugasFile && !(isPg && hasPg) && !uploadTugasModal.FileSiswaID) {
+      showToast(
+        isPg
+          ? 'Isi jawaban Pilihan Ganda atau pilih berkas tugas terlebih dahulu'
+          : 'Pilih berkas tugas yang akan diunggah terlebih dahulu'
+      );
       return;
     }
     setUploadingTugas(true);
@@ -251,16 +285,23 @@ export default function StudentPortal({
         body: JSON.stringify({
           token,
           tugasId: uploadTugasModal.ID,
-          namaFile: tugasFile.namaFile,
-          base64Data: tugasFile.base64Data,
+          ...(tugasFile
+            ? { namaFile: tugasFile.namaFile, base64Data: tugasFile.base64Data }
+            : {}),
+          ...(isPg ? { jawabanSiswa: serializedPg } : {}),
           catatan: tugasCatatan
         })
       });
       if (!json.ok) {
-        showToast('Gagal mengunggah tugas: ' + (json.error || 'Error'), 4000);
+        showToast('Gagal mengumpulkan tugas: ' + (json.error || 'Error'), 4000);
         return;
       }
-      showToast('Berkas tugas berhasil dikumpulkan!');
+      const autoNilai = json.data?.Nilai;
+      showToast(
+        isPg && autoNilai
+          ? `Jawaban PG dikumpulkan! Nilai otomatis: ${autoNilai}`
+          : 'Tugas berhasil dikumpulkan!'
+      );
       setUploadTugasModal(null);
       onRefresh();
     } catch (err: any) {
@@ -1339,7 +1380,13 @@ export default function StudentPortal({
                         </td>
                       </tr>
                     ) : (
-                      visibleTasks.map((t: any, i: number) => (
+                      visibleTasks.map((t: any, i: number) => {
+                        const isPg = String(t.TipeSoal || '').toLowerCase() === 'pg';
+                        const detailKoreksi = isPg ? parseDetailKoreksi(t.DetailKoreksi) : null;
+                        const pgAnsweredCount = isPg
+                          ? Object.keys(parsePgAnswers(t.JawabanSiswa, t.JumlahSoal || 200, t.OpsiPG)).length
+                          : 0;
+                        return (
                         <tr key={t.ID || i} className="hover:bg-amber-50/30">
                           <td className="py-2.5 px-3">
                             <div className="flex items-center gap-1.5 flex-wrap">
@@ -1347,6 +1394,11 @@ export default function StudentPortal({
                               {t.Mapel && (
                                 <span className="px-1.5 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded">
                                   {t.Mapel}
+                                </span>
+                              )}
+                              {isPg && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-200 rounded">
+                                  PG {t.JumlahSoal || ''} Soal
                                 </span>
                               )}
                               <span className="text-[10px] text-slate-500">({t.Jenis})</span>
@@ -1390,20 +1442,38 @@ export default function StudentPortal({
                                   <span className="truncate">{t.NamaFileSiswa}</span>
                                 </a>
                               )}
+                              {isPg && pgAnsweredCount > 0 && (
+                                <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md tabular-nums">
+                                  PG: {pgAnsweredCount}/{t.JumlahSoal || pgAnsweredCount}
+                                </span>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => openUploadTugas(t)}
                                 className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-amber-500 hover:bg-amber-600 text-white rounded-lg whitespace-nowrap cursor-pointer shadow-2xs"
                               >
-                                <Upload className="w-3 h-3" /> {t.FileSiswaID ? 'Ganti File' : 'Upload Tugas'}
+                                <Upload className="w-3 h-3" />{' '}
+                                {isPg
+                                  ? pgAnsweredCount > 0
+                                    ? 'Edit LJK / File'
+                                    : 'Jawab PG / Upload'
+                                  : t.FileSiswaID
+                                  ? 'Ganti File'
+                                  : 'Upload Tugas'}
                               </button>
                             </div>
                           </td>
-                          <td className="py-2.5 px-3 text-right tabular-nums font-bold text-indigo-700">
-                            {t.Nilai || '-'}
+                          <td className="py-2.5 px-3 text-right tabular-nums">
+                            <div className="font-bold text-indigo-700">{t.Nilai || '-'}</div>
+                            {detailKoreksi && typeof detailKoreksi.benar === 'number' && (
+                              <div className="text-[10px] text-emerald-700 font-semibold">
+                                B:{detailKoreksi.benar} S:{detailKoreksi.salah ?? 0}
+                              </div>
+                            )}
                           </td>
                         </tr>
-                      ))
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -2042,13 +2112,27 @@ export default function StudentPortal({
         );
       })()}
 
-      {/* UPLOAD TUGAS SISWA MODAL */}
-      {uploadTugasModal && (
+      {/* UPLOAD TUGAS / JAWABAN PG SISWA MODAL */}
+      {uploadTugasModal && (() => {
+        const isPg = String(uploadTugasModal.TipeSoal || '').toLowerCase() === 'pg';
+        const opsiPG = normalizeOpsiPG(uploadTugasModal.OpsiPG);
+        const opsiList = getOpsiList(opsiPG);
+        const totalSoal = isPg
+          ? inferTotalSoal(undefined, uploadTugasModal.JumlahSoal, uploadTugasModal.JawabanSiswa, opsiPG)
+          : 0;
+        const filledPgCount = isPg
+          ? Array.from({ length: totalSoal }, (_, idx) => idx + 1).filter(no => Boolean(tugasJawabanPG[no])).length
+          : 0;
+        const canSubmit = Boolean(tugasFile) || (isPg && filledPgCount > 0) || Boolean(uploadTugasModal.FileSiswaID);
+
+        return (
         <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-amber-200 p-6 w-full max-w-md space-y-4 shadow-2xl">
+          <div className={`bg-white rounded-2xl border border-amber-200 p-6 w-full ${isPg ? 'max-w-lg' : 'max-w-md'} max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl`}>
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Upload Hasil Tugas</h3>
+                <h3 className="text-base font-bold text-slate-900">
+                  {isPg ? 'Lembar Jawaban Pilihan Ganda & Tugas' : 'Upload Hasil Tugas'}
+                </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {uploadTugasModal.Judul} {uploadTugasModal.Mapel ? `· ${uploadTugasModal.Mapel}` : ''}
                 </p>
@@ -2061,10 +2145,83 @@ export default function StudentPortal({
               </button>
             </div>
 
-            <label className="flex flex-col items-center justify-center p-5 border-2 border-dashed border-amber-300 bg-amber-50/40 hover:bg-amber-50 rounded-xl cursor-pointer text-center">
-              <Upload className="w-6 h-6 text-amber-600 mb-1.5" />
+            {isPg && (
+              <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-bold text-indigo-950">
+                    Lembar Jawaban PG ({totalSoal} Soal)
+                  </div>
+                  <span className="px-2 py-0.5 text-[10px] font-bold bg-white text-indigo-700 border border-indigo-200 rounded-md tabular-nums">
+                    Terjawab: {filledPgCount}/{totalSoal}
+                  </span>
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    value={tugasPgQuickText}
+                    onChange={e => setTugasPgQuickText(e.target.value)}
+                    placeholder="Ketik cepat: ABCDE... atau 1.A 2.B 3.C"
+                    className="flex-1 px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const parsed = parsePgAnswers(tugasPgQuickText, totalSoal, opsiPG);
+                      setTugasJawabanPG(parsed);
+                      const cnt = Object.keys(parsed).length;
+                      showToast(cnt > 0 ? `${cnt} jawaban diterapkan` : 'Format belum dikenali');
+                    }}
+                    className="px-2.5 py-1.5 text-[11px] font-semibold bg-indigo-600 text-white rounded-lg cursor-pointer"
+                  >
+                    Terapkan
+                  </button>
+                </div>
+                <div className="max-h-52 overflow-y-auto bg-white border border-indigo-100 rounded-xl p-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {Array.from({ length: totalSoal }, (_, idx) => idx + 1).map(no => {
+                    const chosen = tugasJawabanPG[no] || '';
+                    return (
+                      <div key={no} className="flex items-center justify-between gap-1 px-2 py-1 rounded-lg bg-slate-50 border border-slate-100">
+                        <span className="text-[11px] font-bold text-slate-600 tabular-nums">#{no}</span>
+                        <div className="flex items-center gap-1">
+                          {opsiList.map(letter => {
+                            const active = chosen === letter;
+                            return (
+                              <button
+                                key={letter}
+                                type="button"
+                                onClick={() =>
+                                  setTugasJawabanPG(prev => {
+                                    const next = { ...prev };
+                                    if (active) delete next[no];
+                                    else next[no] = letter;
+                                    return next;
+                                  })
+                                }
+                                className={`w-6 h-6 text-[11px] font-bold rounded-md border cursor-pointer ${
+                                  active
+                                    ? 'bg-indigo-600 text-white border-indigo-600'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-indigo-50'
+                                }`}
+                              >
+                                {letter}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-amber-300 bg-amber-50/40 hover:bg-amber-50 rounded-xl cursor-pointer text-center">
+              <Upload className="w-5 h-5 text-amber-600 mb-1" />
               <span className="text-xs font-bold text-amber-950">
-                {tugasFile ? tugasFile.namaFile : 'Pilih Berkas Tugas (PDF, DOCX, Gambar, ZIP)'}
+                {tugasFile
+                  ? tugasFile.namaFile
+                  : isPg
+                  ? 'Lampiran Berkas Tambahan (Opsional untuk Tugas PG)'
+                  : 'Pilih Berkas Tugas (PDF, DOCX, Gambar, ZIP)'}
               </span>
               <span className="text-[11px] text-slate-500 mt-1">
                 {tugasFile ? `${(tugasFile.size / 1024).toFixed(1)} KB siap diunggah` : 'Maksimal ukuran file 15 MB'}
@@ -2079,7 +2236,7 @@ export default function StudentPortal({
             <label className="block text-xs font-semibold text-slate-700">
               Catatan untuk Guru (Opsional)
               <textarea
-                rows={3}
+                rows={2}
                 value={tugasCatatan}
                 onChange={e => setTugasCatatan(e.target.value)}
                 placeholder="Mis. Tugas sudah selesai nomor 1-10, mohon koreksinya."
@@ -2097,16 +2254,17 @@ export default function StudentPortal({
               </button>
               <button
                 type="button"
-                disabled={uploadingTugas || !tugasFile}
+                disabled={uploadingTugas || !canSubmit}
                 onClick={handleSubmitTugasFile}
                 className="px-4 py-2 text-xs font-bold bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl cursor-pointer disabled:opacity-50"
               >
-                {uploadingTugas ? 'Mengunggah…' : 'Kumpulkan Tugas'}
+                {uploadingTugas ? 'Mengirim…' : 'Kumpulkan Tugas'}
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Preview & Download Materi Pelajaran Modal */}
       {previewMateriModal && (() => {
