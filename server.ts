@@ -22,6 +22,11 @@ import {
   serializeUraianSiswa
 } from './src/uraianAkuntansiUtils.ts';
 import {
+  computeStudentPoinStats,
+  getPoinTargetLabel,
+  normalizePoinTarget
+} from './src/poinLoginUtils.ts';
+import {
   clearAllRemoteFiles,
   deleteRemoteFile,
   deleteRemoteSession,
@@ -203,7 +208,7 @@ const SKEMA: Record<string, string[]> = {
   Absensi: ['Kelas', 'Tanggal', 'SiswaID', 'Kode', 'Keterangan', 'Sumber'],
   Tugas: ['ID', 'Kelas', 'Judul', 'Mapel', 'Deskripsi', 'Tenggat', 'Jenis', 'FileID', 'NamaFile', 'TipeSoal', 'JumlahSoal', 'OpsiPG', 'KunciJawaban'],
   Pengumpulan: ['TugasID', 'SiswaID', 'Status', 'Nilai', 'FileID', 'NamaFile', 'TanggalKumpul', 'CatatanSiswa', 'JawabanSiswa', 'DetailKoreksi'],
-  Nilai: ['Kelas', 'SiswaID', 'Sikap', 'Tugas', 'Proyek', 'UTS', 'UAS'],
+  Nilai: ['Kelas', 'SiswaID', 'Sikap', 'Tugas', 'Proyek', 'UTS', 'UAS', 'BonusPoin'],
   Perilaku: ['ID', 'Kelas', 'Tanggal', 'SiswaID', 'Jenis', 'Level', 'Catatan', 'TindakLanjut'],
   Checklist: ['Kelas', 'Item', 'Selesai'],
   DenahAtur: ['Kelas', 'Baris', 'Kolom', 'Grup'],
@@ -223,13 +228,14 @@ const SKEMA: Record<string, string[]> = {
   HasilCBT: ['ID', 'CBTID', 'Kelas', 'SiswaID', 'Mulai', 'Selesai', 'JawabanJSON', 'SkorPG', 'SkorUraian', 'SkorAkhir', 'FeedbackAI', 'StatusNilai'],
   Pengguna: ['ID', 'Nama', 'Username', 'Peran', 'Kelas', 'Hash', 'Mapel', 'KelasWali', 'KelasMengajar'],
   Akun: ['SiswaID', 'Hash'],
-  Pesan: ['ID', 'Kelas', 'PengirimID', 'PengirimNama', 'PengirimPeran', 'PenerimaID', 'PenerimaNama', 'Pesan', 'Waktu', 'Tipe', 'Lampiran']
+  Pesan: ['ID', 'Kelas', 'PengirimID', 'PengirimNama', 'PengirimPeran', 'PenerimaID', 'PenerimaNama', 'Pesan', 'Waktu', 'Tipe', 'Lampiran'],
+  PoinSiswa: ['ID', 'Kelas', 'SiswaID', 'Tanggal', 'Jenis', 'JumlahPoin', 'NilaiKonversi', 'KomponenTarget', 'Status', 'Keterangan', 'Waktu']
 };
 
 const SHEET_TERKUNCI = ['Pengaturan', 'Akun', 'Pengguna'];
 const IZIN_TULIS: Record<string, string[]> = {
-  wali: ['Siswa', 'Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'Materi', 'BerkasCloud', 'CBT', 'HasilCBT', 'Pesan'],
-  guru: ['Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'Materi', 'BerkasCloud', 'CBT', 'HasilCBT', 'Pesan']
+  wali: ['Siswa', 'Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'Materi', 'BerkasCloud', 'CBT', 'HasilCBT', 'Pesan', 'PoinSiswa'],
+  guru: ['Absensi', 'Tugas', 'Pengumpulan', 'Nilai', 'Perilaku', 'Checklist', 'Struktur', 'Jadwal', 'JadwalAtur', 'TP', 'Modul', 'Pemantik', 'Materi', 'BerkasCloud', 'CBT', 'HasilCBT', 'Pesan', 'PoinSiswa']
 };
 const TTL_SESI = 21600 * 1000; // 6 hours in ms
 
@@ -255,7 +261,12 @@ const PENGATURAN_AWAL: Record<string, string> = {
   kaldikAutoSync: '1',
   kaldikWilayah: KALDIK_JABAR_REF.wilayah,
   kaldikTahunAjaran: KALDIK_JABAR_REF.tahunAjaran,
-  kaldikLastSync: ''
+  kaldikLastSync: '',
+  poinLoginAktif: '1',
+  poinModeLogin: 'harian',
+  poinPerLogin: '5',
+  poinPerNilai: '5',
+  poinTargetDefault: 'BonusPoin'
 };
 
 const PENGATURAN_DEMO: Record<string, string> = {
@@ -1147,7 +1158,8 @@ function createSeedDatabase(): DatabaseFile {
           Tipe: 'pengumuman',
           Lampiran: ''
         }
-      ]
+      ],
+      PoinSiswa: []
     }
   };
 }
@@ -1647,6 +1659,62 @@ function sanitizeJurusanLogos_(raw: any): Record<string, string> {
   return out;
 }
 
+function todayYmdServer_(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Jakarta',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+  } catch {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+}
+
+function catatPoinLoginSiswa_(siswa: Record<string, string>) {
+  const set = pengaturan_();
+  const today = todayYmdServer_();
+  const allRows = baca_('PoinSiswa');
+  const aktif = String(set.poinLoginAktif ?? '1') !== '0';
+  const modeLogin = set.poinModeLogin === 'setiap_login' ? 'setiap_login' : 'harian';
+  const poinPerLogin = Math.max(1, Math.round(Number(set.poinPerLogin || 5) || 5));
+
+  if (!aktif) {
+    const stats = computeStudentPoinStats(allRows, siswa.ID, set, today);
+    return { awarded: 0, saldoPoin: stats.saldoPoin, modeLogin, sudahKlaimHariIni: false };
+  }
+
+  const sudahHariIni = allRows.some(
+    r => r.SiswaID === siswa.ID && r.Jenis === 'login' && r.Tanggal === today
+  );
+  if (modeLogin === 'harian' && sudahHariIni) {
+    const stats = computeStudentPoinStats(allRows, siswa.ID, set, today);
+    return { awarded: 0, saldoPoin: stats.saldoPoin, modeLogin, sudahKlaimHariIni: true };
+  }
+
+  allRows.push({
+    ID: 'poin_' + uidShort(),
+    Kelas: siswa.Kelas || '',
+    SiswaID: siswa.ID,
+    Tanggal: today,
+    Jenis: 'login',
+    JumlahPoin: String(poinPerLogin),
+    NilaiKonversi: '0',
+    KomponenTarget: '',
+    Status: 'Aktif',
+    Keterangan:
+      modeLogin === 'setiap_login'
+        ? `Poin login siswa (${today})`
+        : `Poin login harian (${today})`,
+    Waktu: new Date().toISOString()
+  });
+  tulis_('PoinSiswa', allRows);
+  const stats = computeStudentPoinStats(allRows, siswa.ID, set, today);
+  return { awarded: poinPerLogin, saldoPoin: stats.saldoPoin, modeLogin, sudahKlaimHariIni: false };
+}
+
 // RPC Methods matching Code.gs
 const rpcMethods: Record<string, (...args: any[]) => any> = {
   api_status() {
@@ -1793,7 +1861,8 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       if (stCheck.status === 'ok') {
         loginFailures.delete(kg);
         loginFailures.delete(kunciGagal_('siswa', userRaw));
-        return buatSesi_('siswa', stCheck.siswa.ID, stCheck.siswa.Nama);
+        const loginReward = catatPoinLoginSiswa_(stCheck.siswa);
+        return { ...buatSesi_('siswa', stCheck.siswa.ID, stCheck.siswa.Nama), loginReward };
       }
       if (stCheck.status === 'no_pin') {
         throw new Error('Akun siswa ini belum memiliki PIN aktif. Minta Admin/Wali Kelas membuat PIN terlebih dahulu.');
@@ -1807,7 +1876,8 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       if (stCheck.status === 'ok') {
         loginFailures.delete(kg);
         loginFailures.delete(kunciGagal_('admin', userRaw));
-        return buatSesi_('siswa', stCheck.siswa.ID, stCheck.siswa.Nama);
+        const loginReward = catatPoinLoginSiswa_(stCheck.siswa);
+        return { ...buatSesi_('siswa', stCheck.siswa.ID, stCheck.siswa.Nama), loginReward };
       }
       if (stCheck.status === 'no_nis') {
         catatGagal_(kg);
@@ -2011,6 +2081,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       const ada: Record<string, boolean> = {};
       rows.forEach(s => (ada[s.ID] = true));
       tulis_('Akun', baca_('Akun').filter(a => ada[a.SiswaID]));
+      tulis_('PoinSiswa', baca_('PoinSiswa').filter(p => ada[p.SiswaID]));
     } else if (nama === 'Kelas') {
       // Remove orphaned students & class-specific records when a class is deleted
       const validClassIds = new Set(rows.map(c => String(c.ID || '')));
@@ -2018,7 +2089,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       tulis_('Siswa', sisaSiswa);
       const validSid = new Set(sisaSiswa.map(s => s.ID));
       tulis_('Akun', baca_('Akun').filter(a => validSid.has(a.SiswaID)));
-      ['Absensi', 'Nilai', 'Perilaku', 'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur'].forEach(sheetName => {
+      ['Absensi', 'Nilai', 'Perilaku', 'Checklist', 'DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur', 'PoinSiswa'].forEach(sheetName => {
         tulis_(sheetName, baca_(sheetName).filter(r => !r.Kelas || validClassIds.has(String(r.Kelas))));
       });
     }
@@ -2401,6 +2472,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
         };
       }),
       nilai: baca_('Nilai').find(n => n.Kelas === siswa.Kelas && n.SiswaID === siswa.ID) || null,
+      poinLogin: computeStudentPoinStats(baca_('PoinSiswa'), siswa.ID, set, todayYmdServer_()),
       cbtList: baca_('CBT')
         .filter(c => c.Kelas === siswa.Kelas && (c.Status === 'Aktif' || c.Status === 'Selesai'))
         .map(c => {
@@ -2577,6 +2649,49 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
     return true;
   },
 
+  api_konversiPoinSiswa(token: string, jumlahPoinRaw: number, komponenTargetRaw?: string) {
+    const sesi = sesi_(token, 'siswa');
+    const siswa = baca_('Siswa').find(x => x.ID === sesi.sid);
+    if (!siswa) throw new Error('Data siswa tidak ditemukan.');
+    const set = pengaturan_();
+    const today = todayYmdServer_();
+    const allRows = baca_('PoinSiswa');
+    const stats = computeStudentPoinStats(allRows, siswa.ID, set, today);
+    const reqPoin = Math.floor(Number(jumlahPoinRaw || 0));
+    const nilaiTambah = Math.floor(reqPoin / stats.poinPerNilai);
+    if (nilaiTambah < 1) {
+      throw new Error(`Minimal konversi ${stats.poinPerNilai} poin untuk +1 nilai.`);
+    }
+    const usedPoin = nilaiTambah * stats.poinPerNilai;
+    if (usedPoin > stats.saldoPoin) {
+      throw new Error(`Saldo poin tidak mencukupi (tersedia ${stats.saldoPoin} poin).`);
+    }
+    const target = normalizePoinTarget(komponenTargetRaw || stats.targetDefault);
+    const targetLabel = getPoinTargetLabel(target);
+    const rec = {
+      ID: 'poin_' + uidShort(),
+      Kelas: siswa.Kelas || '',
+      SiswaID: siswa.ID,
+      Tanggal: today,
+      Jenis: 'konversi',
+      JumlahPoin: String(-usedPoin),
+      NilaiKonversi: String(nilaiTambah),
+      KomponenTarget: target,
+      Status: 'Siap Ditambahkan',
+      Keterangan: `Konversi ${usedPoin} poin menjadi +${nilaiTambah} nilai (${targetLabel})`,
+      Waktu: new Date().toISOString()
+    };
+    allRows.push(rec);
+    tulis_('PoinSiswa', allRows);
+    return {
+      usedPoin,
+      nilaiTambah,
+      target,
+      saldoSisa: stats.saldoPoin - usedPoin,
+      record: rec
+    };
+  },
+
   api_updateProfilSiswa(
     token: string,
     payload: {
@@ -2688,7 +2803,8 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       'CBT',
       'HasilCBT',
       'Akun',
-      'Pesan'
+      'Pesan',
+      'PoinSiswa'
     ];
     for (const s of operationalSheets) {
       db.sheets[s] = [];
@@ -2721,12 +2837,12 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
     const db = getDb();
     const map: Record<string, string[]> = {
       absensi: ['Absensi'],
-      nilai_tugas: ['Tugas', 'Pengumpulan', 'Nilai'],
+      nilai_tugas: ['Tugas', 'Pengumpulan', 'Nilai', 'PoinSiswa'],
       cbt: ['CBT', 'HasilCBT'],
       operasional_kelas: ['DenahAtur', 'Denah', 'Piket', 'Struktur', 'Jadwal', 'JadwalAtur'],
       perangkat_ajar: ['TP', 'Modul', 'Pemantik', 'Materi'],
       kalender: ['Akademik', 'Checklist'],
-      siswa: ['Siswa', 'Akun']
+      siswa: ['Siswa', 'Akun', 'PoinSiswa']
     };
     const targets = map[category];
     if (!targets) throw new Error('Kategori reset tidak dikenal.');

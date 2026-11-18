@@ -10,6 +10,11 @@ import {
   serializeAkuntansiSiswa,
   serializeUraianSiswa
 } from './uraianAkuntansiUtils';
+import {
+  computeStudentPoinStats,
+  getPoinTargetLabel,
+  normalizePoinTarget
+} from './poinLoginUtils';
 
 const STORAGE_KEY = 'mk_local_db_v1';
 const SESSION_KEY = 'mk_local_sessions_v1';
@@ -48,7 +53,12 @@ const PENGATURAN_AWAL: Record<string, string> = {
   kaldikAutoSync: '1',
   kaldikWilayah: KALDIK_JABAR_REF.wilayah,
   kaldikTahunAjaran: KALDIK_JABAR_REF.tahunAjaran,
-  kaldikLastSync: ''
+  kaldikLastSync: '',
+  poinLoginAktif: '1',
+  poinModeLogin: 'harian',
+  poinPerLogin: '5',
+  poinPerNilai: '5',
+  poinTargetDefault: 'BonusPoin'
 };
 
 const PENGATURAN_DEMO: Record<string, string> = {
@@ -113,7 +123,8 @@ function createCleanLocalDb(): LocalDb {
       HasilCBT: [],
       Pengguna: [],
       Akun: [],
-      Pesan: []
+      Pesan: [],
+      PoinSiswa: []
     }
   };
 }
@@ -725,7 +736,8 @@ async function createSeedLocalDb(): Promise<LocalDb> {
           Tipe: 'pengumuman',
           Lampiran: ''
         }
-      ]
+      ],
+      PoinSiswa: []
     }
   };
 }
@@ -924,7 +936,43 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
     for (const s of siswaMatches) {
       const h = await sha256Base64(s.ID, passTrim);
       if (akun.some(a => a.SiswaID === s.ID && a.Hash === h)) {
-        return buatSesi('siswa', s.ID, s.Nama);
+        const set = getPengaturanObj(db);
+        const today = fmtYmd(new Date());
+        const poinRows = db.sheets.PoinSiswa || (db.sheets.PoinSiswa = []);
+        const aktif = String(set.poinLoginAktif ?? '1') !== '0';
+        const modeLogin = set.poinModeLogin === 'setiap_login' ? 'setiap_login' : 'harian';
+        const poinPerLogin = Math.max(1, Math.round(Number(set.poinPerLogin || 5) || 5));
+        let awarded = 0;
+        if (aktif) {
+          const sudahHariIni = poinRows.some(
+            r => r.SiswaID === s.ID && r.Jenis === 'login' && r.Tanggal === today
+          );
+          if (modeLogin === 'setiap_login' || !sudahHariIni) {
+            poinRows.push({
+              ID: 'poin_' + uidShort(),
+              Kelas: s.Kelas || '',
+              SiswaID: s.ID,
+              Tanggal: today,
+              Jenis: 'login',
+              JumlahPoin: String(poinPerLogin),
+              NilaiKonversi: '0',
+              KomponenTarget: '',
+              Status: 'Aktif',
+              Keterangan:
+                modeLogin === 'setiap_login'
+                  ? `Poin login siswa (${today})`
+                  : `Poin login harian (${today})`,
+              Waktu: new Date().toISOString()
+            });
+            saveDb(db);
+            awarded = poinPerLogin;
+          }
+        }
+        const stats = computeStudentPoinStats(poinRows, s.ID, set, today);
+        return {
+          ...buatSesi('siswa', s.ID, s.Nama),
+          loginReward: { awarded, saldoPoin: stats.saldoPoin, modeLogin }
+        };
       }
     }
     // Check mirrored online credentials for Admin, Guru/Wali, and Siswa
@@ -1017,6 +1065,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
       rows = deduped;
       const validIds = new Set(rows.map(s => s.ID));
       db.sheets.Akun = (db.sheets.Akun || []).filter(a => validIds.has(a.SiswaID));
+      db.sheets.PoinSiswa = (db.sheets.PoinSiswa || []).filter(p => validIds.has(p.SiswaID));
     }
     db.sheets[nama] = rows;
     if (nama === 'Kelas') {
@@ -1024,6 +1073,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
       db.sheets.Siswa = (db.sheets.Siswa || []).filter(s => validClassIds.has(String(s.Kelas || '')));
       const validSid = new Set(db.sheets.Siswa.map(s => s.ID));
       db.sheets.Akun = (db.sheets.Akun || []).filter(a => validSid.has(a.SiswaID));
+      db.sheets.PoinSiswa = (db.sheets.PoinSiswa || []).filter(p => !p.Kelas || validClassIds.has(String(p.Kelas)));
     }
     saveDb(db);
     return true;
@@ -1323,6 +1373,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
           };
         }),
       nilai: (db.sheets.Nilai || []).find(n => n.Kelas === siswa.Kelas && n.SiswaID === siswa.ID) || null,
+      poinLogin: computeStudentPoinStats(db.sheets.PoinSiswa || [], siswa.ID, set, fmtYmd(new Date())),
       cbtList: (db.sheets.CBT || [])
         .filter(c => c.Kelas === siswa.Kelas && (c.Status === 'Aktif' || c.Status === 'Selesai'))
         .map(c => {
@@ -1423,6 +1474,50 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
     a.Hash = await sha256Base64(sesi.sid, pinBaru);
     saveDb(db);
     return true;
+  }
+
+  if (fn === 'api_konversiPoinSiswa') {
+    const [token, jumlahPoinRaw, komponenTargetRaw] = args;
+    const sesi = getSesi(token, 'siswa');
+    const siswa = (db.sheets.Siswa || []).find(x => x.ID === sesi.sid);
+    if (!siswa) throw new Error('Data siswa tidak ditemukan.');
+    const set = getPengaturanObj(db);
+    const today = fmtYmd(new Date());
+    const allRows = db.sheets.PoinSiswa || (db.sheets.PoinSiswa = []);
+    const stats = computeStudentPoinStats(allRows, siswa.ID, set, today);
+    const reqPoin = Math.floor(Number(jumlahPoinRaw || 0));
+    const nilaiTambah = Math.floor(reqPoin / stats.poinPerNilai);
+    if (nilaiTambah < 1) {
+      throw new Error(`Minimal konversi ${stats.poinPerNilai} poin untuk +1 nilai.`);
+    }
+    const usedPoin = nilaiTambah * stats.poinPerNilai;
+    if (usedPoin > stats.saldoPoin) {
+      throw new Error(`Saldo poin tidak mencukupi (tersedia ${stats.saldoPoin} poin).`);
+    }
+    const target = normalizePoinTarget(komponenTargetRaw || stats.targetDefault);
+    const targetLabel = getPoinTargetLabel(target);
+    const rec = {
+      ID: 'poin_' + uidShort(),
+      Kelas: siswa.Kelas || '',
+      SiswaID: siswa.ID,
+      Tanggal: today,
+      Jenis: 'konversi',
+      JumlahPoin: String(-usedPoin),
+      NilaiKonversi: String(nilaiTambah),
+      KomponenTarget: target,
+      Status: 'Siap Ditambahkan',
+      Keterangan: `Konversi ${usedPoin} poin menjadi +${nilaiTambah} nilai (${targetLabel})`,
+      Waktu: new Date().toISOString()
+    };
+    allRows.push(rec);
+    saveDb(db);
+    return {
+      usedPoin,
+      nilaiTambah,
+      target,
+      saldoSisa: stats.saldoPoin - usedPoin,
+      record: rec
+    };
   }
 
   if (fn === 'api_updateProfilSiswa') {
@@ -1852,7 +1947,8 @@ export async function mirrorServerAdminLoadToLocal(
       'BerkasCloud',
       'CBT',
       'HasilCBT',
-      'Pesan'
+      'Pesan',
+      'PoinSiswa'
     ];
     arraySheets.forEach(name => {
       if (Array.isArray(data[name])) {

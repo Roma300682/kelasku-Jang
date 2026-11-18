@@ -183,8 +183,18 @@ import {
   Calendar,
   Calculator,
   FileText,
-  FileUp
+  FileUp,
+  Star,
+  ArrowRightLeft
 } from 'lucide-react';
+import { PoinNilaiModalBody, ModalTargetMode } from './components/PoinNilaiModal';
+import {
+  POIN_TARGET_OPTIONS,
+  PoinTargetKomponen,
+  computeStudentPoinStats,
+  getPoinTargetLabel,
+  normalizePoinTarget
+} from './poinLoginUtils';
 
 const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   LayoutDashboard,
@@ -366,7 +376,8 @@ export default function App() {
     HasilCBT: [],
     Pengguna: [],
     GuruList: [],
-    punyaPIN: []
+    punyaPIN: [],
+    PoinSiswa: []
   });
   const [portal, setPortal] = useState<any>(null);
 
@@ -405,6 +416,7 @@ export default function App() {
   const [tpFilterModul, setTpFilterModul] = useState<string>('all');
   const [modView, setModView] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
+  const [poinNilaiModalOpen, setPoinNilaiModalOpen] = useState(false);
   const [presState, setPresState] = useState<{
     slides: {
       badge?: string;
@@ -678,6 +690,12 @@ export default function App() {
         r = await callRaw('api_login', loginMode, u, p);
       }
       await masukSesi(r.token, r.role);
+      if (r?.role === 'siswa' && r?.loginReward?.awarded > 0) {
+        showToast(
+          `★ +1 Bintang & +${r.loginReward.awarded} Poin Login diterima! Saldo: ${r.loginReward.saldoPoin} Poin`,
+          5000
+        );
+      }
     } catch (err: any) {
       setLoginErr(pesanErr(err));
     }
@@ -1258,7 +1276,168 @@ export default function App() {
         tot += (v * bobot[i]) / 100;
       }
     });
+    const bonus = num(r.BonusPoin);
+    if (bonus != null && bonus > 0) {
+      ada = true;
+      tot = Math.min(100, tot + bonus);
+    }
     return ada ? tot : null;
+  }
+
+  function addValueToNilaiRow(
+    nextNilai: any[],
+    sid: string,
+    target: PoinTargetKomponen,
+    addAmount: number
+  ) {
+    const idx = nextNilai.findIndex(n => n.Kelas === K && n.SiswaID === sid);
+    const base =
+      idx >= 0
+        ? { ...nextNilai[idx] }
+        : {
+            Kelas: K,
+            SiswaID: sid,
+            Sikap: '',
+            Tugas: '',
+            Proyek: '',
+            UTS: '',
+            UAS: '',
+            BonusPoin: ''
+          };
+    const curVal = num(base[target]) || 0;
+    const updated = Math.min(100, Math.round((curVal + addAmount) * 10) / 10);
+    base[target] = String(updated);
+    if (idx >= 0) nextNilai[idx] = base;
+    else nextNilai.push(base);
+  }
+
+  async function applyReadyPoinForStudents(
+    targetSiswaIds: string[],
+    targetMode: ModalTargetMode = 'SESUAI_SISWA'
+  ) {
+    const nextNilai = [...(db.Nilai || [])];
+    const nextPoin = [...(db.PoinSiswa || [])];
+    let appliedCount = 0;
+    let totalPointsAdded = 0;
+
+    targetSiswaIds.forEach(sid => {
+      for (let i = 0; i < nextPoin.length; i++) {
+        const pr = nextPoin[i];
+        if (pr.SiswaID !== sid || pr.Jenis !== 'konversi' || pr.Status === 'Ditambahkan') continue;
+        const addVal = Number(pr.NilaiKonversi || 0) || 0;
+        if (addVal <= 0) continue;
+        const resolvedTarget: PoinTargetKomponen =
+          targetMode === 'SESUAI_SISWA'
+            ? normalizePoinTarget(pr.KomponenTarget || S.poinTargetDefault)
+            : normalizePoinTarget(targetMode);
+        addValueToNilaiRow(nextNilai, sid, resolvedTarget, addVal);
+        nextPoin[i] = {
+          ...pr,
+          KomponenTarget: resolvedTarget,
+          Status: 'Ditambahkan',
+          Keterangan: `${pr.Keterangan || 'Konversi poin'} · Ditambahkan ke ${getPoinTargetLabel(resolvedTarget)}`
+        };
+        appliedCount++;
+        totalPointsAdded += addVal;
+      }
+    });
+
+    if (appliedCount === 0) {
+      showToast('Tidak ada poin terkonversi yang siap ditambahkan');
+      return;
+    }
+    await persistSheets({ ...db, Nilai: nextNilai, PoinSiswa: nextPoin }, 'Nilai', 'PoinSiswa');
+    showToast(`+${totalPointsAdded} nilai hasil konversi poin berhasil ditambahkan ke nilai siswa!`);
+  }
+
+  async function convertAndApplyStudents(
+    targetSiswaIds: string[],
+    targetMode: ModalTargetMode = 'SESUAI_SISWA'
+  ) {
+    const todayStr = ymd(new Date());
+    const poinPerNilaiCfg = Math.max(1, Math.round(Number(S.poinPerNilai || 5) || 5));
+    const nextNilai = [...(db.Nilai || [])];
+    const nextPoin = [...(db.PoinSiswa || [])];
+    let totalAdded = 0;
+    const nowIso = new Date().toISOString();
+
+    targetSiswaIds.forEach(sid => {
+      const sObj = siswaK.find((x: any) => x.ID === sid);
+      if (!sObj) return;
+      const resolvedTarget: PoinTargetKomponen =
+        targetMode === 'SESUAI_SISWA'
+          ? normalizePoinTarget(S.poinTargetDefault)
+          : normalizePoinTarget(targetMode);
+
+      for (let i = 0; i < nextPoin.length; i++) {
+        const pr = nextPoin[i];
+        if (pr.SiswaID !== sid || pr.Jenis !== 'konversi' || pr.Status === 'Ditambahkan') continue;
+        const addVal = Number(pr.NilaiKonversi || 0) || 0;
+        if (addVal <= 0) continue;
+        const rowTarget =
+          targetMode === 'SESUAI_SISWA'
+            ? normalizePoinTarget(pr.KomponenTarget || S.poinTargetDefault)
+            : resolvedTarget;
+        addValueToNilaiRow(nextNilai, sid, rowTarget, addVal);
+        nextPoin[i] = {
+          ...pr,
+          KomponenTarget: rowTarget,
+          Status: 'Ditambahkan',
+          Keterangan: `${pr.Keterangan || 'Konversi poin'} · Ditambahkan ke ${getPoinTargetLabel(rowTarget)}`
+        };
+        totalAdded += addVal;
+      }
+
+      const stats = computeStudentPoinStats(nextPoin, sid, S, todayStr);
+      const units = Math.floor(stats.saldoPoin / poinPerNilaiCfg);
+      if (units >= 1) {
+        const usedPoin = units * poinPerNilaiCfg;
+        addValueToNilaiRow(nextNilai, sid, resolvedTarget, units);
+        nextPoin.push({
+          ID: 'poin_' + uid(),
+          Kelas: K,
+          SiswaID: sid,
+          Tanggal: todayStr,
+          Jenis: 'konversi',
+          JumlahPoin: String(-usedPoin),
+          NilaiKonversi: String(units),
+          KomponenTarget: resolvedTarget,
+          Status: 'Ditambahkan',
+          Keterangan: `Konversi ${usedPoin} poin → +${units} nilai (${getPoinTargetLabel(resolvedTarget)})`,
+          Waktu: nowIso
+        });
+        totalAdded += units;
+      }
+    });
+
+    if (totalAdded === 0) {
+      showToast('Belum ada poin siswa yang memenuhi batas konversi');
+      return;
+    }
+    await persistSheets({ ...db, Nilai: nextNilai, PoinSiswa: nextPoin }, 'Nilai', 'PoinSiswa');
+    showToast(`Berhasil mengonversi & menambahkan total +${totalAdded} nilai ke siswa!`);
+  }
+
+  async function giftPointsToStudent(siswaObj: any, amount: number) {
+    const todayStr = ymd(new Date());
+    const nextPoin = [
+      ...(db.PoinSiswa || []),
+      {
+        ID: 'poin_' + uid(),
+        Kelas: K,
+        SiswaID: siswaObj.ID,
+        Tanggal: todayStr,
+        Jenis: 'bonus',
+        JumlahPoin: String(amount),
+        NilaiKonversi: '0',
+        KomponenTarget: '',
+        Status: 'Aktif',
+        Keterangan: `Tambahan poin dari guru (${todayStr})`,
+        Waktu: new Date().toISOString()
+      }
+    ];
+    await persistSheets({ ...db, PoinSiswa: nextPoin }, 'PoinSiswa');
+    showToast(`+${amount} Poin diberikan kepada ${siswaObj.Nama}`);
   }
 
   function getPredikat(n: number | null): [string, string, string] {
@@ -3560,6 +3739,7 @@ export default function App() {
                     ]
                       .filter(Boolean)
                       .join(', ');
+                    const pStats = computeStudentPoinStats(db.PoinSiswa || [], s.ID, S, ymd(new Date()));
                     return (
                       <tr key={s.ID} className="hover:bg-amber-50/30">
                         <td className="py-2.5 px-3.5 tabular-nums text-slate-400">{i + 1}</td>
@@ -3583,9 +3763,32 @@ export default function App() {
                                 {s.Nama.slice(0, 1).toUpperCase()}
                               </div>
                             )}
-                            <span className="font-semibold text-slate-900 group-hover:text-indigo-700 group-hover:underline">
-                              {s.Nama}
-                            </span>
+                            <div>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="font-semibold text-slate-900 group-hover:text-indigo-700 group-hover:underline">
+                                  {s.Nama}
+                                </span>
+                                {(pStats.totalBintang > 0 || pStats.loggedInToday) && (
+                                  <span
+                                    title={`Bintang Login: ${pStats.totalBintang} · Saldo Poin: ${pStats.saldoPoin}`}
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold tabular-nums"
+                                  >
+                                    <Star className="w-3 h-3 fill-amber-400 text-amber-500" />
+                                    {pStats.totalBintang}
+                                  </span>
+                                )}
+                                {pStats.loggedInToday && (
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-semibold">
+                                    Login Hari Ini
+                                  </span>
+                                )}
+                              </div>
+                              {pStats.saldoPoin > 0 && (
+                                <div className="text-[10px] text-amber-700 font-medium tabular-nums">
+                                  {pStats.saldoPoin} Poin Login
+                                </div>
+                              )}
+                            </div>
                           </button>
                         </td>
                         <td className="py-2.5 px-3.5 text-slate-600 whitespace-nowrap">
@@ -3690,7 +3893,8 @@ export default function App() {
                                   Pengumpulan: db.Pengumpulan.filter((x: any) => x.SiswaID !== s.ID),
                                   Perilaku: db.Perilaku.filter((x: any) => x.SiswaID !== s.ID),
                                   Denah: db.Denah.filter((x: any) => x.SiswaID !== s.ID),
-                                  Piket: db.Piket.filter((x: any) => x.SiswaID !== s.ID)
+                                  Piket: db.Piket.filter((x: any) => x.SiswaID !== s.ID),
+                                  PoinSiswa: (db.PoinSiswa || []).filter((x: any) => x.SiswaID !== s.ID)
                                 };
                                 await persistSheets(
                                   nextDb,
@@ -3700,7 +3904,8 @@ export default function App() {
                                   'Pengumpulan',
                                   'Perilaku',
                                   'Denah',
-                                  'Piket'
+                                  'Piket',
+                                  'PoinSiswa'
                                 );
                               }
                             }}
@@ -7592,6 +7797,22 @@ export default function App() {
   // 10. PENGOLAHAN NILAI
   function renderNil() {
     const totBobot = bobot.reduce((a, b) => a + b, 0);
+    const todayStr = ymd(new Date());
+    const poinRowsAll: any[] = db.PoinSiswa || [];
+
+    const siswaPoinMap = new Map<string, ReturnType<typeof computeStudentPoinStats>>();
+    siswaK.forEach((s: any) => {
+      siswaPoinMap.set(s.ID, computeStudentPoinStats(poinRowsAll, s.ID, S, todayStr));
+    });
+    const totalReadyNilaiClass = siswaK.reduce(
+      (sum: number, s: any) => sum + (siswaPoinMap.get(s.ID)?.nilaiSiapDitambahkan || 0),
+      0
+    );
+    const totalReadyStudentsClass = siswaK.filter(
+      (s: any) => (siswaPoinMap.get(s.ID)?.nilaiSiapDitambahkan || 0) > 0
+    ).length;
+
+    const openModalPoinNilai = () => setPoinNilaiModalOpen(true);
 
     const updateNilaiField = (sid: string, field: string, val: string) => {
       const next = [...(db.Nilai || [])];
@@ -7607,6 +7828,7 @@ export default function App() {
           Proyek: '',
           UTS: '',
           UAS: '',
+          BonusPoin: '',
           [field]: val
         });
       }
@@ -7629,7 +7851,8 @@ export default function App() {
               Tugas: '',
               Proyek: '',
               UTS: '',
-              UAS: ''
+              UAS: '',
+              BonusPoin: ''
             });
         }
       });
@@ -7658,7 +7881,8 @@ export default function App() {
               Tugas: avg,
               Proyek: '',
               UTS: '',
-              UAS: ''
+              UAS: '',
+              BonusPoin: ''
             });
         }
       });
@@ -7672,6 +7896,7 @@ export default function App() {
         'NIS',
         'Nama',
         ...KOLOM_NILAI.map(k => k[1]),
+        'Bonus Poin Login',
         'Nilai Akhir',
         'Predikat',
         'Tindak Lanjut'
@@ -7684,6 +7909,7 @@ export default function App() {
           s.NIS,
           s.Nama,
           ...KOLOM_NILAI.map(k => String(r[k[0]] || '').replace('.', ',')),
+          String(r.BonusPoin || '').replace('.', ','),
           a == null ? '' : fmt(a),
           a == null ? '' : getPredikat(a)[0],
           a == null ? '' : getTindakLanjut(a)
@@ -7704,10 +7930,22 @@ export default function App() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Pengolahan Nilai Induk</h1>
             <p className="text-xs text-blue-100 mt-1">
-              Tahap 7 & 8: kalkulasi otomatis nilai akhir berbobot, predikat, dan rekomendasi tindak lanjut.
+              Tahap 7 &amp; 8: kalkulasi otomatis nilai akhir berbobot, tambahan poin login, predikat, dan rekomendasi tindak lanjut.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={openModalPoinNilai}
+              className="px-3 py-1.5 text-xs font-bold bg-amber-400 hover:bg-amber-300 text-amber-950 rounded-xl flex items-center gap-1.5 shadow-sm whitespace-nowrap cursor-pointer"
+            >
+              <Star className="w-3.5 h-3.5 fill-amber-700 text-amber-800" />
+              Poin Login → Nilai
+              {totalReadyNilaiClass > 0 && (
+                <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-rose-600 text-white tabular-nums">
+                  +{totalReadyNilaiClass}
+                </span>
+              )}
+            </button>
             <button
               onClick={isiSikapOtomatis}
               className="px-3 py-1.5 text-xs font-semibold bg-white/15 hover:bg-white/25 text-white border border-white/25 rounded-xl whitespace-nowrap cursor-pointer"
@@ -7747,6 +7985,34 @@ export default function App() {
           </div>
         </div>
 
+        {totalReadyNilaiClass > 0 && (
+          <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs text-amber-950 noprint">
+            <div className="flex items-center gap-2">
+              <Star className="w-4 h-4 fill-amber-400 text-amber-500 shrink-0" />
+              <span>
+                Terdapat <strong>{totalReadyStudentsClass} siswa</strong> yang sudah mengonversi poin login (total{' '}
+                <strong>+{totalReadyNilaiClass} nilai</strong>) dan siap ditambahkan ke nilai siswa.
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={openModalPoinNilai}
+                className="px-3 py-1.5 text-xs font-semibold bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg cursor-pointer"
+              >
+                Pilih Komponen / Kelola
+              </button>
+              <button
+                type="button"
+                onClick={() => applyReadyPoinForStudents(siswaK.map((x: any) => x.ID), 'SESUAI_SISWA')}
+                className="px-3.5 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer"
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5" /> Tambahkan Semua ke Nilai (+{totalReadyNilaiClass})
+              </button>
+            </div>
+          </div>
+        )}
+
         {totBobot !== 100 && (
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
             Total bobot komponen saat ini <strong>{totBobot}%</strong> (seharusnya 100%). Sesuaikan di menu Pengaturan.
@@ -7767,6 +8033,7 @@ export default function App() {
                   <th className="py-3 px-2 text-center">Proyek ({bobot[2]}%)</th>
                   <th className="py-3 px-2 text-center">UTS ({bobot[3]}%)</th>
                   <th className="py-3 px-2 text-center">UAS ({bobot[4]}%)</th>
+                  <th className="py-3 px-2 text-center">Bonus Poin</th>
                   <th className="py-3 px-3 text-right">Nilai Akhir</th>
                   <th className="py-3 px-3 text-center">Predikat</th>
                   <th className="py-3 px-3">Tindak Lanjut</th>
@@ -7775,7 +8042,7 @@ export default function App() {
               <tbody className="divide-y divide-slate-100">
                 {siswaK.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-10 px-4 text-center text-xs text-slate-500">
+                    <td colSpan={11} className="py-10 px-4 text-center text-xs text-slate-500">
                       Belum ada siswa di kelas ini. Tambahkan siswa di menu{' '}
                       <button
                         type="button"
@@ -7792,10 +8059,34 @@ export default function App() {
                     const r = getNilaiRow(s.ID) || {};
                     const a = hitungAkhir(r);
                     const pr = getPredikat(a);
+                    const pStats = siswaPoinMap.get(s.ID);
                     return (
                       <tr key={s.ID} className="hover:bg-slate-50/70">
                         <td className="py-2 px-3 tabular-nums text-slate-400">{i + 1}</td>
-                        <td className="py-2 px-3 font-semibold text-slate-900">{s.Nama}</td>
+                        <td className="py-2 px-3">
+                          <div className="font-semibold text-slate-900 flex flex-wrap items-center gap-1.5">
+                            <span>{s.Nama}</span>
+                            {pStats && pStats.totalBintang > 0 && (
+                              <span
+                                title={`Bintang Login: ${pStats.totalBintang} · Saldo Poin: ${pStats.saldoPoin}`}
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold tabular-nums"
+                              >
+                                <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-500" />
+                                {pStats.totalBintang}
+                              </span>
+                            )}
+                          </div>
+                          {pStats && (pStats.saldoPoin > 0 || pStats.nilaiSiapDitambahkan > 0) && (
+                            <div className="text-[10px] text-slate-500 tabular-nums mt-0.5">
+                              Saldo: <strong className="text-amber-700">{pStats.saldoPoin} poin</strong>
+                              {pStats.nilaiSiapDitambahkan > 0 && (
+                                <span className="ml-1.5 text-emerald-700 font-bold">
+                                  · Siap +{pStats.nilaiSiapDitambahkan} nilai
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
                         {['Sikap', 'Tugas', 'Proyek', 'UTS', 'UAS'].map(f => (
                           <td key={f} className="py-2 px-2 text-center">
                             <input
@@ -7806,6 +8097,27 @@ export default function App() {
                             />
                           </td>
                         ))}
+                        <td className="py-2 px-2 text-center">
+                          <div className="inline-flex items-center gap-1 justify-center">
+                            <input
+                              type="text"
+                              value={r.BonusPoin || ''}
+                              placeholder="0"
+                              onChange={e => updateNilaiField(s.ID, 'BonusPoin', e.target.value)}
+                              className="w-14 px-2 py-1 text-center border border-amber-200 bg-amber-50/40 rounded-md font-mono tabular-nums text-xs text-amber-900"
+                            />
+                            {pStats && pStats.nilaiSiapDitambahkan > 0 && (
+                              <button
+                                type="button"
+                                title={`Tambahkan +${pStats.nilaiSiapDitambahkan} nilai hasil konversi poin`}
+                                onClick={() => applyReadyPoinForStudents([s.ID], 'SESUAI_SISWA')}
+                                className="px-1.5 py-1 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-md cursor-pointer noprint"
+                              >
+                                +{pStats.nilaiSiapDitambahkan}
+                              </button>
+                            )}
+                          </div>
+                        </td>
                         <td className="py-2 px-3 text-right font-mono tabular-nums font-bold text-slate-900">
                           {fmt(a)}
                         </td>
@@ -8802,7 +9114,12 @@ export default function App() {
               'b_tugas',
               'b_proyek',
               'b_uts',
-              'b_uas'
+              'b_uas',
+              'poinLoginAktif',
+              'poinModeLogin',
+              'poinPerLogin',
+              'poinPerNilai',
+              'poinTargetDefault'
             ];
             const baru: Record<string, string> = { ...S };
             keys.forEach(k => (baru[k] = String(fd.get(k) || '').trim()));
@@ -8893,6 +9210,76 @@ export default function App() {
                     />
                   </label>
                 ))}
+              </div>
+
+              <div className="pt-3 border-t border-slate-200 space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                  <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
+                  <span>Bintang &amp; Poin Login Siswa → Konversi ke Nilai</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Status Poin &amp; Bintang Login
+                    <select
+                      key={`poinLoginAktif|${S.poinLoginAktif ?? '1'}`}
+                      name="poinLoginAktif"
+                      defaultValue={S.poinLoginAktif ?? '1'}
+                      className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white"
+                    >
+                      <option value="1">Aktif (Siswa dapat ★ &amp; poin saat login)</option>
+                      <option value="0">Nonaktif</option>
+                    </select>
+                  </label>
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Frekuensi Pemberian Poin Login
+                    <select
+                      key={`poinModeLogin|${S.poinModeLogin || 'harian'}`}
+                      name="poinModeLogin"
+                      defaultValue={S.poinModeLogin || 'harian'}
+                      className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white"
+                    >
+                      <option value="harian">1x Per Hari (Login Harian)</option>
+                      <option value="setiap_login">Setiap Kali Siswa Login</option>
+                    </select>
+                  </label>
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Poin yang Didapat per Login
+                    <input
+                      key={`poinPerLogin|${S.poinPerLogin || '5'}`}
+                      name="poinPerLogin"
+                      type="number"
+                      min={1}
+                      defaultValue={S.poinPerLogin || '5'}
+                      className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-sm tabular-nums"
+                    />
+                  </label>
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Kurs Konversi (Poin untuk +1 Nilai)
+                    <input
+                      key={`poinPerNilai|${S.poinPerNilai || '5'}`}
+                      name="poinPerNilai"
+                      type="number"
+                      min={1}
+                      defaultValue={S.poinPerNilai || '5'}
+                      className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-sm tabular-nums"
+                    />
+                  </label>
+                </div>
+                <label className="block text-xs font-semibold text-slate-700">
+                  Target Default Penambahan Nilai
+                  <select
+                    key={`poinTargetDefault|${S.poinTargetDefault || 'BonusPoin'}`}
+                    name="poinTargetDefault"
+                    defaultValue={S.poinTargetDefault || 'BonusPoin'}
+                    className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white"
+                  >
+                    {POIN_TARGET_OPTIONS.map(opt => (
+                      <option key={opt.key} value={opt.key}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
             </div>
             <div className="pt-4">
@@ -9094,8 +9481,9 @@ export default function App() {
                         const nextSiswa = (db.Siswa || []).filter((x: any) => x.Kelas !== kls.ID);
                         const nextAbs = (db.Absensi || []).filter((x: any) => x.Kelas !== kls.ID);
                         const nextNil = (db.Nilai || []).filter((x: any) => x.Kelas !== kls.ID);
+                        const nextPoin = (db.PoinSiswa || []).filter((x: any) => x.Kelas !== kls.ID);
                         await persistSheets(
-                          { ...db, Kelas: next, Siswa: nextSiswa, Absensi: nextAbs, Nilai: nextNil },
+                          { ...db, Kelas: next, Siswa: nextSiswa, Absensi: nextAbs, Nilai: nextNil, PoinSiswa: nextPoin },
                           'Kelas',
                           'Siswa'
                         );
@@ -9586,6 +9974,40 @@ export default function App() {
               </button>
             </div>
             {modalContent.render()}
+          </div>
+        </div>
+      )}
+
+      {/* Live Poin & Bintang Login → Nilai Dialog */}
+      {poinNilaiModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-3xl max-h-[90vh] overflow-y-auto space-y-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-bold text-slate-900">
+                Kelola Bintang &amp; Poin Login → Nilai Siswa
+              </h3>
+              <button
+                type="button"
+                onClick={() => setPoinNilaiModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <PoinNilaiModalBody
+              siswaK={siswaK}
+              poinRows={db.PoinSiswa || []}
+              nilaiRows={db.Nilai || []}
+              pengaturan={S}
+              kelasId={K}
+              kelasNama={kelasObj.Nama || 'Kelas'}
+              onApplyReadyForStudent={(sid, mode) => applyReadyPoinForStudents([sid], mode)}
+              onConvertAndApplyStudent={(sid, mode) => convertAndApplyStudents([sid], mode)}
+              onApplyAllReady={mode => applyReadyPoinForStudents(siswaK.map((x: any) => x.ID), mode)}
+              onConvertAndApplyAll={mode => convertAndApplyStudents(siswaK.map((x: any) => x.ID), mode)}
+              onGiftPoints={giftPointsToStudent}
+              onClose={() => setPoinNilaiModalOpen(false)}
+            />
           </div>
         </div>
       )}

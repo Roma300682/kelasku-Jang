@@ -70,8 +70,17 @@ import {
   Trash2,
   Plus,
   Calculator,
-  FileText
+  FileText,
+  Star,
+  Sparkles,
+  ArrowRightLeft,
+  History
 } from 'lucide-react';
+import {
+  POIN_TARGET_OPTIONS,
+  PoinTargetKomponen,
+  getPoinTargetLabel
+} from '../poinLoginUtils';
 
 interface StudentPortalProps {
   token: string;
@@ -94,6 +103,14 @@ export default function StudentPortal({
   const [pinBaru, setPinBaru] = useState('');
   const [showPinLama, setShowPinLama] = useState(false);
   const [showPinBaru, setShowPinBaru] = useState(false);
+
+  // Login Stars & Point Conversion State
+  const [konversiUnit, setKonversiUnit] = useState(1);
+  const [konversiTarget, setKonversiTarget] = useState<PoinTargetKomponen>(
+    (p?.poinLogin?.targetDefault as PoinTargetKomponen) || 'BonusPoin'
+  );
+  const [convertingPoin, setConvertingPoin] = useState(false);
+  const [poinHistoryOpen, setPoinHistoryOpen] = useState(false);
 
   // CBT Exam Runner & Result State
   const [activeExam, setActiveExam] = useState<any | null>(null);
@@ -467,6 +484,11 @@ export default function StudentPortal({
         tot += (v * w[i]) / 100;
       }
     });
+    const bonus = num(r.BonusPoin);
+    if (bonus != null && bonus > 0) {
+      ada = true;
+      tot = Math.min(100, tot + bonus);
+    }
     return ada ? tot : null;
   };
 
@@ -651,6 +673,20 @@ export default function StudentPortal({
                   )}
                   <span>·</span>
                   <span className="font-mono tabular-nums">NIS {p.siswa?.NIS}</span>
+                  {(p.poinLogin?.loggedInToday || (p.poinLogin?.totalBintang || 0) > 0) && (
+                    <>
+                      <span>·</span>
+                      <span
+                        title="Bintang & Poin Login Siswa"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-400/25 border border-amber-300/60 text-amber-200 font-bold"
+                      >
+                        <Star className="w-3.5 h-3.5 fill-amber-300 text-amber-200" />
+                        <span className="tabular-nums">{p.poinLogin?.totalBintang || 1} Bintang</span>
+                        <span className="text-amber-100/80">·</span>
+                        <span className="tabular-nums">{p.poinLogin?.saldoPoin || 0} Poin</span>
+                      </span>
+                    </>
+                  )}
                   {p.sekretaris && (
                     <>
                       <span>·</span>
@@ -704,6 +740,271 @@ export default function StudentPortal({
             </div>
           </div>
         </div>
+
+        {/* Bintang Login & Konversi Poin ke Nilai */}
+        {(() => {
+          const pl = p.poinLogin || {
+            aktif: true,
+            modeLogin: 'harian',
+            poinPerLogin: 5,
+            poinPerNilai: 5,
+            targetDefault: 'BonusPoin',
+            saldoPoin: 0,
+            totalDidapat: 0,
+            totalDikonversi: 0,
+            nilaiSiapDitambahkan: 0,
+            nilaiSudahDitambahkan: 0,
+            earnedToday: 0,
+            totalBintang: 0,
+            loggedInToday: true,
+            riwayat: []
+          };
+          const poinPerNilai = Math.max(1, Number(pl.poinPerNilai || 5));
+          const saldoPoin = Math.max(0, Number(pl.saldoPoin || 0));
+          const maxUnits = Math.floor(saldoPoin / poinPerNilai);
+          const safeUnits = maxUnits > 0 ? Math.min(Math.max(1, konversiUnit), maxUnits) : 0;
+          const poinTerpakai = safeUnits * poinPerNilai;
+          const totalBintang = Math.max(0, Number(pl.totalBintang || 0));
+          const visibleStars = Math.min(5, Math.max(pl.loggedInToday ? 1 : 0, totalBintang));
+
+          const handleKonversi = async () => {
+            if (convertingPoin || safeUnits < 1) return;
+            setConvertingPoin(true);
+            try {
+              const res = await apiCall('api_konversiPoinSiswa', poinTerpakai, konversiTarget);
+              showToast(
+                `Berhasil! ${res.usedPoin} poin dikonversi menjadi +${res.nilaiTambah} nilai (${getPoinTargetLabel(res.target)})`,
+                4500
+              );
+              setKonversiUnit(1);
+              onRefresh();
+            } catch (e: any) {
+              showToast('Gagal konversi poin: ' + (e?.message || e), 4500);
+            } finally {
+              setConvertingPoin(false);
+            }
+          };
+
+          return (
+            <section className="bg-gradient-to-br from-amber-50 via-white to-orange-50/70 border border-amber-200 rounded-2xl p-6 space-y-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold">
+                      <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
+                      Bintang &amp; Poin Login Siswa
+                    </span>
+                    {pl.loggedInToday && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                        <Sparkles className="w-3 h-3 text-emerald-600" />
+                        Aktif Login Hari Ini
+                      </span>
+                    )}
+                  </div>
+                  <h2 className="text-base font-bold text-slate-900">
+                    Kumpulkan Bintang &amp; Poin dari Login, Konversi ke Tambahan Nilai
+                  </h2>
+                  <p className="text-xs text-slate-600">
+                    {pl.aktif
+                      ? `Setiap login (${pl.modeLogin === 'setiap_login' ? 'setiap sesi masuk' : 'harian 1x/hari'}) memperoleh ★ 1 Bintang & +${pl.poinPerLogin} Poin. Kurs saat ini: ${poinPerNilai} Poin = +1 Nilai.`
+                      : 'Pemberian poin login otomatis sedang dinonaktifkan oleh Admin.'}
+                  </p>
+                </div>
+
+                {/* Star Badges Display */}
+                <div className="flex flex-col items-start sm:items-end gap-1.5 bg-white/90 border border-amber-200 rounded-xl px-4 py-2.5 shadow-xs">
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: 5 }).map((_, idx) => {
+                      const active = idx < visibleStars;
+                      return (
+                        <Star
+                          key={idx}
+                          className={`w-5 h-5 transition-transform ${
+                            active
+                              ? 'fill-amber-400 text-amber-500 drop-shadow-xs scale-105'
+                              : 'text-slate-200 fill-slate-100'
+                          }`}
+                        />
+                      );
+                    })}
+                    {totalBintang > 5 && (
+                      <span className="ml-1 px-1.5 py-0.5 text-[11px] font-bold bg-amber-100 text-amber-800 rounded-md tabular-nums">
+                        +{totalBintang - 5}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] font-semibold text-amber-900 tabular-nums">
+                    Total: <strong>{totalBintang} Bintang Login</strong>
+                    {pl.earnedToday > 0 && (
+                      <span className="ml-1.5 text-emerald-700 font-bold">(+{pl.earnedToday} poin hari ini!)</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* KPI Strip */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3.5 rounded-xl bg-white border border-amber-200/80">
+                  <div className="text-[11px] font-semibold text-amber-700">Saldo Poin Tersedia</div>
+                  <div className="text-xl font-bold text-slate-900 tabular-nums mt-0.5">{saldoPoin} Poin</div>
+                  <div className="text-[10px] text-slate-500 tabular-nums">Total pernah didapat: {pl.totalDidapat}</div>
+                </div>
+                <div className="p-3.5 rounded-xl bg-white border border-sky-200/80">
+                  <div className="text-[11px] font-semibold text-sky-700">Potensi Konversi</div>
+                  <div className="text-xl font-bold text-sky-700 tabular-nums mt-0.5">+{maxUnits} Nilai</div>
+                  <div className="text-[10px] text-slate-500 tabular-nums">{poinPerNilai} poin = +1 nilai</div>
+                </div>
+                <div className="p-3.5 rounded-xl bg-white border border-indigo-200/80">
+                  <div className="text-[11px] font-semibold text-indigo-700">Siap Ditambahkan Guru</div>
+                  <div className="text-xl font-bold text-indigo-700 tabular-nums mt-0.5">
+                    +{pl.nilaiSiapDitambahkan || 0} Nilai
+                  </div>
+                  <div className="text-[10px] text-slate-500">Sudah dikonversi, tunggu guru</div>
+                </div>
+                <div className="p-3.5 rounded-xl bg-white border border-emerald-200/80">
+                  <div className="text-[11px] font-semibold text-emerald-700">Sudah Masuk ke Nilai</div>
+                  <div className="text-xl font-bold text-emerald-700 tabular-nums mt-0.5">
+                    +{pl.nilaiSudahDitambahkan || 0} Nilai
+                  </div>
+                  <div className="text-[10px] text-slate-500">Ditambahkan ke nilai siswa</div>
+                </div>
+              </div>
+
+              {/* Conversion Controls */}
+              <div className="p-4 rounded-xl bg-white border border-amber-200 flex flex-col md:flex-row md:items-end justify-between gap-3">
+                {maxUnits > 0 ? (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1">
+                      <label className="block text-xs font-semibold text-slate-700">
+                        Jumlah Nilai yang Dikonversi
+                        <select
+                          value={safeUnits}
+                          onChange={e => setKonversiUnit(Number(e.target.value) || 1)}
+                          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white font-semibold"
+                        >
+                          {Array.from({ length: maxUnits }, (_, i) => i + 1).map(u => (
+                            <option key={u} value={u}>
+                              +{u} Nilai (tukar {u * poinPerNilai} Poin)
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block text-xs font-semibold text-slate-700">
+                        Usulkan Target Nilai
+                        <select
+                          value={konversiTarget}
+                          onChange={e => setKonversiTarget(e.target.value as PoinTargetKomponen)}
+                          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white"
+                        >
+                          {POIN_TARGET_OPTIONS.map(opt => (
+                            <option key={opt.key} value={opt.key}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={convertingPoin || safeUnits < 1}
+                      onClick={handleKonversi}
+                      className="px-4 py-2.5 text-xs font-bold bg-gradient-to-r from-amber-500 to-orange-600 hover:brightness-105 disabled:opacity-60 text-white rounded-xl inline-flex items-center justify-center gap-1.5 shadow-sm cursor-pointer shrink-0"
+                    >
+                      <ArrowRightLeft className="w-3.5 h-3.5" />
+                      {convertingPoin
+                        ? 'Mengonversi…'
+                        : `Konversi ${poinTerpakai} Poin → +${safeUnits} Nilai`}
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-2 w-full text-xs text-slate-600">
+                    <span>
+                      Saldo poin saat ini <strong>{saldoPoin} Poin</strong>. Butuh{' '}
+                      <strong>{Math.max(1, poinPerNilai - saldoPoin)} poin lagi</strong> untuk dikonversi menjadi{' '}
+                      <strong>+1 Nilai</strong>.
+                    </span>
+                    <span className="text-[11px] font-semibold text-amber-700">
+                      Login rutin untuk mengumpulkan bintang &amp; poin!
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Collapsible History */}
+              {(pl.riwayat || []).length > 0 && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setPoinHistoryOpen(v => !v)}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-800 hover:text-amber-950 cursor-pointer"
+                  >
+                    <History className="w-3.5 h-3.5" />
+                    {poinHistoryOpen
+                      ? 'Sembunyikan Riwayat Poin & Konversi'
+                      : `Lihat Riwayat Poin & Konversi (${pl.riwayat.length})`}
+                  </button>
+                  {poinHistoryOpen && (
+                    <div className="mt-2 overflow-x-auto border border-amber-200/80 bg-white rounded-xl max-h-52">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead className="bg-amber-50/80 border-b border-amber-100 text-amber-950 sticky top-0">
+                          <tr>
+                            <th className="py-2 px-3">Tanggal</th>
+                            <th className="py-2 px-3">Aktivitas</th>
+                            <th className="py-2 px-3 text-right">Poin</th>
+                            <th className="py-2 px-3 text-right">Konversi</th>
+                            <th className="py-2 px-3">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {pl.riwayat.map((rw: any) => {
+                            const jp = Number(rw.JumlahPoin || 0);
+                            const nk = Number(rw.NilaiKonversi || 0);
+                            return (
+                              <tr key={rw.ID}>
+                                <td className="py-2 px-3 tabular-nums text-slate-500">{rw.Tanggal}</td>
+                                <td className="py-2 px-3 font-medium text-slate-800">
+                                  <span className="inline-flex items-center gap-1">
+                                    {rw.Jenis === 'login' && (
+                                      <Star className="w-3 h-3 fill-amber-400 text-amber-500 shrink-0" />
+                                    )}
+                                    {rw.Keterangan || rw.Jenis}
+                                  </span>
+                                </td>
+                                <td
+                                  className={`py-2 px-3 text-right font-mono font-bold tabular-nums ${
+                                    jp >= 0 ? 'text-emerald-700' : 'text-amber-700'
+                                  }`}
+                                >
+                                  {jp >= 0 ? `+${jp}` : jp}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono font-bold tabular-nums text-indigo-700">
+                                  {nk > 0 ? `+${nk} (${getPoinTargetLabel(rw.KomponenTarget)})` : '-'}
+                                </td>
+                                <td className="py-2 px-3">
+                                  <span
+                                    className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                                      rw.Status === 'Ditambahkan'
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                        : rw.Status === 'Siap Ditambahkan'
+                                        ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                        : 'bg-amber-50 text-amber-800 border-amber-200'
+                                    }`}
+                                  >
+                                    {rw.Status || 'Aktif'}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          );
+        })()}
 
         {/* Profil Biodata Siswa Section */}
         <section className="bg-white border border-indigo-100 rounded-2xl p-6 space-y-4 shadow-sm">
@@ -1089,6 +1390,21 @@ export default function StudentPortal({
                           </tr>
                         );
                       })}
+                      {num(p.nilai.BonusPoin) != null && (num(p.nilai.BonusPoin) || 0) > 0 && (
+                        <tr className="bg-amber-50/70">
+                          <td className="py-2.5 px-3 font-semibold text-amber-900 flex items-center gap-1.5">
+                            <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-500 shrink-0" />
+                            Tambahan Poin Login
+                          </td>
+                          <td className="py-2.5 px-3 text-right tabular-nums text-amber-700">Bonus</td>
+                          <td className="py-2.5 px-3 text-right tabular-nums font-bold text-amber-800">
+                            +{fmt(num(p.nilai.BonusPoin))}
+                          </td>
+                          <td className="py-2.5 px-3 text-right tabular-nums font-bold text-amber-800">
+                            +{fmt(num(p.nilai.BonusPoin))}
+                          </td>
+                        </tr>
+                      )}
                       <tr className="bg-gradient-to-r from-indigo-50 to-sky-50 font-bold text-slate-900">
                         <td className="py-2.5 px-3">Nilai Akhir</td>
                         <td className="py-2.5 px-3 text-right tabular-nums">100%</td>
@@ -1103,9 +1419,21 @@ export default function StudentPortal({
                 <p className="text-xs text-slate-600">
                   Rekomendasi tindak lanjut: <strong className="text-indigo-700">{tindakLanjut(nilaiAkhir)}</strong> (KKM {kkmVal}).
                 </p>
+                {(p.poinLogin?.nilaiSiapDitambahkan || 0) > 0 && (
+                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900">
+                    Tersedia <strong>+{p.poinLogin.nilaiSiapDitambahkan} nilai</strong> hasil konversi poin login yang siap ditambahkan oleh guru ke nilai siswa.
+                  </div>
+                )}
               </>
             ) : (
-              <p className="text-xs text-slate-500">Nilai belum diinput oleh guru.</p>
+              <div className="space-y-2">
+                <p className="text-xs text-slate-500">Nilai belum diinput oleh guru.</p>
+                {(p.poinLogin?.nilaiSiapDitambahkan || 0) > 0 && (
+                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900">
+                    Kamu memiliki <strong>+{p.poinLogin.nilaiSiapDitambahkan} nilai</strong> hasil konversi poin login yang siap ditambahkan oleh guru.
+                  </div>
+                )}
+              </div>
             )}
           </div>
 

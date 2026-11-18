@@ -40,7 +40,8 @@ const MUTATING_RPCS = new Set([
   'api_setMapelSaya',
   'api_simpanAbsensiSekretaris',
   'api_resetPartial',
-  'api_updateLoginBranding'
+  'api_updateLoginBranding',
+  'api_konversiPoinSiswa'
 ]);
 
 type Listener = () => void;
