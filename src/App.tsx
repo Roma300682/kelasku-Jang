@@ -185,7 +185,8 @@ import {
   FileText,
   FileUp,
   Star,
-  ArrowRightLeft
+  ArrowRightLeft,
+  History
 } from 'lucide-react';
 import { PoinNilaiModalBody, ModalTargetMode } from './components/PoinNilaiModal';
 import {
@@ -3054,6 +3055,14 @@ export default function App() {
     const ttlStr = [s.TempatLahir || '', s.TanggalLahir ? tglIndo(s.TanggalLahir) : '']
       .filter(Boolean)
       .join(', ');
+    const pStats = computeStudentPoinStats(db.PoinSiswa || [], s.ID, S, ymd(new Date()));
+    const visibleStars = Math.min(5, Math.max(pStats.loggedInToday ? 1 : 0, pStats.totalBintang));
+    const allStudentPoinRows = (db.PoinSiswa || [])
+      .filter((r: any) => r && r.SiswaID === s.ID)
+      .slice()
+      .sort((a: any, b: any) =>
+        String(b.Waktu || b.Tanggal || '').localeCompare(String(a.Waktu || a.Tanggal || ''))
+      );
 
     setModalContent({
       title: `Profil Biodata Siswa — ${s.Nama || ''}`,
@@ -3087,15 +3096,21 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <span
-              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border ${
-                hasPin
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : 'bg-amber-50 text-amber-700 border-amber-200'
-              }`}
-            >
-              {hasPin ? 'PIN Portal Aktif' : 'Belum Ada PIN'}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg border bg-amber-100/80 text-amber-900 border-amber-300 tabular-nums">
+                <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-500" />
+                {pStats.totalBintang} Bintang · {pStats.saldoPoin} Poin
+              </span>
+              <span
+                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border ${
+                  hasPin
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                }`}
+              >
+                {hasPin ? 'PIN Portal Aktif' : 'Belum Ada PIN'}
+              </span>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
@@ -3170,6 +3185,174 @@ export default function App() {
                 <HeartPulse className="w-3 h-3 text-rose-500" /> Catatan Kesehatan
               </div>
               <div className="font-medium text-slate-800 mt-0.5">{s.Kesehatan || 'Normal'}</div>
+            </div>
+          </div>
+
+          {/* Panel Ringkasan Kontribusi Harian: Bintang Login & Poin Siswa */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-50/90 via-white to-orange-50/50 border border-amber-200 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-950">
+                  <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
+                  Ringkasan Bintang Login &amp; Poin Siswa
+                </span>
+                {pStats.loggedInToday && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-200 text-emerald-800 text-[10px] font-bold">
+                    <Sparkles className="w-3 h-3 text-emerald-600" />
+                    Login Hari Ini
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: 5 }).map((_, idx) => (
+                  <Star
+                    key={idx}
+                    className={`w-4 h-4 ${
+                      idx < visibleStars
+                        ? 'fill-amber-400 text-amber-500'
+                        : 'text-slate-200 fill-slate-100'
+                    }`}
+                  />
+                ))}
+                {pStats.totalBintang > 5 && (
+                  <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 rounded tabular-nums">
+                    +{pStats.totalBintang - 5}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+              <div className="p-2.5 rounded-xl bg-white border border-amber-200/80">
+                <div className="text-[10px] font-semibold text-amber-700">Total Bintang Login</div>
+                <div className="text-base font-bold text-slate-900 tabular-nums mt-0.5">
+                  ★ {pStats.totalBintang}
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {pStats.loggedInToday ? 'Aktif login hari ini' : 'Belum login hari ini'}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white border border-sky-200/80">
+                <div className="text-[10px] font-semibold text-sky-700">Saldo Poin Tersedia</div>
+                <div className="text-base font-bold text-sky-700 tabular-nums mt-0.5">
+                  {pStats.saldoPoin} Poin
+                </div>
+                <div className="text-[10px] text-slate-500 tabular-nums">
+                  Total didapat: {pStats.totalDidapat} poin
+                </div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white border border-indigo-200/80">
+                <div className="text-[10px] font-semibold text-indigo-700">Siap Ditambahkan</div>
+                <div className="text-base font-bold text-indigo-700 tabular-nums mt-0.5">
+                  +{pStats.nilaiSiapDitambahkan} Nilai
+                </div>
+                <div className="text-[10px] text-slate-500">Menunggu konfirmasi nilai</div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white border border-emerald-200/80">
+                <div className="text-[10px] font-semibold text-emerald-700">Sudah Masuk ke Nilai</div>
+                <div className="text-base font-bold text-emerald-700 tabular-nums mt-0.5">
+                  +{pStats.nilaiSudahDitambahkan} Nilai
+                </div>
+                <div className="text-[10px] text-slate-500 tabular-nums">
+                  Ditukar: {pStats.totalDikonversi} poin
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
+                  <History className="w-3.5 h-3.5 text-amber-600" />
+                  Riwayat Perolehan Bintang Login &amp; Poin ({allStudentPoinRows.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModalContent(null);
+                    setTab('nil');
+                    setPoinNilaiModalOpen(true);
+                  }}
+                  className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <ArrowRightLeft className="w-3 h-3" /> Kelola &amp; Tambah ke Nilai
+                </button>
+              </div>
+
+              {allStudentPoinRows.length === 0 ? (
+                <div className="p-3.5 rounded-xl bg-white border border-dashed border-amber-200 text-center text-[11px] text-slate-500">
+                  Belum ada riwayat login atau perolehan poin untuk siswa ini. Siswa otomatis mendapat ★ 1 Bintang &amp; poin saat masuk ke Portal Siswa.
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-amber-200/80 bg-white rounded-xl max-h-52">
+                  <table className="w-full text-left border-collapse text-[11px]">
+                    <thead className="bg-amber-50/90 border-b border-amber-100 text-amber-950 sticky top-0">
+                      <tr>
+                        <th className="py-2 px-3">Tanggal</th>
+                        <th className="py-2 px-3">Aktivitas Harian / Konversi</th>
+                        <th className="py-2 px-3 text-right">Bintang / Poin</th>
+                        <th className="py-2 px-3 text-right">Nilai</th>
+                        <th className="py-2 px-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {allStudentPoinRows.map((rw: any) => {
+                        const jp = Number(rw.JumlahPoin || 0);
+                        const nk = Number(rw.NilaiKonversi || 0);
+                        let jamStr = '';
+                        if (rw.Waktu) {
+                          const dObj = new Date(rw.Waktu);
+                          if (!Number.isNaN(dObj.getTime())) {
+                            jamStr = `${pad(dObj.getHours())}:${pad(dObj.getMinutes())}`;
+                          }
+                        }
+                        return (
+                          <tr key={rw.ID} className="hover:bg-amber-50/30">
+                            <td className="py-2 px-3 tabular-nums text-slate-600 whitespace-nowrap">
+                              <div>{rw.Tanggal ? tglIndo(rw.Tanggal) : '-'}</div>
+                              {jamStr && <div className="text-[10px] text-slate-400">{jamStr}</div>}
+                            </td>
+                            <td className="py-2 px-3 font-medium text-slate-800">
+                              <span className="inline-flex items-center gap-1.5">
+                                {rw.Jenis === 'login' ? (
+                                  <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-500 shrink-0" />
+                                ) : rw.Jenis === 'konversi' ? (
+                                  <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                ) : (
+                                  <Plus className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                )}
+                                <span>{rw.Keterangan || rw.Jenis}</span>
+                              </span>
+                            </td>
+                            <td
+                              className={`py-2 px-3 text-right font-mono font-bold tabular-nums whitespace-nowrap ${
+                                jp >= 0 ? 'text-emerald-700' : 'text-amber-700'
+                              }`}
+                            >
+                              {rw.Jenis === 'login' ? `★ +1 · +${jp}` : jp >= 0 ? `+${jp}` : jp}
+                            </td>
+                            <td className="py-2 px-3 text-right font-mono font-bold tabular-nums text-indigo-700 whitespace-nowrap">
+                              {nk > 0 ? `+${nk} (${getPoinTargetLabel(rw.KomponenTarget)})` : '-'}
+                            </td>
+                            <td className="py-2 px-3 whitespace-nowrap">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                                  rw.Status === 'Ditambahkan'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : rw.Status === 'Siap Ditambahkan'
+                                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                    : 'bg-amber-50 text-amber-800 border-amber-200'
+                                }`}
+                              >
+                                {rw.Status || 'Aktif'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
 
