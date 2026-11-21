@@ -186,7 +186,8 @@ import {
   FileUp,
   Star,
   ArrowRightLeft,
-  History
+  History,
+  Search
 } from 'lucide-react';
 import { PoinNilaiModalBody, ModalTargetMode } from './components/PoinNilaiModal';
 import {
@@ -426,6 +427,16 @@ export default function App() {
   const [modView, setModView] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
   const [poinNilaiModalOpen, setPoinNilaiModalOpen] = useState(false);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+  const [globalSearchCat, setGlobalSearchCat] = useState<
+    'all' | 'siswa' | 'tugas' | 'materi' | 'cbt' | 'jadwal' | 'menu'
+  >('all');
+  const [sisSearch, setSisSearch] = useState('');
+  const [absSearch, setAbsSearch] = useState('');
+  const [nilSearch, setNilSearch] = useState('');
+  const [tugSearch, setTugSearch] = useState('');
+  const [tugSiswaSearch, setTugSiswaSearch] = useState('');
   const [presState, setPresState] = useState<{
     slides: {
       badge?: string;
@@ -440,6 +451,20 @@ export default function App() {
   const kaldikAutoCheckedRef = React.useRef(false);
   const offlineStatus = useOfflineStatus();
   const autoSyncInFlightRef = React.useRef(false);
+
+  useEffect(() => {
+    if (!token || role === 'siswa') return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearchModalOpen(prev => !prev);
+      } else if (e.key === 'Escape') {
+        setSearchModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [token, role]);
 
   // Toast helper
   const showToast = useCallback((msg: string, ms = 2500) => {
@@ -3108,47 +3133,97 @@ export default function App() {
             </button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 pt-1">
-            {Object.keys(KODE).map(k => (
-              <span key={k} className="flex items-center gap-1.5">
-                <span
-                  style={{ backgroundColor: KODE[k][1] }}
-                  className="w-5 h-5 rounded text-white font-bold text-[11px] flex items-center justify-center"
-                >
-                  {k}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600">
+              {Object.keys(KODE).map(k => (
+                <span key={k} className="flex items-center gap-1.5">
+                  <span
+                    style={{ backgroundColor: KODE[k][1] }}
+                    className="w-5 h-5 rounded text-white font-bold text-[11px] flex items-center justify-center"
+                  >
+                    {k}
+                  </span>
+                  <span>{KODE[k][0]}</span>
                 </span>
-                <span>{KODE[k][0]}</span>
-              </span>
-            ))}
+              ))}
+            </div>
+
+            <div className="relative w-full sm:w-72">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={absSearch}
+                onChange={e => setAbsSearch(e.target.value)}
+                placeholder="Cari nama atau NIS siswa..."
+                className="w-full pl-8 pr-8 py-1.5 border border-slate-200 rounded-xl text-xs bg-slate-50/70 focus:bg-white focus:border-emerald-400 focus:outline-none"
+              />
+              {absSearch && (
+                <button
+                  type="button"
+                  onClick={() => setAbsSearch('')}
+                  title="Hapus pencarian"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="overflow-x-auto border border-slate-200 rounded-lg">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
-                <tr>
-                  <th className="py-2.5 px-3 w-10">#</th>
-                  <th className="py-2.5 px-3">Nama Siswa</th>
-                  <th className="py-2.5 px-3">Status Kehadiran</th>
-                  <th className="py-2.5 px-3">Keterangan (Jam datang / Alasan / Bukti)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {siswaK.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="py-10 px-4 text-center text-xs text-slate-500">
-                      Belum ada siswa di kelas ini. Tambahkan siswa di menu{' '}
-                      <button
-                        type="button"
-                        onClick={() => setTab('sis')}
-                        className="text-indigo-600 font-semibold hover:underline cursor-pointer"
-                      >
-                        Data Siswa
-                      </button>
-                      .
-                    </td>
-                  </tr>
-                ) : (
-                  siswaK.map((s: any, i: number) => (
+          {(() => {
+            const absQ = absSearch.trim().toLowerCase();
+            const filteredSiswaAbs = absQ
+              ? siswaK.filter((s: any) =>
+                  `${s.Nama || ''} ${s.NIS || ''}`.toLowerCase().includes(absQ)
+                )
+              : siswaK;
+            return (
+              <>
+                {absQ && (
+                  <div className="text-[11px] text-slate-500 tabular-nums">
+                    Menampilkan <strong>{filteredSiswaAbs.length}</strong> dari {siswaK.length} siswa untuk "{absSearch}"
+                  </div>
+                )}
+                <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
+                      <tr>
+                        <th className="py-2.5 px-3 w-10">#</th>
+                        <th className="py-2.5 px-3">Nama Siswa</th>
+                        <th className="py-2.5 px-3">Status Kehadiran</th>
+                        <th className="py-2.5 px-3">Keterangan (Jam datang / Alasan / Bukti)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {siswaK.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="py-10 px-4 text-center text-xs text-slate-500">
+                            Belum ada siswa di kelas ini. Tambahkan siswa di menu{' '}
+                            <button
+                              type="button"
+                              onClick={() => setTab('sis')}
+                              className="text-indigo-600 font-semibold hover:underline cursor-pointer"
+                            >
+                              Data Siswa
+                            </button>
+                            .
+                          </td>
+                        </tr>
+                      ) : filteredSiswaAbs.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="py-8 px-4 text-center text-xs text-slate-500 space-y-2">
+                            <div>Tidak ada siswa yang cocok dengan "{absSearch}".</div>
+                            <button
+                              type="button"
+                              onClick={() => setAbsSearch('')}
+                              className="px-3 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer"
+                            >
+                              Reset Pencarian
+                            </button>
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredSiswaAbs.map((s: any, i: number) => (
                     <tr key={s.ID} className="hover:bg-slate-50/70">
                       <td className="py-2.5 px-3 tabular-nums text-slate-400">{i + 1}</td>
                       <td className="py-2.5 px-3 font-semibold text-slate-900">{s.Nama}</td>
@@ -3204,6 +3279,9 @@ export default function App() {
               </tbody>
             </table>
           </div>
+              </>
+            );
+          })()}
         </div>
       </div>
     );
@@ -4058,42 +4136,104 @@ export default function App() {
           </div>
         </div>
 
-        <div className="bg-white border border-amber-100 rounded-2xl overflow-hidden shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead className="bg-gradient-to-r from-amber-50 to-orange-50/70 border-b border-amber-100 text-amber-950">
-                <tr>
-                  <th className="py-3 px-3.5 w-9">#</th>
-                  <th className="py-3 px-3.5">NIS</th>
-                  <th className="py-3 px-3.5">Nama Lengkap</th>
-                  <th className="py-3 px-3.5">Tempat, Tgl Lahir</th>
-                  <th className="py-3 px-3.5">JK</th>
-                  <th className="py-3 px-3.5">Alamat</th>
-                  <th className="py-3 px-3.5">No. HP Siswa</th>
-                  <th className="py-3 px-3.5">No. HP Orang Tua</th>
-                  <th className="py-3 px-3.5">Kesehatan</th>
-                  <th className="py-3 px-3.5">Status PIN</th>
-                  <th className="py-3 px-3.5 text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {siswaK.length === 0 ? (
-                  <tr>
-                    <td colSpan={11} className="py-12 px-4 text-center text-xs text-slate-500">
-                      <div className="space-y-2">
-                        <p>Belum ada siswa terdaftar di kelas {kelasObj.Nama || 'ini'}.</p>
-                        <button
-                          type="button"
-                          onClick={() => openModalSiswa()}
-                          className="px-3.5 py-1.5 text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-white rounded-lg cursor-pointer"
-                        >
-                          + Tambah Siswa Pertama
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  siswaK.map((s: any, i: number) => {
+        {(() => {
+          const sisQ = sisSearch.trim().toLowerCase();
+          const filteredSiswaSis = sisQ
+            ? siswaK.filter((s: any) =>
+                [
+                  s.Nama,
+                  s.NIS,
+                  s.Alamat,
+                  s.NoSiswa,
+                  s.NoOrtu,
+                  s.KontakOrtu,
+                  s.Kesehatan,
+                  s.TempatLahir
+                ]
+                  .filter(Boolean)
+                  .join(' ')
+                  .toLowerCase()
+                  .includes(sisQ)
+              )
+            : siswaK;
+          return (
+            <>
+              <div className="bg-white border border-amber-100 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                <div className="relative flex-1 min-w-[220px]">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={sisSearch}
+                    onChange={e => setSisSearch(e.target.value)}
+                    placeholder="Cari nama siswa, NIS, alamat, atau no. HP..."
+                    className="w-full pl-9 pr-9 py-2 border border-slate-200 rounded-xl text-xs bg-slate-50/70 focus:bg-white focus:border-amber-400 focus:outline-none"
+                  />
+                  {sisSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setSisSearch('')}
+                      title="Hapus pencarian"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <div className="text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                  Menampilkan <strong className="text-slate-800">{filteredSiswaSis.length}</strong> dari{' '}
+                  {siswaK.length} siswa
+                </div>
+              </div>
+
+              <div className="bg-white border border-amber-100 rounded-2xl overflow-hidden shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-gradient-to-r from-amber-50 to-orange-50/70 border-b border-amber-100 text-amber-950">
+                      <tr>
+                        <th className="py-3 px-3.5 w-9">#</th>
+                        <th className="py-3 px-3.5">NIS</th>
+                        <th className="py-3 px-3.5">Nama Lengkap</th>
+                        <th className="py-3 px-3.5">Tempat, Tgl Lahir</th>
+                        <th className="py-3 px-3.5">JK</th>
+                        <th className="py-3 px-3.5">Alamat</th>
+                        <th className="py-3 px-3.5">No. HP Siswa</th>
+                        <th className="py-3 px-3.5">No. HP Orang Tua</th>
+                        <th className="py-3 px-3.5">Kesehatan</th>
+                        <th className="py-3 px-3.5">Status PIN</th>
+                        <th className="py-3 px-3.5 text-right">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {siswaK.length === 0 ? (
+                        <tr>
+                          <td colSpan={11} className="py-12 px-4 text-center text-xs text-slate-500">
+                            <div className="space-y-2">
+                              <p>Belum ada siswa terdaftar di kelas {kelasObj.Nama || 'ini'}.</p>
+                              <button
+                                type="button"
+                                onClick={() => openModalSiswa()}
+                                className="px-3.5 py-1.5 text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-white rounded-lg cursor-pointer"
+                              >
+                                + Tambah Siswa Pertama
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : filteredSiswaSis.length === 0 ? (
+                        <tr>
+                          <td colSpan={11} className="py-10 px-4 text-center text-xs text-slate-500 space-y-2">
+                            <p>Tidak ada data siswa yang cocok dengan "{sisSearch}".</p>
+                            <button
+                              type="button"
+                              onClick={() => setSisSearch('')}
+                              className="px-3.5 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer"
+                            >
+                              Reset Pencarian
+                            </button>
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredSiswaSis.map((s: any, i: number) => {
                     const hasPin = (db.punyaPIN || []).includes(s.ID);
                     const noSw = s.NoSiswa || s.KontakOrtu || '';
                     const noOrtu = s.NoOrtu || '';
@@ -4286,6 +4426,9 @@ export default function App() {
             </table>
           </div>
         </div>
+            </>
+          );
+        })()}
       </div>
     );
   }
@@ -6873,12 +7016,23 @@ export default function App() {
         ? classMapelList.find(m => m.toLowerCase() === tugMapelFilter.toLowerCase()) || 'ALL'
         : 'ALL';
 
-    const filteredTugasK =
+    const filteredByMapelTugasK =
       activeMapelFilter === 'ALL'
         ? tugasK
         : tugasK.filter(
             (t: any) => String(t.Mapel || '').trim().toLowerCase() === activeMapelFilter.toLowerCase()
           );
+
+    const tugQ = tugSearch.trim().toLowerCase();
+    const filteredTugasK = tugQ
+      ? filteredByMapelTugasK.filter((t: any) =>
+          [t.Judul, t.Mapel, t.Jenis, t.Deskripsi, t.NamaFile]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .includes(tugQ)
+        )
+      : filteredByMapelTugasK;
 
     const activeId =
       tugSel && filteredTugasK.some((t: any) => t.ID === tugSel)
@@ -7518,18 +7672,55 @@ export default function App() {
                 Klik mata pelajaran untuk melihat atau membuat tugas sesuai jadwal dan guru kelas ini.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setTugMapelFilter('ALL')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-xl border transition-colors cursor-pointer ${
-                activeMapelFilter === 'ALL'
-                  ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
-                  : 'bg-slate-50 hover:bg-teal-50 text-slate-700 border-slate-200'
-              }`}
-            >
-              Semua Mapel ({tugasK.length} Tugas)
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={tugSearch}
+                  onChange={e => setTugSearch(e.target.value)}
+                  placeholder="Cari judul tugas atau mapel..."
+                  className="w-full pl-8 pr-8 py-1.5 border border-slate-200 rounded-xl text-xs bg-slate-50/70 focus:bg-white focus:border-teal-400 focus:outline-none"
+                />
+                {tugSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setTugSearch('')}
+                    title="Hapus pencarian tugas"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setTugMapelFilter('ALL')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-xl border transition-colors cursor-pointer ${
+                  activeMapelFilter === 'ALL'
+                    ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
+                    : 'bg-slate-50 hover:bg-teal-50 text-slate-700 border-slate-200'
+                }`}
+              >
+                Semua Mapel ({tugasK.length} Tugas)
+              </button>
+            </div>
           </div>
+
+          {tugSearch.trim() && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-teal-50/70 border border-teal-200 text-xs text-teal-900">
+              <span>
+                Ditemukan <strong>{filteredTugasK.length}</strong> tugas untuk "{tugSearch}"
+              </span>
+              <button
+                type="button"
+                onClick={() => setTugSearch('')}
+                className="text-[11px] font-semibold text-teal-700 hover:underline cursor-pointer"
+              >
+                Tampilkan semua
+              </button>
+            </div>
+          )}
 
           {classMapelList.length === 0 ? (
             <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-xs text-slate-500 text-center">
@@ -7882,20 +8073,75 @@ export default function App() {
               </div>
             )}
 
-            <div className="overflow-x-auto border border-teal-100 rounded-xl">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-teal-50/70 border-b border-teal-100 text-teal-800">
-                  <tr>
-                    <th className="py-2.5 px-3 w-10">#</th>
-                    <th className="py-2.5 px-3">Nama Siswa</th>
-                    <th className="py-2.5 px-3">Berkas Unggahan Siswa</th>
-                    {isGradedTask && <th className="py-2.5 px-3">Jawaban & Koreksi</th>}
-                    <th className="py-2.5 px-3">Status Pengumpulan</th>
-                    <th className="py-2.5 px-3 text-right">Nilai (0–100)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {siswaK.map((s: any, i: number) => {
+            {(() => {
+              const tugSwQ = tugSiswaSearch.trim().toLowerCase();
+              const filteredSiswaTug = tugSwQ
+                ? siswaK.filter((s: any) =>
+                    `${s.Nama || ''} ${s.NIS || ''}`.toLowerCase().includes(tugSwQ)
+                  )
+                : siswaK;
+              return (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <div className="text-xs font-semibold text-slate-700 tabular-nums">
+                      Daftar Pengumpulan Siswa ({filteredSiswaTug.length}/{siswaK.length})
+                    </div>
+                    <div className="relative w-full sm:w-64">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={tugSiswaSearch}
+                        onChange={e => setTugSiswaSearch(e.target.value)}
+                        placeholder="Cari nama atau NIS siswa..."
+                        className="w-full pl-8 pr-8 py-1.5 border border-slate-200 rounded-xl text-xs bg-slate-50/70 focus:bg-white focus:border-teal-400 focus:outline-none"
+                      />
+                      {tugSiswaSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setTugSiswaSearch('')}
+                          title="Hapus pencarian siswa"
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto border border-teal-100 rounded-xl">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead className="bg-teal-50/70 border-b border-teal-100 text-teal-800">
+                        <tr>
+                          <th className="py-2.5 px-3 w-10">#</th>
+                          <th className="py-2.5 px-3">Nama Siswa</th>
+                          <th className="py-2.5 px-3">Berkas Unggahan Siswa</th>
+                          {isGradedTask && <th className="py-2.5 px-3">Jawaban & Koreksi</th>}
+                          <th className="py-2.5 px-3">Status Pengumpulan</th>
+                          <th className="py-2.5 px-3 text-right">Nilai (0–100)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredSiswaTug.length === 0 ? (
+                          <tr>
+                            <td colSpan={isGradedTask ? 6 : 5} className="py-8 px-4 text-center text-xs text-slate-500">
+                              {tugSwQ ? (
+                                <div className="space-y-2">
+                                  <div>Tidak ada siswa yang cocok dengan "{tugSiswaSearch}".</div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setTugSiswaSearch('')}
+                                    className="px-3 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer"
+                                  >
+                                    Reset Pencarian
+                                  </button>
+                                </div>
+                              ) : (
+                                'Belum ada siswa di kelas ini.'
+                              )}
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredSiswaTug.map((s: any, i: number) => {
+                            const origStudentIdx = siswaK.findIndex((x: any) => x.ID === s.ID);
                     const r = (db.Pengumpulan || []).find(
                       (q: any) => q.TugasID === curTug.ID && q.SiswaID === s.ID
                     ) || { Status: 'Belum', Nilai: '', FileID: '', NamaFile: '', TanggalKumpul: '', CatatanSiswa: '', JawabanSiswa: '', DetailKoreksi: '' };
@@ -8042,7 +8288,7 @@ export default function App() {
 
                               <button
                                 type="button"
-                                onClick={() => openKoreksiSiswaModal(curTug, i)}
+                                onClick={() => openKoreksiSiswaModal(curTug, origStudentIdx >= 0 ? origStudentIdx : i)}
                                 className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-lg border cursor-pointer ${
                                   isUraianTask
                                     ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
@@ -8130,10 +8376,14 @@ export default function App() {
                         </td>
                       </tr>
                     );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                  })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              );
+            })()}
           </div>
           );
         })() : (
@@ -8385,41 +8635,90 @@ export default function App() {
 
         <PrintHeader />
 
-        <div className="bg-white border border-indigo-100 rounded-2xl overflow-hidden shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead className="bg-indigo-50/80 border-b border-indigo-100 text-indigo-900">
-                <tr>
-                  <th className="py-3 px-3 w-10">#</th>
-                  <th className="py-3 px-3">Nama Siswa</th>
-                  <th className="py-3 px-2 text-center">Sikap ({bobot[0]}%)</th>
-                  <th className="py-3 px-2 text-center">Tugas ({bobot[1]}%)</th>
-                  <th className="py-3 px-2 text-center">Proyek ({bobot[2]}%)</th>
-                  <th className="py-3 px-2 text-center">UTS ({bobot[3]}%)</th>
-                  <th className="py-3 px-2 text-center">UAS ({bobot[4]}%)</th>
-                  <th className="py-3 px-2 text-center">Bonus Poin</th>
-                  <th className="py-3 px-3 text-right">Nilai Akhir</th>
-                  <th className="py-3 px-3 text-center">Predikat</th>
-                  <th className="py-3 px-3">Tindak Lanjut</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {siswaK.length === 0 ? (
-                  <tr>
-                    <td colSpan={11} className="py-10 px-4 text-center text-xs text-slate-500">
-                      Belum ada siswa di kelas ini. Tambahkan siswa di menu{' '}
-                      <button
-                        type="button"
-                        onClick={() => setTab('sis')}
-                        className="text-indigo-600 font-semibold hover:underline cursor-pointer"
-                      >
-                        Data Siswa
-                      </button>{' '}
-                      untuk mulai menginput nilai.
-                    </td>
-                  </tr>
-                ) : (
-                  siswaK.map((s: any, i: number) => {
+        {(() => {
+          const nilQ = nilSearch.trim().toLowerCase();
+          const filteredSiswaNil = nilQ
+            ? siswaK.filter((s: any) =>
+                `${s.Nama || ''} ${s.NIS || ''}`.toLowerCase().includes(nilQ)
+              )
+            : siswaK;
+          return (
+            <>
+              <div className="bg-white border border-indigo-100 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xs noprint">
+                <div className="relative flex-1 min-w-[220px]">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={nilSearch}
+                    onChange={e => setNilSearch(e.target.value)}
+                    placeholder="Cari nama atau NIS siswa..."
+                    className="w-full pl-9 pr-9 py-2 border border-slate-200 rounded-xl text-xs bg-slate-50/70 focus:bg-white focus:border-indigo-400 focus:outline-none"
+                  />
+                  {nilSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setNilSearch('')}
+                      title="Hapus pencarian"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <div className="text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                  Menampilkan <strong className="text-slate-800">{filteredSiswaNil.length}</strong> dari{' '}
+                  {siswaK.length} siswa
+                </div>
+              </div>
+
+              <div className="bg-white border border-indigo-100 rounded-2xl overflow-hidden shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-indigo-50/80 border-b border-indigo-100 text-indigo-900">
+                      <tr>
+                        <th className="py-3 px-3 w-10">#</th>
+                        <th className="py-3 px-3">Nama Siswa</th>
+                        <th className="py-3 px-2 text-center">Sikap ({bobot[0]}%)</th>
+                        <th className="py-3 px-2 text-center">Tugas ({bobot[1]}%)</th>
+                        <th className="py-3 px-2 text-center">Proyek ({bobot[2]}%)</th>
+                        <th className="py-3 px-2 text-center">UTS ({bobot[3]}%)</th>
+                        <th className="py-3 px-2 text-center">UAS ({bobot[4]}%)</th>
+                        <th className="py-3 px-2 text-center">Bonus Poin</th>
+                        <th className="py-3 px-3 text-right">Nilai Akhir</th>
+                        <th className="py-3 px-3 text-center">Predikat</th>
+                        <th className="py-3 px-3">Tindak Lanjut</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {siswaK.length === 0 ? (
+                        <tr>
+                          <td colSpan={11} className="py-10 px-4 text-center text-xs text-slate-500">
+                            Belum ada siswa di kelas ini. Tambahkan siswa di menu{' '}
+                            <button
+                              type="button"
+                              onClick={() => setTab('sis')}
+                              className="text-indigo-600 font-semibold hover:underline cursor-pointer"
+                            >
+                              Data Siswa
+                            </button>{' '}
+                            untuk mulai menginput nilai.
+                          </td>
+                        </tr>
+                      ) : filteredSiswaNil.length === 0 ? (
+                        <tr>
+                          <td colSpan={11} className="py-10 px-4 text-center text-xs text-slate-500 space-y-2">
+                            <p>Tidak ada siswa yang cocok dengan "{nilSearch}".</p>
+                            <button
+                              type="button"
+                              onClick={() => setNilSearch('')}
+                              className="px-3.5 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer"
+                            >
+                              Reset Pencarian
+                            </button>
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredSiswaNil.map((s: any, i: number) => {
                     const r = getNilaiRow(s.ID) || {};
                     const a = hitungAkhir(r);
                     const pr = getPredikat(a);
@@ -8495,6 +8794,9 @@ export default function App() {
             </table>
           </div>
         </div>
+            </>
+          );
+        })()}
       </div>
     );
   }
@@ -10249,6 +10551,18 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setSearchModalOpen(true)}
+              title="Pencarian Cepat (Ctrl+K)"
+              className="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200 rounded-xl flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Cari</span>
+              <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono bg-white border border-slate-200 rounded text-slate-500">
+                Ctrl+K
+              </kbd>
+            </button>
             <OfflineModeTogglePill
               variant="light"
               token={token}
@@ -10319,6 +10633,259 @@ export default function App() {
 
         <main className="flex-1 max-w-6xl w-full mx-auto p-6">{activeView()}</main>
       </div>
+
+      {/* Global Quick Search Modal (Ctrl+K) */}
+      {searchModalOpen && (() => {
+        const kelasMapById = new Map<string, any>((db.Kelas || []).map((k: any) => [k.ID, k]));
+        const q = globalSearchQuery.trim().toLowerCase();
+
+        interface QuickSearchItem {
+          id: string;
+          cat: 'siswa' | 'tugas' | 'materi' | 'cbt' | 'jadwal' | 'menu';
+          title: string;
+          subtitle: string;
+          badge: string;
+          onSelect: () => void;
+        }
+
+        const results: QuickSearchItem[] = [];
+
+        // 1. Siswa
+        (db.Siswa || []).forEach((s: any) => {
+          if (!kelasMapById.has(s.Kelas)) return;
+          const kls = kelasMapById.get(s.Kelas);
+          const hay = `${s.Nama || ''} ${s.NIS || ''} ${s.Alamat || ''} ${s.NoSiswa || ''} ${s.NoOrtu || ''} ${kls?.Nama || ''}`.toLowerCase();
+          if (!q || hay.includes(q)) {
+            results.push({
+              id: `sis-${s.ID}`,
+              cat: 'siswa',
+              title: s.Nama || 'Siswa',
+              subtitle: `NIS ${s.NIS || '-'} · Kelas ${kls?.Nama || '-'}${s.Alamat ? ` · ${s.Alamat}` : ''}`,
+              badge: 'Siswa',
+              onSelect: () => {
+                setK(s.Kelas);
+                setTab('sis');
+                setSearchModalOpen(false);
+                openModalProfilSiswa(s);
+              }
+            });
+          }
+        });
+
+        // 2. Tugas
+        (db.Tugas || []).forEach((t: any) => {
+          if (!kelasMapById.has(t.Kelas)) return;
+          const kls = kelasMapById.get(t.Kelas);
+          const hay = `${t.Judul || ''} ${t.Mapel || ''} ${t.Jenis || ''} ${t.Deskripsi || ''} ${kls?.Nama || ''}`.toLowerCase();
+          if (!q || hay.includes(q)) {
+            results.push({
+              id: `tug-${t.ID}`,
+              cat: 'tugas',
+              title: t.Judul || 'Tugas',
+              subtitle: `${t.Mapel || 'Umum'} · ${t.Jenis || 'Tugas'} · Kelas ${kls?.Nama || '-'} · Tenggat ${t.Tenggat || '-'}`,
+              badge: 'Tugas',
+              onSelect: () => {
+                setK(t.Kelas);
+                setTugMapelFilter('ALL');
+                setTugSel(t.ID);
+                setTab('tug');
+                setSearchModalOpen(false);
+              }
+            });
+          }
+        });
+
+        // 3. Materi
+        (db.Materi || []).forEach((m: any) => {
+          const scopeOk = !m.Kelas || m.Kelas === '__ALL__' || kelasMapById.has(m.Kelas) || peran === 'admin';
+          if (!scopeOk) return;
+          const kls = m.Kelas && kelasMapById.get(m.Kelas);
+          const hay = `${m.Judul || ''} ${m.Mapel || ''} ${m.Bab || ''} ${m.Ringkasan || ''} ${m.Pengunggah || ''}`.toLowerCase();
+          if (!q || hay.includes(q)) {
+            results.push({
+              id: `mat-${m.ID}`,
+              cat: 'materi',
+              title: m.Judul || 'Materi',
+              subtitle: `${m.Mapel || 'Umum'}${m.Bab ? ` · ${m.Bab}` : ''}${kls ? ` · Kelas ${kls.Nama}` : ''}${m.Pengunggah ? ` · ${m.Pengunggah}` : ''}`,
+              badge: 'Materi',
+              onSelect: () => {
+                if (kls) setK(kls.ID);
+                setAjarSub('mat');
+                setAjarMapelFilter(m.Mapel || 'ALL');
+                setTab('ajar');
+                setSearchModalOpen(false);
+              }
+            });
+          }
+        });
+
+        // 4. CBT
+        (db.CBT || []).forEach((c: any) => {
+          if (!kelasMapById.has(c.Kelas)) return;
+          const kls = kelasMapById.get(c.Kelas);
+          const hay = `${c.Judul || ''} ${c.Mapel || ''} ${c.Status || ''} ${kls?.Nama || ''}`.toLowerCase();
+          if (!q || hay.includes(q)) {
+            results.push({
+              id: `cbt-${c.ID}`,
+              cat: 'cbt',
+              title: c.Judul || 'Ujian CBT',
+              subtitle: `${c.Mapel || 'Umum'} · Status: ${c.Status || '-'} · Kelas ${kls?.Nama || '-'}`,
+              badge: 'CBT',
+              onSelect: () => {
+                setK(c.Kelas);
+                setTab('cbt');
+                setSearchModalOpen(false);
+              }
+            });
+          }
+        });
+
+        // 5. Jadwal
+        (db.Jadwal || []).forEach((j: any) => {
+          if (!kelasMapById.has(j.Kelas)) return;
+          const kls = kelasMapById.get(j.Kelas);
+          const hay = `${j.Mapel || ''} ${j.Guru || ''} ${j.Hari || ''} ${kls?.Nama || ''}`.toLowerCase();
+          if (!q || hay.includes(q)) {
+            results.push({
+              id: `jad-${j.ID}`,
+              cat: 'jadwal',
+              title: `${j.Mapel || 'Pelajaran'} (${j.Hari || '-'})`,
+              subtitle: `${j.Mulai || ''}–${j.Selesai || ''} · Kelas ${kls?.Nama || '-'}${j.Guru ? ` · ${j.Guru}` : ''}`,
+              badge: 'Jadwal',
+              onSelect: () => {
+                setK(j.Kelas);
+                setTab('jad');
+                setSearchModalOpen(false);
+              }
+            });
+          }
+        });
+
+        // 6. Menu / Tabs
+        TABS.filter(t => tabOk(t[0])).forEach(([id, label]) => {
+          if (!q || label.toLowerCase().includes(q) || id.toLowerCase().includes(q)) {
+            results.push({
+              id: `menu-${id}`,
+              cat: 'menu',
+              title: label,
+              subtitle: `Buka menu ${label}`,
+              badge: 'Menu',
+              onSelect: () => {
+                setTab(id);
+                setSearchModalOpen(false);
+              }
+            });
+          }
+        });
+
+        const countByCat = (cat: QuickSearchItem['cat']) => results.filter(r => r.cat === cat).length;
+        const visibleResults = (
+          globalSearchCat === 'all' ? results : results.filter(r => r.cat === globalSearchCat)
+        ).slice(0, q ? 40 : 18);
+
+        const cats: { id: typeof globalSearchCat; label: string; count: number }[] = [
+          { id: 'all', label: 'Semua', count: results.length },
+          { id: 'siswa', label: 'Siswa', count: countByCat('siswa') },
+          { id: 'tugas', label: 'Tugas', count: countByCat('tugas') },
+          { id: 'materi', label: 'Materi', count: countByCat('materi') },
+          { id: 'cbt', label: 'CBT', count: countByCat('cbt') },
+          { id: 'jadwal', label: 'Jadwal', count: countByCat('jadwal') },
+          { id: 'menu', label: 'Menu', count: countByCat('menu') }
+        ];
+
+        return (
+          <div
+            onClick={() => setSearchModalOpen(false)}
+            className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-start justify-center p-4 pt-12 sm:pt-20 noprint"
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              className="bg-white rounded-2xl border border-slate-200 w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[82vh]"
+            >
+              <div className="p-4 border-b border-slate-100 flex items-center gap-3">
+                <Search className="w-4 h-4 text-indigo-600 shrink-0" />
+                <input
+                  type="text"
+                  autoFocus
+                  value={globalSearchQuery}
+                  onChange={e => setGlobalSearchQuery(e.target.value)}
+                  placeholder="Cari siswa, NIS, tugas, materi, CBT, jadwal, atau menu..."
+                  className="flex-1 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                />
+                {globalSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setGlobalSearchQuery('')}
+                    className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    title="Bersihkan kata kunci"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSearchModalOpen(false)}
+                  className="px-2 py-1 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg cursor-pointer"
+                >
+                  Esc
+                </button>
+              </div>
+
+              <div className="px-4 py-2.5 bg-slate-50/80 border-b border-slate-100 flex flex-wrap items-center gap-1.5">
+                {cats.map(c => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setGlobalSearchCat(c.id)}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg border transition-colors cursor-pointer tabular-nums ${
+                      globalSearchCat === c.id
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700'
+                    }`}
+                  >
+                    {c.label} ({c.count})
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+                {visibleResults.length === 0 ? (
+                  <div className="py-12 px-6 text-center text-xs text-slate-500 space-y-2">
+                    <p>Tidak ditemukan hasil untuk "{globalSearchQuery}".</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGlobalSearchQuery('');
+                        setGlobalSearchCat('all');
+                      }}
+                      className="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer"
+                    >
+                      Reset Pencarian
+                    </button>
+                  </div>
+                ) : (
+                  visibleResults.map(item => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={item.onSelect}
+                      className="w-full px-4 py-3 text-left hover:bg-indigo-50/70 flex items-center justify-between gap-3 transition-colors cursor-pointer"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-900 truncate">{item.title}</div>
+                        <div className="text-[11px] text-slate-500 truncate mt-0.5">{item.subtitle}</div>
+                      </div>
+                      <span className="text-[11px] font-semibold text-indigo-700 shrink-0">
+                        {item.badge} →
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal Dialog */}
       {modalContent && (

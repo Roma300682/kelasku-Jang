@@ -74,7 +74,8 @@ import {
   Star,
   Sparkles,
   ArrowRightLeft,
-  History
+  History,
+  Search
 } from 'lucide-react';
 import {
   POIN_TARGET_OPTIONS,
@@ -125,7 +126,8 @@ export default function StudentPortal({
   const [submittingExam, setSubmittingExam] = useState(false);
   const [resultModal, setResultModal] = useState<any | null>(null);
 
-  // Task File Upload & Subject Filter State
+  // Task File Upload, Subject Filter & Portal Search State
+  const [portalSearch, setPortalSearch] = useState('');
   const [tugasMapelFilter, setTugasMapelFilter] = useState<string>('ALL');
   const [materiMapelFilter, setMateriMapelFilter] = useState<string>('ALL');
   const [previewMateriModal, setPreviewMateriModal] = useState<any | null>(null);
@@ -741,6 +743,86 @@ export default function StudentPortal({
           </div>
         </div>
 
+        {/* Portal Siswa Quick Search Bar */}
+        {(() => {
+          const sq = portalSearch.trim().toLowerCase();
+          const cbtHits = sq
+            ? (p.cbtList || []).filter((c: any) =>
+                `${c.Judul || ''} ${c.Mapel || ''} ${c.Status || ''}`.toLowerCase().includes(sq)
+              ).length
+            : 0;
+          const matHits = sq
+            ? (p.materi || []).filter((m: any) =>
+                `${m.Judul || ''} ${m.Mapel || ''} ${m.Bab || ''} ${m.Ringkasan || ''} ${m.IsiMateri || ''} ${m.Pengunggah || ''} ${m.NamaFile || ''}`
+                  .toLowerCase()
+                  .includes(sq)
+              ).length
+            : 0;
+          const tugHits = sq
+            ? (p.tugas || []).filter((t: any) =>
+                `${t.Judul || ''} ${t.Mapel || ''} ${t.Jenis || ''} ${t.Deskripsi || ''} ${t.Status || ''} ${t.NamaFile || ''}`
+                  .toLowerCase()
+                  .includes(sq)
+              ).length
+            : 0;
+          const jadHits = sq
+            ? (p.jadwal || []).filter((j: any) =>
+                `${j.Mapel || ''} ${j.Guru || ''} ${j.Hari || ''}`.toLowerCase().includes(sq)
+              ).length
+            : 0;
+
+          return (
+            <section className="bg-white border border-sky-200/80 rounded-2xl p-4 shadow-sm space-y-2.5">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative flex-1 min-w-[220px]">
+                  <Search className="w-4 h-4 text-sky-600 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={portalSearch}
+                    onChange={e => setPortalSearch(e.target.value)}
+                    placeholder="Cari tugas, materi pelajaran, ujian CBT, jadwal, atau guru..."
+                    className="w-full pl-10 pr-10 py-2.5 border border-slate-200 rounded-xl text-xs bg-slate-50/70 focus:bg-white focus:border-sky-400 focus:outline-none text-slate-900"
+                  />
+                  {portalSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setPortalSearch('')}
+                      title="Hapus pencarian"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                {portalSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setPortalSearch('')}
+                    className="px-3.5 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl cursor-pointer whitespace-nowrap"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+
+              {sq && (
+                <div className="text-xs text-slate-600 flex flex-wrap items-center gap-x-2 gap-y-1 tabular-nums px-1">
+                  <span>
+                    Hasil untuk <strong className="text-slate-900">"{portalSearch}"</strong>:
+                  </span>
+                  <span className="text-cyan-700 font-semibold">{cbtHits} CBT</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-emerald-700 font-semibold">{matHits} Materi</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-amber-700 font-semibold">{tugHits} Tugas</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-violet-700 font-semibold">{jadHits} Jadwal</span>
+                </div>
+              )}
+            </section>
+          );
+        })()}
+
         {/* Bintang Login & Konversi Poin ke Nilai */}
         {(() => {
           const pl = p.poinLogin || {
@@ -1133,6 +1215,15 @@ export default function StudentPortal({
         </section>
 
         {/* CBT Online Section */}
+        {(() => {
+          const allCbt = Array.isArray(p.cbtList) ? p.cbtList : [];
+          const sq = portalSearch.trim().toLowerCase();
+          const filteredCbt = sq
+            ? allCbt.filter((c: any) =>
+                `${c.Judul || ''} ${c.Mapel || ''} ${c.Status || ''}`.toLowerCase().includes(sq)
+              )
+            : allCbt;
+          return (
         <section className="bg-white border border-cyan-100 rounded-2xl p-6 space-y-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -1144,17 +1235,19 @@ export default function StudentPortal({
               </p>
             </div>
             <span className="px-2.5 py-1 text-[11px] font-bold bg-cyan-50 text-cyan-800 border border-cyan-200 rounded-lg tabular-nums">
-              {(p.cbtList || []).length} Paket Ujian
+              {filteredCbt.length} Paket Ujian
             </span>
           </div>
 
-          {(p.cbtList || []).length === 0 ? (
+          {filteredCbt.length === 0 ? (
             <div className="p-6 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500">
-              Belum ada ujian CBT yang dibuka untuk kelas ini.
+              {sq
+                ? `Tidak ada ujian CBT yang cocok dengan "${portalSearch}".`
+                : 'Belum ada ujian CBT yang dibuka untuk kelas ini.'}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {(p.cbtList || []).map((c: any) => {
+              {filteredCbt.map((c: any) => {
                 const jmlPG = (c.soalPG || []).length;
                 const jmlUr = (c.soalUraian || []).length;
                 const h = c.hasil;
@@ -1234,6 +1327,8 @@ export default function StudentPortal({
             </div>
           )}
         </section>
+          );
+        })()}
 
         {/* Secretary Attendance Input (If student is Secretary) */}
         {p.sekretaris && (
@@ -1491,12 +1586,20 @@ export default function StudentPortal({
             matSubjects.some(s => s.toLowerCase() === materiMapelFilter.toLowerCase())
               ? matSubjects.find(s => s.toLowerCase() === materiMapelFilter.toLowerCase()) || 'ALL'
               : 'ALL';
-          const visibleMateri =
+          const visibleByMapelMateri =
             activeMatFilter === 'ALL'
               ? allMateri
               : allMateri.filter(
                   (m: any) => String(m.Mapel || 'Umum').trim().toLowerCase() === activeMatFilter.toLowerCase()
                 );
+          const sqMat = portalSearch.trim().toLowerCase();
+          const visibleMateri = sqMat
+            ? visibleByMapelMateri.filter((m: any) =>
+                `${m.Judul || ''} ${m.Mapel || ''} ${m.Bab || ''} ${m.Ringkasan || ''} ${m.IsiMateri || ''} ${m.Pengunggah || ''} ${m.NamaFile || ''}`
+                  .toLowerCase()
+                  .includes(sqMat)
+              )
+            : visibleByMapelMateri;
 
           const triggerDownloadMateri = (m: any) => {
             if (m.FileID) {
@@ -1577,7 +1680,9 @@ export default function StudentPortal({
 
               {visibleMateri.length === 0 ? (
                 <div className="p-6 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500">
-                  Belum ada materi pelajaran yang dibagikan guru untuk kelas ini.
+                  {sqMat
+                    ? `Tidak ada materi yang cocok dengan "${portalSearch}".`
+                    : 'Belum ada materi pelajaran yang dibagikan guru untuk kelas ini.'}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1700,12 +1805,20 @@ export default function StudentPortal({
             classSubjects.some(s => s.toLowerCase() === tugasMapelFilter.toLowerCase())
               ? classSubjects.find(s => s.toLowerCase() === tugasMapelFilter.toLowerCase()) || 'ALL'
               : 'ALL';
-          const visibleTasks =
+          const visibleByMapelTasks =
             activeFilter === 'ALL'
               ? allTasks
               : allTasks.filter(
                   (t: any) => String(t.Mapel || '').trim().toLowerCase() === activeFilter.toLowerCase()
                 );
+          const sqTug = portalSearch.trim().toLowerCase();
+          const visibleTasks = sqTug
+            ? visibleByMapelTasks.filter((t: any) =>
+                `${t.Judul || ''} ${t.Mapel || ''} ${t.Jenis || ''} ${t.Deskripsi || ''} ${t.Status || ''} ${t.NamaFile || ''}`
+                  .toLowerCase()
+                  .includes(sqTug)
+              )
+            : visibleByMapelTasks;
 
           return (
             <div className="bg-white border border-amber-100 rounded-2xl p-6 space-y-4 shadow-sm">
@@ -1773,7 +1886,9 @@ export default function StudentPortal({
                     {visibleTasks.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="py-6 text-center text-slate-400">
-                          {activeFilter === 'ALL'
+                          {sqTug
+                            ? `Tidak ada tugas yang cocok dengan "${portalSearch}".`
+                            : activeFilter === 'ALL'
                             ? 'Belum ada tugas untuk kelas ini.'
                             : `Belum ada tugas untuk mata pelajaran ${activeFilter}.`}
                         </td>
@@ -1945,8 +2060,14 @@ export default function StudentPortal({
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {HARI.filter(h => h !== 'Sabtu' || (p.jadwal || []).some((x: any) => x.Hari === h)).map(h => {
+                const sqJad = portalSearch.trim().toLowerCase();
                 const ls = (p.jadwal || [])
                   .filter((x: any) => x.Hari === h)
+                  .filter((x: any) =>
+                    !sqJad
+                      ? true
+                      : `${x.Mapel || ''} ${x.Guru || ''} ${x.Hari || ''}`.toLowerCase().includes(sqJad)
+                  )
                   .sort((a: any, b: any) => (a.Mulai || '').localeCompare(b.Mulai || ''));
                 return (
                   <div
@@ -1972,7 +2093,9 @@ export default function StudentPortal({
                           </div>
                         ))
                       ) : (
-                        <div className="text-xs text-slate-400">Belum ada jadwal</div>
+                        <div className="text-xs text-slate-400">
+                          {sqJad ? 'Tidak ada jadwal yang cocok' : 'Belum ada jadwal'}
+                        </div>
                       )}
                     </div>
                   </div>
