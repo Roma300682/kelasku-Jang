@@ -300,7 +300,15 @@ export default function App() {
   const [role, setRole] = useState('');
   const [peran, setPeran] = useState('admin');
   const [adminAda, setAdminAda] = useState(true);
-  const [loginMode, setLoginMode] = useState<'admin' | 'siswa'>('admin');
+  const [loginMode, setLoginMode] = useState<'admin' | 'siswa'>(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const qPortal = (sp.get('portal') || '').toLowerCase();
+      const h = window.location.hash.toLowerCase();
+      if (qPortal === 'siswa' || h === '#siswa' || h === '#portal-siswa') return 'siswa';
+    } catch {}
+    return 'admin';
+  });
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginPass2, setLoginPass2] = useState('');
@@ -464,13 +472,16 @@ export default function App() {
     } catch (_) {}
   };
 
-  const sesiHabis = useCallback((pesan?: string) => {
+  const sesiHabis = useCallback((pesan?: string, silent = false) => {
     setToken('');
     setRole('');
     setPeran('admin');
     setPortal(null);
     simpanTokenStorage('', '');
-    setLoginErr(pesan || 'Sesi berakhir, silakan masuk kembali.');
+    const clean = !pesan || pesan === 'SESI_HABIS'
+      ? 'Sesi Anda telah berakhir. Silakan masuk kembali.'
+      : pesan;
+    setLoginErr(silent ? '' : clean);
   }, []);
 
   const apiCall = useCallback(
@@ -487,7 +498,7 @@ export default function App() {
     [token, sesiHabis]
   );
 
-  const masukSesi = useCallback(async (t: string, r: string) => {
+  const masukSesi = useCallback(async (t: string, r: string, silentOnExpired = false): Promise<boolean> => {
     setToken(t);
     setRole(r);
     simpanTokenStorage(t, r);
@@ -505,8 +516,11 @@ export default function App() {
         setPortal(pData);
       }
       setLoginErr('');
+      return true;
     } catch (e: any) {
-      sesiHabis(pesanErr(e));
+      const msg = pesanErr(e);
+      sesiHabis(msg, silentOnExpired && msg.includes('SESI_HABIS'));
+      return false;
     } finally {
       setLoading(false);
     }
@@ -523,8 +537,8 @@ export default function App() {
           savedRole = sessionStorage.getItem('mk_role') || localStorage.getItem('mk_role') || '';
         } catch (_) {}
         if (savedTok && savedRole) {
-          await masukSesi(savedTok, savedRole);
-          return;
+          const ok = await masukSesi(savedTok, savedRole, true);
+          if (ok) return;
         }
         const st = await callRaw('api_status');
         setAdminAda(!!st.adminAda);
@@ -681,6 +695,10 @@ export default function App() {
     try {
       let r;
       if (!adminAda) {
+        if (loginMode !== 'admin') {
+          setLoginErr('Akun Admin sekolah belum dibuat. Hubungi Admin terlebih dahulu.');
+          return;
+        }
         if (p !== loginPass2) {
           setLoginErr('Kata sandi konfirmasi tidak sama.');
           return;
@@ -690,8 +708,8 @@ export default function App() {
       } else {
         r = await callRaw('api_login', loginMode, u, p);
       }
-      await masukSesi(r.token, r.role);
-      if (r?.role === 'siswa' && r?.loginReward?.awarded > 0) {
+      const ok = await masukSesi(r.token, r.role);
+      if (ok && r?.role === 'siswa' && r?.loginReward?.awarded > 0) {
         showToast(
           `★ +1 Bintang & +${r.loginReward.awarded} Poin Login diterima! Saldo: ${r.loginReward.saldoPoin} Poin`,
           5000
@@ -758,7 +776,25 @@ export default function App() {
     }
   }
 
+  function pilihPortalLogin(modeNext: 'admin' | 'siswa') {
+    setLoginMode(modeNext);
+    setLoginErr('');
+    setLoginPass('');
+    setLoginPass2('');
+    setForgotMode(false);
+    setForgotMsg('');
+    setForgotOk(false);
+    setForgotOtpSent(false);
+    setForgotOtpPreview('');
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('portal', modeNext);
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    } catch {}
+  }
+
   async function handleLogout() {
+    const prevMode: 'admin' | 'siswa' = role === 'siswa' ? 'siswa' : 'admin';
     try {
       if (token) await callRaw('api_logout', token);
     } catch (_) {}
@@ -766,7 +802,7 @@ export default function App() {
     setRole('');
     setPortal(null);
     simpanTokenStorage('', '');
-    setLoginPass('');
+    pilihPortalLogin(prevMode);
     try {
       const st = await callRaw('api_status');
       setPublicInfo({
@@ -1621,9 +1657,48 @@ export default function App() {
                     : 'Verifikasi NIS dan data siswa untuk mengatur ulang PIN Portal Siswa.'
                   : !adminAda
                   ? 'Buat akun Admin pertama untuk mengelola absensi, nilai, jadwal, denah duduk, perangkat ajar, dan portal siswa.'
-                  : 'Kelola absensi, nilai, jadwal, denah duduk, perangkat ajar, dan portal siswa dalam satu ruang kerja.'}
+                  : isAdm
+                  ? 'Login Admin & Guru · Kelola absensi, nilai, jadwal, denah duduk, dan perangkat ajar.'
+                  : 'Portal Siswa · Masuk dengan NIS & PIN untuk melihat tugas, materi, jadwal, nilai, & bintang harian.'}
               </p>
             </div>
+
+            {adminAda && !loginBrandEdit && (
+              <div
+                role="tablist"
+                aria-label="Pilih Portal Masuk"
+                className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-slate-100/90 border border-slate-200/80"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={isAdm}
+                  onClick={() => pilihPortalLogin('admin')}
+                  className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    isAdm
+                      ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-500/25'
+                      : 'text-slate-600 hover:text-indigo-700 hover:bg-white/70'
+                  }`}
+                >
+                  <UserCheck className="w-4 h-4 shrink-0" />
+                  <span>Login Admin / Guru</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={!isAdm}
+                  onClick={() => pilihPortalLogin('siswa')}
+                  className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    !isAdm
+                      ? 'bg-gradient-to-r from-sky-600 to-teal-600 text-white shadow-md shadow-sky-500/25'
+                      : 'text-slate-600 hover:text-sky-700 hover:bg-white/70'
+                  }`}
+                >
+                  <GraduationCap className="w-4 h-4 shrink-0" />
+                  <span>Portal Siswa</span>
+                </button>
+              </div>
+            )}
 
             {loginBrandEdit ? (
               <form onSubmit={simpanBrandingLogin} className="space-y-4">
@@ -2127,14 +2202,48 @@ export default function App() {
               )
             ) : (
               <form onSubmit={handleLoginSubmit} className="space-y-4">
+                {adminAda && (
+                  <div
+                    className={`px-3.5 py-2.5 rounded-xl border text-xs flex items-center gap-2.5 ${
+                      isAdm
+                        ? 'bg-indigo-50/80 border-indigo-200 text-indigo-900'
+                        : 'bg-sky-50/90 border-sky-200 text-sky-900'
+                    }`}
+                  >
+                    {isAdm ? (
+                      <UserCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                    ) : (
+                      <GraduationCap className="w-4 h-4 text-sky-600 shrink-0" />
+                    )}
+                    <div className="min-w-0 leading-snug">
+                      <span className="font-bold">
+                        {isAdm ? 'Area Masuk Admin & Guru' : 'Area Masuk Portal Siswa'}
+                      </span>
+                      <span className="block text-[11px] opacity-80">
+                        {isAdm
+                          ? 'Gunakan Nama Pengguna dan Kata Sandi Admin atau Wali Kelas.'
+                          : 'Masukkan NIS / NISN dan PIN Siswa (4–8 angka) dari Wali Kelas.'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 <label className="block text-xs font-semibold text-slate-700">
-                  {adminAda ? (isAdm ? 'Nama Pengguna' : 'NIS / NISN Siswa') : 'Nama Pengguna Admin'}
+                  {adminAda
+                    ? isAdm
+                      ? 'Nama Pengguna (Admin / Guru)'
+                      : 'NIS / NISN Siswa'
+                    : 'Nama Pengguna Admin'}
                   <input
                     type="text"
                     value={loginUser}
                     onChange={e => setLoginUser(e.target.value)}
                     placeholder={isAdm ? 'contoh: admin atau ratna' : 'contoh: 102601'}
-                    className="mt-1.5 w-full px-3.5 py-2.5 border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className={`mt-1.5 w-full px-3.5 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 ${
+                      isAdm
+                        ? 'border-indigo-200 focus:ring-indigo-500'
+                        : 'border-sky-200 focus:ring-sky-500'
+                    }`}
                   />
                 </label>
 
@@ -2156,7 +2265,11 @@ export default function App() {
                           setForgotMsg('');
                           setForgotOk(false);
                         }}
-                        className="text-xs font-semibold text-indigo-600 hover:text-fuchsia-600 hover:underline cursor-pointer"
+                        className={`text-xs font-semibold hover:underline cursor-pointer ${
+                          isAdm
+                            ? 'text-indigo-600 hover:text-fuchsia-600'
+                            : 'text-sky-600 hover:text-teal-600'
+                        }`}
                       >
                         {isAdm ? 'Lupa Kata Sandi?' : 'Lupa PIN?'}
                       </button>
@@ -2167,7 +2280,11 @@ export default function App() {
                       value={loginPass}
                       onChange={e => setLoginPass(e.target.value)}
                       placeholder={isAdm ? '••••••••' : '123456'}
-                      className="w-full px-3.5 py-2.5 border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className={`w-full px-3.5 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 ${
+                        isAdm
+                          ? 'border-indigo-200 focus:ring-indigo-500'
+                          : 'border-sky-200 focus:ring-sky-500'
+                      }`}
                     />
                   </div>
                 </div>
@@ -2193,9 +2310,27 @@ export default function App() {
 
                 <button
                   type="submit"
-                  className="w-full py-2.5 px-4 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 hover:brightness-110 text-white font-semibold text-sm rounded-xl transition-all cursor-pointer shadow-md shadow-indigo-500/25"
+                  className={`w-full py-2.5 px-4 text-white font-semibold text-sm rounded-xl transition-all cursor-pointer shadow-md flex items-center justify-center gap-2 ${
+                    !adminAda || isAdm
+                      ? 'bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 hover:brightness-110 shadow-indigo-500/25'
+                      : 'bg-gradient-to-r from-sky-600 via-cyan-600 to-teal-600 hover:brightness-110 shadow-sky-500/25'
+                  }`}
                 >
-                  {adminAda ? 'Masuk Sekarang' : 'Buat Akun Admin'}
+                  {adminAda ? (
+                    isAdm ? (
+                      <>
+                        <UserCheck className="w-4 h-4" />
+                        <span>Masuk Admin / Guru</span>
+                      </>
+                    ) : (
+                      <>
+                        <GraduationCap className="w-4 h-4" />
+                        <span>Masuk Portal Siswa</span>
+                      </>
+                    )
+                  ) : (
+                    'Buat Akun Admin'
+                  )}
                 </button>
               </form>
             )}
@@ -2226,7 +2361,36 @@ export default function App() {
   }
 
   // Student Portal Mode
-  if (role === 'siswa' && portal) {
+  if (role === 'siswa') {
+    if (!portal) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center space-y-4">
+          <div className="w-8 h-8 border-3 border-sky-600 border-t-transparent rounded-full animate-spin" />
+          <div>
+            <div className="font-bold text-sm text-slate-800">Menyiapkan Portal Siswa…</div>
+            <div className="text-xs text-slate-500 mt-1">
+              Jika halaman tidak terbuka, silakan muat ulang atau kembali ke halaman masuk.
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={muatUlang}
+              className="px-4 py-2 text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-xl cursor-pointer"
+            >
+              Muat Ulang Portal
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="px-4 py-2 text-xs font-semibold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl cursor-pointer"
+            >
+              Kembali ke Login
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <>
         <StudentPortal
@@ -3868,13 +4032,30 @@ export default function App() {
               Biodata yang diisi atau diperbarui siswa di Portal Siswa otomatis tersinkron ke tabel Admin ini.
             </span>
           </div>
-          <button
-            type="button"
-            onClick={muatUlang}
-            className="px-2.5 py-1 text-[11px] font-semibold bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg inline-flex items-center gap-1 cursor-pointer"
-          >
-            <RefreshCw className="w-3 h-3" /> Segarkan Data
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={async () => {
+                const portalUrl = `${window.location.origin}/?portal=siswa`;
+                try {
+                  await navigator.clipboard.writeText(portalUrl);
+                  showToast('Tautan Login Portal Siswa berhasil disalin');
+                } catch {
+                  showToast(portalUrl, 5000);
+                }
+              }}
+              className="px-2.5 py-1 text-[11px] font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-lg inline-flex items-center gap-1 cursor-pointer shadow-xs"
+            >
+              <Copy className="w-3 h-3" /> Salin Link Portal Siswa
+            </button>
+            <button
+              type="button"
+              onClick={muatUlang}
+              className="px-2.5 py-1 text-[11px] font-semibold bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg inline-flex items-center gap-1 cursor-pointer"
+            >
+              <RefreshCw className="w-3 h-3" /> Segarkan Data
+            </button>
+          </div>
         </div>
 
         <div className="bg-white border border-amber-100 rounded-2xl overflow-hidden shadow-sm">

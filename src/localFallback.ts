@@ -794,7 +794,7 @@ function buatSesi(role: 'admin' | 'staf' | 'siswa', sid: string, nama: string) {
   const map = getSessions();
   map[token] = { role, sid, nama, expires: Date.now() + 21600 * 1000 };
   saveSessions(map);
-  return { token, role, nama };
+  return { token, role, nama, userId: sid };
 }
 
 function getSesi(token: string, expectedRole?: 'admin' | 'staf' | 'siswa'): LocalSession {
@@ -903,13 +903,15 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
 
   if (fn === 'api_login') {
     const [mode, user, pass] = args;
+    const modeNorm = mode === 'admin' ? 'admin' : 'siswa';
     const userRaw = String(user || '').trim().toLowerCase();
     const userNisNorm = userRaw.replace(/\s+/g, '');
+    const userNisStrict = userRaw.replace(/[\s.\-]+/g, '');
     const passRaw = String(pass || '');
     const passTrim = passRaw.trim();
     if (!userRaw || !passTrim) throw new Error('Lengkapi data masuk.');
 
-    if (mode === 'admin') {
+    if (modeNorm === 'admin') {
       if (db.admin && db.admin.user === userRaw) {
         const h1 = await sha256Base64('local-admin', passRaw);
         const h2 = await sha256Base64('local-admin', passTrim);
@@ -927,12 +929,36 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
           }
         }
       }
+      try {
+        const rawCreds = localStorage.getItem('mk_offline_creds_v1');
+        if (rawCreds) {
+          const creds = JSON.parse(rawCreds) as Record<
+            string,
+            { role: 'admin' | 'staf' | 'siswa'; sid: string; nama: string; passHash: string }
+          >;
+          const entry = creds[`admin:${userRaw}`];
+          if (entry && (entry.role === 'admin' || entry.role === 'staf')) {
+            const cand1 = await sha256Base64('offline-cred', passRaw);
+            const cand2 = await sha256Base64('offline-cred', passTrim);
+            if (entry.passHash === cand1 || entry.passHash === cand2) {
+              return buatSesi(entry.role, entry.sid || '', entry.nama || userRaw);
+            }
+          }
+        }
+      } catch {}
+      throw new Error('Nama pengguna atau kata sandi Admin/Guru salah. Jika Anda siswa, silakan masuk melalui tab Portal Siswa.');
     }
 
     const akun = db.sheets.Akun || [];
-    const siswaMatches = (db.sheets.Siswa || []).filter(
+    const allSiswa = db.sheets.Siswa || [];
+    let siswaMatches = allSiswa.filter(
       s => String(s.NIS || '').replace(/\s+/g, '').toLowerCase() === userNisNorm
     );
+    if (!siswaMatches.length && userNisStrict) {
+      siswaMatches = allSiswa.filter(
+        s => String(s.NIS || '').replace(/[\s.\-]+/g, '').toLowerCase() === userNisStrict
+      );
+    }
     for (const s of siswaMatches) {
       const h = await sha256Base64(s.ID, passTrim);
       if (akun.some(a => a.SiswaID === s.ID && a.Hash === h)) {
@@ -975,7 +1001,7 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
         };
       }
     }
-    // Check mirrored online credentials for Admin, Guru/Wali, and Siswa
+    // Check mirrored online credentials for Siswa
     try {
       const rawCreds = localStorage.getItem('mk_offline_creds_v1');
       if (rawCreds) {
@@ -983,19 +1009,33 @@ export async function runLocalRpcFallback(fn: string, args: any[]): Promise<any>
           string,
           { role: 'admin' | 'staf' | 'siswa'; sid: string; nama: string; passHash: string }
         >;
-        const key = `${mode === 'admin' ? 'admin' : 'siswa'}:${mode === 'admin' ? userRaw : userNisNorm}`;
-        const entry = creds[key];
-        if (entry) {
+        const entry = creds[`siswa:${userNisNorm}`] || creds[`siswa:${userNisStrict}`];
+        if (entry && entry.role === 'siswa') {
           const cand1 = await sha256Base64('offline-cred', passRaw);
           const cand2 = await sha256Base64('offline-cred', passTrim);
           if (entry.passHash === cand1 || entry.passHash === cand2) {
-            return buatSesi(entry.role, entry.sid || '', entry.nama || userRaw);
+            let resolvedSid = entry.sid || siswaMatches[0]?.ID || '';
+            if (!resolvedSid) {
+              try {
+                const cachedRaw = localStorage.getItem('mk_offline_student_portal_v1');
+                const cachedPortal = cachedRaw ? JSON.parse(cachedRaw) : null;
+                if (cachedPortal?.siswa?.ID) resolvedSid = cachedPortal.siswa.ID;
+              } catch {}
+            }
+            return buatSesi('siswa', resolvedSid, entry.nama || siswaMatches[0]?.Nama || userRaw);
           }
         }
       }
     } catch {}
 
-    throw new Error('Nama pengguna / NIS atau kata sandi / PIN salah.');
+    if (siswaMatches.length === 0) {
+      throw new Error('NIS tidak terdaftar pada data siswa.');
+    }
+    const hasAkun = siswaMatches.some(s => akun.some(a => a.SiswaID === s.ID));
+    if (!hasAkun) {
+      throw new Error('Siswa dengan NIS tersebut belum memiliki PIN aktif. Minta Admin/Wali Kelas membuat PIN terlebih dahulu.');
+    }
+    throw new Error('PIN siswa salah. Pastikan PIN 4–8 angka sesuai yang dibuat Admin/Wali Kelas.');
   }
 
   if (fn === 'api_logout') {

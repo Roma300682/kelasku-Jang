@@ -295,6 +295,7 @@ function uidShort(): string {
 interface DatabaseFile {
   admin: { user: string; salt: string; hash: string } | null;
   sheets: Record<string, Record<string, string>[]>;
+  sessions?: Record<string, { role: string; sid: string; nama: string; expires: number }>;
 }
 
 let dbCache: DatabaseFile | null = null;
@@ -1212,6 +1213,17 @@ function normalizeLoadedDb(rawDb: DatabaseFile): DatabaseFile {
     ...t,
     ModulID: t.ModulID || tpToModul.get(String(t.ID || '')) || ''
   }));
+  const now = Date.now();
+  const cleanSessions: Record<string, { role: string; sid: string; nama: string; expires: number }> = {};
+  if (rawDb.sessions && typeof rawDb.sessions === 'object') {
+    for (const [tok, rec] of Object.entries(rawDb.sessions)) {
+      if (rec && typeof rec.expires === 'number' && rec.expires > now && rec.role) {
+        cleanSessions[tok] = rec;
+        sessions.set(tok, rec);
+      }
+    }
+  }
+  rawDb.sessions = cleanSessions;
   return rawDb;
 }
 
@@ -1340,17 +1352,43 @@ function buatSesi_(role: string, sid: string, nama: string) {
     expires: Date.now() + TTL_SESI
   };
   sessions.set(token, rec);
+  try {
+    const db = getDb();
+    if (!db.sessions || typeof db.sessions !== 'object') db.sessions = {};
+    const now = Date.now();
+    for (const [k, v] of Object.entries(db.sessions)) {
+      if (!v || now > v.expires) delete db.sessions[k];
+    }
+    db.sessions[token] = rec;
+    saveDb();
+  } catch {}
   if (detectStorageEngine().isVercelCloud) {
     queueWrite(() => saveRemoteSession(token, rec));
   }
-  return { token, role, nama: nama || '' };
+  return { token, role, nama: nama || '', userId: sid || '' };
 }
 
 function sesi_(token: string, role?: string) {
   if (!token) throw new Error('SESI_HABIS');
-  const s = sessions.get(token);
+  let s = sessions.get(token);
+  if (!s) {
+    try {
+      const persisted = getDb().sessions?.[token];
+      if (persisted && Date.now() <= persisted.expires) {
+        sessions.set(token, persisted);
+        s = persisted;
+      }
+    } catch {}
+  }
   if (!s || Date.now() > s.expires) {
     sessions.delete(token);
+    try {
+      const db = getDb();
+      if (db.sessions && db.sessions[token]) {
+        delete db.sessions[token];
+        saveDb();
+      }
+    } catch {}
     throw new Error('SESI_HABIS');
   }
   if (role && s.role !== role) throw new Error('Akses ditolak.');
@@ -1818,19 +1856,27 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
   },
 
   api_login(mode: string, user: string, pass: string) {
+    const modeNorm = mode === 'admin' ? 'admin' : 'siswa';
     const userRaw = String(user || '').trim().toLowerCase();
     const userNisNorm = userRaw.replace(/\s+/g, '');
+    const userNisStrict = userRaw.replace(/[\s.\-]+/g, '');
     const passRaw = String(pass || '');
     const passTrim = passRaw.trim();
     if (!userRaw || !passTrim) throw new Error('Lengkapi data masuk.');
-    const kg = kunciGagal_(mode, userRaw);
+    const kg = kunciGagal_(modeNorm, modeNorm === 'siswa' ? userNisStrict || userNisNorm : userRaw);
     cekBlok_(kg);
 
     const tryStudentLogin = () => {
       const akun = baca_('Akun');
-      const siswaMatches = baca_('Siswa').filter(
+      const allSiswa = baca_('Siswa');
+      let siswaMatches = allSiswa.filter(
         s => String(s.NIS || '').replace(/\s+/g, '').toLowerCase() === userNisNorm
       );
+      if (!siswaMatches.length && userNisStrict) {
+        siswaMatches = allSiswa.filter(
+          s => String(s.NIS || '').replace(/[\s.\-]+/g, '').toLowerCase() === userNisStrict
+        );
+      }
       if (!siswaMatches.length) return { status: 'no_nis' as const };
       const withAkun = siswaMatches.filter(s => akun.some(a => a.SiswaID === s.ID));
       if (!withAkun.length) return { status: 'no_pin' as const };
@@ -1841,7 +1887,7 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
       return { status: 'wrong_pin' as const };
     };
 
-    if (mode === 'admin') {
+    if (modeNorm === 'admin') {
       if (!adminAda_()) throw new Error('Akun admin belum dibuat.');
       if (cekAdmin_(userRaw, passRaw) || cekAdmin_(userRaw, passTrim)) {
         loginFailures.delete(kg);
@@ -1856,41 +1902,27 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
         loginFailures.delete(kg);
         return buatSesi_('staf', staf.ID, staf.Nama);
       }
-      // Fallback: if user entered a valid student NIS + PIN without switching to Portal Siswa tab
-      const stCheck = tryStudentLogin();
-      if (stCheck.status === 'ok') {
-        loginFailures.delete(kg);
-        loginFailures.delete(kunciGagal_('siswa', userRaw));
-        const loginReward = catatPoinLoginSiswa_(stCheck.siswa);
-        return { ...buatSesi_('siswa', stCheck.siswa.ID, stCheck.siswa.Nama), loginReward };
-      }
-      if (stCheck.status === 'no_pin') {
-        throw new Error('Akun siswa ini belum memiliki PIN aktif. Minta Admin/Wali Kelas membuat PIN terlebih dahulu.');
-      }
-      if (stCheck.status === 'wrong_pin') {
-        catatGagal_(kg);
-        throw new Error('PIN siswa salah. Pastikan mode masuk "Portal Siswa" dan PIN sesuai.');
-      }
-    } else {
-      const stCheck = tryStudentLogin();
-      if (stCheck.status === 'ok') {
-        loginFailures.delete(kg);
-        loginFailures.delete(kunciGagal_('admin', userRaw));
-        const loginReward = catatPoinLoginSiswa_(stCheck.siswa);
-        return { ...buatSesi_('siswa', stCheck.siswa.ID, stCheck.siswa.Nama), loginReward };
-      }
-      if (stCheck.status === 'no_nis') {
-        catatGagal_(kg);
-        throw new Error('NIS tidak terdaftar pada data siswa.');
-      }
-      if (stCheck.status === 'no_pin') {
-        throw new Error('Siswa dengan NIS tersebut belum memiliki PIN aktif. Minta Admin/Wali Kelas klik "Buat PIN Baru" atau "Buat PIN Baru Seragam".');
-      }
       catatGagal_(kg);
-      throw new Error('PIN siswa salah. Pastikan PIN 4–8 angka sesuai yang dibuat Admin/Wali Kelas.');
+      throw new Error('Nama pengguna atau kata sandi Admin/Guru salah. Jika Anda siswa, silakan masuk melalui tab Portal Siswa.');
+    }
+
+    const stCheck = tryStudentLogin();
+    if (stCheck.status === 'ok') {
+      loginFailures.delete(kg);
+      loginFailures.delete(kunciGagal_('siswa', userRaw));
+      loginFailures.delete(kunciGagal_('admin', userRaw));
+      const loginReward = catatPoinLoginSiswa_(stCheck.siswa);
+      return { ...buatSesi_('siswa', stCheck.siswa.ID, stCheck.siswa.Nama), loginReward };
+    }
+    if (stCheck.status === 'no_nis') {
+      catatGagal_(kg);
+      throw new Error('NIS tidak terdaftar pada data siswa.');
+    }
+    if (stCheck.status === 'no_pin') {
+      throw new Error('Siswa dengan NIS tersebut belum memiliki PIN aktif. Minta Admin/Wali Kelas klik "Buat PIN Baru" atau "Buat PIN Baru Seragam".');
     }
     catatGagal_(kg);
-    throw new Error('Nama pengguna / NIS atau kata sandi / PIN salah.');
+    throw new Error('PIN siswa salah. Pastikan PIN 4–8 angka sesuai yang dibuat Admin/Wali Kelas.');
   },
 
   api_kirimKodePemulihan(user: string, email: string) {
@@ -1999,6 +2031,13 @@ const rpcMethods: Record<string, (...args: any[]) => any> = {
 
   api_logout(token: string) {
     sessions.delete(token);
+    try {
+      const db = getDb();
+      if (db.sessions && db.sessions[token]) {
+        delete db.sessions[token];
+        saveDb();
+      }
+    } catch {}
     if (detectStorageEngine().isVercelCloud && token) {
       queueWrite(() => deleteRemoteSession(token));
     }
